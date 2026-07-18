@@ -1,6 +1,28 @@
+# Gradle and Fabric Loom
 .gradle/
 **/build/
+remappedSrc/
+
+# Minecraft development runtime
 run/
+runs/
+logs/
+*.log
+
+# IntelliJ IDEA
 .idea/
 *.iml
+*.ipr
+*.iws
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# VS Code
+.vscode/
+
+# Compiler output
+bin/
 out/
