@@ -1,0 +1,83 @@
+plugins {
+    id "net.fabricmc.fabric-loom-remap" version "${loom_version}"
+    id "maven-publish"
+}
+
+version = project.mod_version
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    // Prefer Huawei Cloud for public Maven artifacts in mainland China.
+    maven { url = "https://repo.huaweicloud.com/repository/maven/" }
+    maven { url = "https://maven.fabricmc.net/" }
+    maven { url = "https://maven.terraformersmc.com/releases/" }
+    mavenCentral()
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "${project.mod_id}" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDir("../../common/src/main/java")
+        resources.srcDir("../../common/src/main/resources")
+    }
+    client {
+        java.srcDir("../../common/src/client/java")
+        resources.srcDir("../../common/src/client/resources")
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+
+processResources {
+    inputs.properties([
+        version: project.version, mod_id: project.mod_id, mod_name: project.mod_name,
+        mod_description: project.mod_description, mod_author: project.mod_author,
+        mod_license: project.mod_license, loader_version: project.loader_version,
+        minecraft_version: project.minecraft_version
+    ])
+    filesMatching("fabric.mod.json") { expand(inputs.properties) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+    options.encoding = "UTF-8"
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    withSourcesJar()
+}
+
+jar {
+    from(rootProject.file("LICENSE")) {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}

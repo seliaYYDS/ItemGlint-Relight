@@ -1,0 +1,26 @@
+pluginManagement {
+    repositories {
+        // 华为云优先；Fabric Loom 仍需由 Fabric 官方仓库提供。
+        maven { url = "https://repo.huaweicloud.com/repository/gradle-plugin/" }
+        maven { url = "https://repo.huaweicloud.com/repository/maven/" }
+        maven { url = "https://maven.fabricmc.net/" }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+dependencyResolutionManagement {
+    // Loom adds generated local repositories for remapped Minecraft artifacts.
+    // Those repositories must remain visible to each version module.
+    repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
+    repositories {
+        maven { url = "https://repo.huaweicloud.com/repository/maven/" }
+        maven { url = "https://maven.fabricmc.net/" }
+        maven { url = "https://maven.terraformersmc.com/releases/" }
+        mavenCentral()
+    }
+}
+
+rootProject.name = "ItemGlintRelight"
+
+include(":versions:1.21.11")

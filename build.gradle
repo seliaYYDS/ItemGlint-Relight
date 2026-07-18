@@ -1,0 +1,15 @@
+plugins {
+    id "base"
+}
+
+allprojects {
+    group = "celia.adwadg.itemglintrelight"
+}
+
+tasks.register("listTargets") {
+    group = "help"
+    description = "Lists maintained Minecraft targets."
+    doLast {
+        println "Fabric targets: 1.21.11"
+    }
+}
