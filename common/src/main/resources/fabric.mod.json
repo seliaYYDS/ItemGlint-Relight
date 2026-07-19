@@ -9,7 +9,8 @@
   "environment": "client",
   "entrypoints": {
     "main": ["celia.adwadg.itemglintrelight.ItemGlintRelight"],
-    "client": ["celia.adwadg.itemglintrelight.client.ItemGlintRelightClient"]
+    "client": ["celia.adwadg.itemglintrelight.client.ItemGlintRelightClient"],
+    "modmenu": ["celia.adwadg.itemglintrelight.client.ItemGlintRelightModMenuApi"]
   },
   "depends": {
     "fabricloader": ">=${loader_version}",
