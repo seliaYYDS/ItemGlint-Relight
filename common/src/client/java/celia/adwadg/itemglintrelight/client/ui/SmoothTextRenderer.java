@@ -41,6 +41,11 @@ public final class SmoothTextRenderer {
         return Math.max(1, texture.height() - texture.inset() * 2);
     }
 
+    public static int width(String text, float scale, int color) {
+        TextureEntry texture = texture(text, scale, color);
+        return Math.max(1, texture.width() - texture.inset() * 2);
+    }
+
     public static void drawGradient(GuiGraphics graphics, Font ignored, String text, float x, float y, float scale) {
         int sampling = Math.max(2, Minecraft.getInstance().getWindow().getGuiScale());
         GradientKey key = new GradientKey(text, Math.round(scale * 100.0F), sampling);
