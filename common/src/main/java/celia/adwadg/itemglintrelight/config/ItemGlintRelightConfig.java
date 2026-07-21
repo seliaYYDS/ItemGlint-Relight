@@ -1,16 +1,12 @@
 package celia.adwadg.itemglintrelight.config;
 
 public final class ItemGlintRelightConfig {
-    public static final boolean DEFAULT_ENABLED = true;
-    public static final GlintColorMode DEFAULT_COLOR_MODE = GlintColorMode.STATIC;
     public static final int DEFAULT_PRIMARY_COLOR = 0xFFFFFFFF;
     public static final int DEFAULT_SECONDARY_COLOR = 0xFF66CCFF;
-    public static final float DEFAULT_ANIMATION_SPEED = 1.0F;
     public static final boolean DEFAULT_RENDER_HELD_ITEMS = true;
     public static final boolean DEFAULT_RENDER_GUI_ITEMS = true;
     public static final boolean DEFAULT_RENDER_THIRD_PERSON = true;
     public static final boolean DEFAULT_BLOOM_ENABLED = true;
-    public static final boolean DEFAULT_RULE_SWITCH_DELAY = true;
     public static final boolean DEFAULT_OUTLINE_ENABLED = true;
     public static final boolean DEFAULT_OUTLINE_MAIN_HAND = true;
     public static final boolean DEFAULT_OUTLINE_OFF_HAND = true;
@@ -31,19 +27,17 @@ public final class ItemGlintRelightConfig {
     public static final int DEFAULT_OUTLINE_PRIMARY_COLOR = 0xFF30B8FF;
     public static final int DEFAULT_OUTLINE_SECONDARY_COLOR = 0xFF8CFF45;
     public static final float DEFAULT_OUTLINE_COLOR_SCROLL_SPEED = 1.0F;
+    public static final float DEFAULT_OUTLINE_COLOR_SCROLL_DIRECTION = 0.0F;
+    public static final float DEFAULT_OUTLINE_COLOR_SCROLL_INTERVAL = 0.75F;
     public static final int DEFAULT_OUTLINE_SAMPLE_SIZE = 4;
     public static final int DEFAULT_OUTLINE_SAMPLE_COLOR_COUNT = 4;
 
-    private boolean enabled = DEFAULT_ENABLED;
-    private GlintColorMode colorMode = DEFAULT_COLOR_MODE;
     private int primaryColor = DEFAULT_PRIMARY_COLOR;
     private int secondaryColor = DEFAULT_SECONDARY_COLOR;
-    private float animationSpeed = DEFAULT_ANIMATION_SPEED;
     private boolean renderHeldItems = DEFAULT_RENDER_HELD_ITEMS;
     private boolean renderGuiItems = DEFAULT_RENDER_GUI_ITEMS;
     private boolean renderThirdPerson = DEFAULT_RENDER_THIRD_PERSON;
     private boolean bloomEnabled = DEFAULT_BLOOM_ENABLED;
-    private boolean ruleSwitchDelayEnabled = DEFAULT_RULE_SWITCH_DELAY;
     private boolean outlineEnabled = DEFAULT_OUTLINE_ENABLED;
     private boolean outlineMainHand = DEFAULT_OUTLINE_MAIN_HAND;
     private boolean outlineOffHand = DEFAULT_OUTLINE_OFF_HAND;
@@ -64,21 +58,19 @@ public final class ItemGlintRelightConfig {
     private int outlinePrimaryColor = DEFAULT_OUTLINE_PRIMARY_COLOR;
     private int outlineSecondaryColor = DEFAULT_OUTLINE_SECONDARY_COLOR;
     private float outlineColorScrollSpeed = DEFAULT_OUTLINE_COLOR_SCROLL_SPEED;
+    private float outlineColorScrollDirection = DEFAULT_OUTLINE_COLOR_SCROLL_DIRECTION;
+    private float outlineColorScrollInterval = DEFAULT_OUTLINE_COLOR_SCROLL_INTERVAL;
     private int outlineSampleSize = DEFAULT_OUTLINE_SAMPLE_SIZE;
     private int outlineSampleColorCount = DEFAULT_OUTLINE_SAMPLE_COLOR_COUNT;
 
     public ItemGlintRelightConfig copy() {
         ItemGlintRelightConfig copy = new ItemGlintRelightConfig();
-        copy.enabled = enabled;
-        copy.colorMode = colorMode;
         copy.primaryColor = primaryColor;
         copy.secondaryColor = secondaryColor;
-        copy.animationSpeed = animationSpeed;
         copy.renderHeldItems = renderHeldItems;
         copy.renderGuiItems = renderGuiItems;
         copy.renderThirdPerson = renderThirdPerson;
         copy.bloomEnabled = bloomEnabled;
-        copy.ruleSwitchDelayEnabled = ruleSwitchDelayEnabled;
         copy.outlineEnabled = outlineEnabled;
         copy.outlineMainHand = outlineMainHand;
         copy.outlineOffHand = outlineOffHand;
@@ -99,22 +91,20 @@ public final class ItemGlintRelightConfig {
         copy.outlinePrimaryColor = outlinePrimaryColor;
         copy.outlineSecondaryColor = outlineSecondaryColor;
         copy.outlineColorScrollSpeed = outlineColorScrollSpeed;
+        copy.outlineColorScrollDirection = outlineColorScrollDirection;
+        copy.outlineColorScrollInterval = outlineColorScrollInterval;
         copy.outlineSampleSize = outlineSampleSize;
         copy.outlineSampleColorCount = outlineSampleColorCount;
         return copy;
     }
 
     public void copyFrom(ItemGlintRelightConfig source) {
-        enabled = source.enabled;
-        colorMode = source.colorMode;
         primaryColor = source.primaryColor;
         secondaryColor = source.secondaryColor;
-        animationSpeed = source.animationSpeed;
         renderHeldItems = source.renderHeldItems;
         renderGuiItems = source.renderGuiItems;
         renderThirdPerson = source.renderThirdPerson;
         bloomEnabled = source.bloomEnabled;
-        ruleSwitchDelayEnabled = source.ruleSwitchDelayEnabled;
         outlineEnabled = source.outlineEnabled;
         outlineMainHand = source.outlineMainHand;
         outlineOffHand = source.outlineOffHand;
@@ -135,20 +125,16 @@ public final class ItemGlintRelightConfig {
         outlinePrimaryColor = source.outlinePrimaryColor;
         outlineSecondaryColor = source.outlineSecondaryColor;
         outlineColorScrollSpeed = source.outlineColorScrollSpeed;
+        outlineColorScrollDirection = source.outlineColorScrollDirection;
+        outlineColorScrollInterval = source.outlineColorScrollInterval;
         outlineSampleSize = source.outlineSampleSize;
         outlineSampleColorCount = source.outlineSampleColorCount;
     }
 
-    public boolean enabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
-    public GlintColorMode colorMode() { return colorMode; }
-    public void setColorMode(GlintColorMode colorMode) { this.colorMode = colorMode == null ? DEFAULT_COLOR_MODE : colorMode; }
     public int primaryColor() { return primaryColor; }
     public void setPrimaryColor(int primaryColor) { this.primaryColor = primaryColor; }
     public int secondaryColor() { return secondaryColor; }
     public void setSecondaryColor(int secondaryColor) { this.secondaryColor = secondaryColor; }
-    public float animationSpeed() { return animationSpeed; }
-    public void setAnimationSpeed(float animationSpeed) { this.animationSpeed = clamp(animationSpeed, 0.0F, 10.0F); }
     public boolean renderHeldItems() { return renderHeldItems; }
     public void setRenderHeldItems(boolean renderHeldItems) { this.renderHeldItems = renderHeldItems; }
     public boolean renderGuiItems() { return renderGuiItems; }
@@ -157,8 +143,6 @@ public final class ItemGlintRelightConfig {
     public void setRenderThirdPerson(boolean renderThirdPerson) { this.renderThirdPerson = renderThirdPerson; }
     public boolean bloomEnabled() { return bloomEnabled; }
     public void setBloomEnabled(boolean bloomEnabled) { this.bloomEnabled = bloomEnabled; }
-    public boolean ruleSwitchDelayEnabled() { return ruleSwitchDelayEnabled; }
-    public void setRuleSwitchDelayEnabled(boolean ruleSwitchDelayEnabled) { this.ruleSwitchDelayEnabled = ruleSwitchDelayEnabled; }
     public boolean outlineEnabled() { return outlineEnabled; }
     public void setOutlineEnabled(boolean outlineEnabled) { this.outlineEnabled = outlineEnabled; }
     public boolean outlineMainHand() { return outlineMainHand; }
@@ -172,7 +156,7 @@ public final class ItemGlintRelightConfig {
     public float outlineWidth() { return outlineWidth; }
     public void setOutlineWidth(float outlineWidth) { this.outlineWidth = clamp(outlineWidth, 0.25F, 8.0F); }
     public float outlineSoftness() { return outlineSoftness; }
-    public void setOutlineSoftness(float outlineSoftness) { this.outlineSoftness = clamp(outlineSoftness, 0.1F, 1.0F); }
+    public void setOutlineSoftness(float outlineSoftness) { this.outlineSoftness = clamp(outlineSoftness, 0.0F, 1.0F); }
     public float outlineAlphaThreshold() { return outlineAlphaThreshold; }
     public void setOutlineAlphaThreshold(float outlineAlphaThreshold) { this.outlineAlphaThreshold = clamp(outlineAlphaThreshold, 0.0F, 0.95F); }
     public float outlineOpacity() { return outlineOpacity; }
@@ -199,6 +183,12 @@ public final class ItemGlintRelightConfig {
     public void setOutlineSecondaryColor(int outlineSecondaryColor) { this.outlineSecondaryColor = outlineSecondaryColor; }
     public float outlineColorScrollSpeed() { return outlineColorScrollSpeed; }
     public void setOutlineColorScrollSpeed(float outlineColorScrollSpeed) { this.outlineColorScrollSpeed = clamp(outlineColorScrollSpeed, 0.1F, 2.0F); }
+    public float outlineColorScrollDirection() { return outlineColorScrollDirection; }
+    public void setOutlineColorScrollDirection(float outlineColorScrollDirection) {
+        this.outlineColorScrollDirection = (outlineColorScrollDirection % 360.0F + 360.0F) % 360.0F;
+    }
+    public float outlineColorScrollInterval() { return outlineColorScrollInterval; }
+    public void setOutlineColorScrollInterval(float outlineColorScrollInterval) { this.outlineColorScrollInterval = clamp(outlineColorScrollInterval, 0.25F, 1.5F); }
     public int outlineSampleSize() { return outlineSampleSize; }
     public void setOutlineSampleSize(int outlineSampleSize) { this.outlineSampleSize = Math.max(1, Math.min(8, outlineSampleSize)); }
     public int outlineSampleColorCount() { return outlineSampleColorCount; }

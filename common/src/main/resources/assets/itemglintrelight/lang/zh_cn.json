@@ -19,9 +19,9 @@
   "ui.itemglintrelight.general_settings": "常规设置",
   "ui.itemglintrelight.description": "调整当前配置文件的视觉效果。",
   "ui.itemglintrelight.colours_settings": "颜色设置",
-  "ui.itemglintrelight.colours_description": "选择物品轮廓颜色的生成方式。",
+  "ui.itemglintrelight.colours_description": "选择物品描边颜色的生成方式。",
   "ui.itemglintrelight.render_settings": "渲染设置",
-  "ui.itemglintrelight.render_description": "控制物品轮廓与泛光的渲染位置。",
+  "ui.itemglintrelight.render_description": "控制物品描边与泛光的渲染位置。",
   "ui.itemglintrelight.rules_settings": "规则设置",
   "ui.itemglintrelight.rules_description": "控制切换手持物品时的规则变化。",
   "ui.itemglintrelight.enabled": "启用物品光效",
@@ -45,6 +45,7 @@
   "ui.itemglintrelight.render.primary_color": "主色",
   "ui.itemglintrelight.render.secondary_color": "副色",
   "ui.itemglintrelight.render.color_scroll_speed": "颜色滚动速度",
+  "ui.itemglintrelight.render.color_scroll_pattern": "颜色滚动方向与交替间隔",
   "ui.itemglintrelight.render.sample_size": "采样大小",
   "ui.itemglintrelight.render.sample_color_count": "最多采样颜色数量",
   "ui.itemglintrelight.color_mode.single": "单色",
@@ -60,8 +61,12 @@
   "ui.itemglintrelight.third_person": "渲染第三人称物品",
   "ui.itemglintrelight.bloom": "启用泛光",
   "ui.itemglintrelight.rule_delay": "延迟切换规则",
+  "ui.itemglintrelight.glint.color_mode": "光效颜色模式",
+  "ui.itemglintrelight.glint.primary_color": "光效主色",
+  "ui.itemglintrelight.glint.secondary_color": "光效副色",
+  "ui.itemglintrelight.glint.animation_speed": "光效动画速度",
   "ui.itemglintrelight.reset": "恢复默认",
   "ui.itemglintrelight.save": "保存",
-  "ui.itemglintrelight.save_hint": "点击保存以应用更改。"
-  ,"ui.itemglintrelight.color_picker_demo": "颜色选取器"
+  "ui.itemglintrelight.save_hint": "点击保存以应用更改。",
+  "ui.itemglintrelight.color_picker_demo": "颜色选择器"
 }

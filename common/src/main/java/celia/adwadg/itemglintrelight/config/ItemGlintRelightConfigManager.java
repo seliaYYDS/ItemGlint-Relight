@@ -32,16 +32,12 @@ public final class ItemGlintRelightConfigManager {
     public static synchronized void save() {
         ensureRegistered();
         Properties values = new Properties();
-        values.setProperty("enabled", Boolean.toString(CONFIG.enabled()));
-        values.setProperty("colorMode", CONFIG.colorMode().name());
         values.setProperty("primaryColor", Integer.toUnsignedString(CONFIG.primaryColor()));
         values.setProperty("secondaryColor", Integer.toUnsignedString(CONFIG.secondaryColor()));
-        values.setProperty("animationSpeed", Float.toString(CONFIG.animationSpeed()));
         values.setProperty("renderHeldItems", Boolean.toString(CONFIG.renderHeldItems()));
         values.setProperty("renderGuiItems", Boolean.toString(CONFIG.renderGuiItems()));
         values.setProperty("renderThirdPerson", Boolean.toString(CONFIG.renderThirdPerson()));
         values.setProperty("bloomEnabled", Boolean.toString(CONFIG.bloomEnabled()));
-        values.setProperty("ruleSwitchDelayEnabled", Boolean.toString(CONFIG.ruleSwitchDelayEnabled()));
         values.setProperty("outlineEnabled", Boolean.toString(CONFIG.outlineEnabled()));
         values.setProperty("outlineMainHand", Boolean.toString(CONFIG.outlineMainHand()));
         values.setProperty("outlineOffHand", Boolean.toString(CONFIG.outlineOffHand()));
@@ -62,6 +58,8 @@ public final class ItemGlintRelightConfigManager {
         values.setProperty("outlinePrimaryColor", Integer.toUnsignedString(CONFIG.outlinePrimaryColor()));
         values.setProperty("outlineSecondaryColor", Integer.toUnsignedString(CONFIG.outlineSecondaryColor()));
         values.setProperty("outlineColorScrollSpeed", Float.toString(CONFIG.outlineColorScrollSpeed()));
+        values.setProperty("outlineColorScrollDirection", Float.toString(CONFIG.outlineColorScrollDirection()));
+        values.setProperty("outlineColorScrollInterval", Float.toString(CONFIG.outlineColorScrollInterval()));
         values.setProperty("outlineSampleSize", Integer.toString(CONFIG.outlineSampleSize()));
         values.setProperty("outlineSampleColorCount", Integer.toString(CONFIG.outlineSampleColorCount()));
 
@@ -80,18 +78,19 @@ public final class ItemGlintRelightConfigManager {
             return;
         }
         Properties values = new Properties();
+        boolean containsRemovedSettings;
         try (InputStream input = Files.newInputStream(configFile)) {
             values.load(input);
-            CONFIG.setEnabled(booleanValue(values, "enabled", ItemGlintRelightConfig.DEFAULT_ENABLED));
-            CONFIG.setColorMode(enumValue(values, "colorMode", ItemGlintRelightConfig.DEFAULT_COLOR_MODE));
+            containsRemovedSettings = values.containsKey("enabled")
+                    || values.containsKey("colorMode")
+                    || values.containsKey("animationSpeed")
+                    || values.containsKey("ruleSwitchDelayEnabled");
             CONFIG.setPrimaryColor(unsignedIntValue(values, "primaryColor", ItemGlintRelightConfig.DEFAULT_PRIMARY_COLOR));
             CONFIG.setSecondaryColor(unsignedIntValue(values, "secondaryColor", ItemGlintRelightConfig.DEFAULT_SECONDARY_COLOR));
-            CONFIG.setAnimationSpeed(floatValue(values, "animationSpeed", ItemGlintRelightConfig.DEFAULT_ANIMATION_SPEED));
             CONFIG.setRenderHeldItems(booleanValue(values, "renderHeldItems", ItemGlintRelightConfig.DEFAULT_RENDER_HELD_ITEMS));
             CONFIG.setRenderGuiItems(booleanValue(values, "renderGuiItems", ItemGlintRelightConfig.DEFAULT_RENDER_GUI_ITEMS));
             CONFIG.setRenderThirdPerson(booleanValue(values, "renderThirdPerson", ItemGlintRelightConfig.DEFAULT_RENDER_THIRD_PERSON));
             CONFIG.setBloomEnabled(booleanValue(values, "bloomEnabled", ItemGlintRelightConfig.DEFAULT_BLOOM_ENABLED));
-            CONFIG.setRuleSwitchDelayEnabled(booleanValue(values, "ruleSwitchDelayEnabled", ItemGlintRelightConfig.DEFAULT_RULE_SWITCH_DELAY));
             CONFIG.setOutlineEnabled(booleanValue(values, "outlineEnabled", ItemGlintRelightConfig.DEFAULT_OUTLINE_ENABLED));
             CONFIG.setOutlineMainHand(booleanValue(values, "outlineMainHand", ItemGlintRelightConfig.DEFAULT_OUTLINE_MAIN_HAND));
             CONFIG.setOutlineOffHand(booleanValue(values, "outlineOffHand", ItemGlintRelightConfig.DEFAULT_OUTLINE_OFF_HAND));
@@ -112,10 +111,15 @@ public final class ItemGlintRelightConfigManager {
             CONFIG.setOutlinePrimaryColor(unsignedIntValue(values, "outlinePrimaryColor", ItemGlintRelightConfig.DEFAULT_OUTLINE_PRIMARY_COLOR));
             CONFIG.setOutlineSecondaryColor(unsignedIntValue(values, "outlineSecondaryColor", ItemGlintRelightConfig.DEFAULT_OUTLINE_SECONDARY_COLOR));
             CONFIG.setOutlineColorScrollSpeed(floatValue(values, "outlineColorScrollSpeed", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_SCROLL_SPEED));
+            CONFIG.setOutlineColorScrollDirection(floatValue(values, "outlineColorScrollDirection", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_SCROLL_DIRECTION));
+            CONFIG.setOutlineColorScrollInterval(floatValue(values, "outlineColorScrollInterval", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_SCROLL_INTERVAL));
             CONFIG.setOutlineSampleSize(intValue(values, "outlineSampleSize", ItemGlintRelightConfig.DEFAULT_OUTLINE_SAMPLE_SIZE));
             CONFIG.setOutlineSampleColorCount(intValue(values, "outlineSampleColorCount", ItemGlintRelightConfig.DEFAULT_OUTLINE_SAMPLE_COLOR_COUNT));
         } catch (IOException exception) {
             throw new IllegalStateException("Unable to load configuration from " + configFile, exception);
+        }
+        if (containsRemovedSettings) {
+            save();
         }
     }
 

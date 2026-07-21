@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "package": "celia.adwadg.itemglintrelight.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "FeatureRenderDispatcherAccessor",
+    "SpriteContentsAccessor",
+    "ItemStackRenderStateAccessor",
+    "ItemStackLayerRenderStateAccessor",
+    "GameRendererFrameMixin",
+    "ItemInHandRendererMixin",
+    "IrisHandRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

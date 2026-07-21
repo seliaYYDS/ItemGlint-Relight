@@ -4,6 +4,7 @@ import celia.adwadg.itemglintrelight.client.ui.ConfigUiBackground;
 import celia.adwadg.itemglintrelight.client.ui.SmoothTextRenderer;
 import celia.adwadg.itemglintrelight.client.ui.UiButton;
 import celia.adwadg.itemglintrelight.client.ui.UiColorPicker;
+import celia.adwadg.itemglintrelight.client.ui.UiColorScrollControl;
 import celia.adwadg.itemglintrelight.client.ui.UiDropdown;
 import celia.adwadg.itemglintrelight.client.ui.UiMath;
 import celia.adwadg.itemglintrelight.client.ui.UiMouseGlow;
@@ -44,6 +45,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private UiColorPicker outlinePrimaryColorPicker;
     private UiColorPicker outlineSecondaryColorPicker;
     private UiSlider outlineColorScrollSpeedSlider;
+    private UiColorScrollControl outlineColorScrollControl;
     private UiSlider outlineSampleSizeSlider;
     private UiSlider outlineSampleColorCountSlider;
     private UiMouseGlow mouseGlow;
@@ -100,7 +102,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 () -> model.draft().outlineGuiItems(), value -> model.draft().setOutlineGuiItems(value));
         outlineWidthSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.outline_width"), 0.25D, 8.0D, 0.05D,
                 () -> model.draft().outlineWidth(), value -> model.draft().setOutlineWidth(value.floatValue()));
-        outlineSoftnessSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.softness"), 0.1D, 1.0D, 0.01D,
+        outlineSoftnessSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.softness"), 0.0D, 1.0D, 0.01D,
                 () -> model.draft().outlineSoftness(), value -> model.draft().setOutlineSoftness(value.floatValue()));
         outlineThresholdSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.alpha_threshold"), 0.0D, 0.95D, 0.01D,
                 () -> model.draft().outlineAlphaThreshold(), value -> model.draft().setOutlineAlphaThreshold(value.floatValue()));
@@ -131,6 +133,12 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 () -> model.draft().outlineSecondaryColor(), value -> model.draft().setOutlineSecondaryColor(value));
         outlineColorScrollSpeedSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.color_scroll_speed"), 0.1D, 2.0D, 0.01D,
                 () -> model.draft().outlineColorScrollSpeed(), value -> model.draft().setOutlineColorScrollSpeed(value.floatValue()));
+        outlineColorScrollControl = new UiColorScrollControl(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.color_scroll_pattern"),
+                () -> model.draft().outlineColorScrollDirection(), () -> model.draft().outlineColorScrollInterval(),
+                (direction, interval) -> {
+                    model.draft().setOutlineColorScrollDirection(direction);
+                    model.draft().setOutlineColorScrollInterval(interval);
+                });
         outlineSampleSizeSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.sample_size"), 1.0D, 8.0D, 1.0D,
                 () -> model.draft().outlineSampleSize(), value -> model.draft().setOutlineSampleSize(value.intValue()));
         outlineSampleColorCountSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.sample_color_count"), 1.0D, 8.0D, 1.0D,
@@ -204,6 +212,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineThresholdSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (outlineOpacitySlider.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesColorAnimation() && outlineColorScrollSpeedSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (usesColorAnimation() && outlineColorScrollControl.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesTextureSampling() && outlineSampleSizeSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesTextureSampling() && outlineSampleColorCountSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (outlineGlowIntensitySlider.mouseClicked(mouseX, mouseY, event.button())) return true;
@@ -228,6 +237,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineThresholdSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineOpacitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineColorScrollSpeedSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
+            if (outlineColorScrollControl.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineSampleSizeSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineSampleColorCountSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineGlowIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
@@ -245,6 +255,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         outlineThresholdSlider.stopDragging();
         outlineOpacitySlider.stopDragging();
         outlineColorScrollSpeedSlider.stopDragging();
+        outlineColorScrollControl.stopDragging();
         outlineSampleSizeSlider.stopDragging();
         outlineSampleColorCountSlider.stopDragging();
         outlineGlowIntensitySlider.stopDragging();
@@ -276,6 +287,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (starParticles != null) {
             starParticles.clear();
         }
+        if (outlineColorScrollControl != null) {
+            outlineColorScrollControl.close();
+        }
         SmoothTextRenderer.clear();
         this.minecraft.setScreen(parent);
     }
@@ -306,6 +320,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 if (usesPrimaryColor()) outlinePrimaryColorPicker.render(graphics, font, mouseX, mouseY);
                 if (usesSecondaryColor()) outlineSecondaryColorPicker.render(graphics, font, mouseX, mouseY);
                 if (usesColorAnimation()) outlineColorScrollSpeedSlider.render(graphics, font, mouseX, mouseY);
+                if (usesColorAnimation()) outlineColorScrollControl.render(graphics, font, mouseX, mouseY);
                 if (usesTextureSampling()) {
                     outlineSampleSizeSlider.render(graphics, font, mouseX, mouseY);
                     outlineSampleColorCountSlider.render(graphics, font, mouseX, mouseY);
@@ -326,13 +341,12 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return;
         }
         outlineToggle.render(graphics, font, mouseX, mouseY);
-        if (!model.draft().outlineEnabled()) {
-            return;
+        if (model.draft().outlineEnabled()) {
+            mainHandToggle.render(graphics, font, mouseX, mouseY);
+            offHandToggle.render(graphics, font, mouseX, mouseY);
+            thirdPersonToggle.render(graphics, font, mouseX, mouseY);
+            guiItemsToggle.render(graphics, font, mouseX, mouseY);
         }
-        mainHandToggle.render(graphics, font, mouseX, mouseY);
-        offHandToggle.render(graphics, font, mouseX, mouseY);
-        thirdPersonToggle.render(graphics, font, mouseX, mouseY);
-        guiItemsToggle.render(graphics, font, mouseX, mouseY);
         graphics.pose().popMatrix();
         graphics.disableScissor();
     }
@@ -367,6 +381,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         }
         if (usesColorAnimation()) {
             outlineColorScrollSpeedSlider.setPosition(contentX, y); y += 42;
+            outlineColorScrollControl.setPosition(contentX, y); y += outlineColorScrollControl.height() + 10;
         }
         if (usesTextureSampling()) {
             outlineSampleSizeSlider.setPosition(contentX, y); y += 42;
