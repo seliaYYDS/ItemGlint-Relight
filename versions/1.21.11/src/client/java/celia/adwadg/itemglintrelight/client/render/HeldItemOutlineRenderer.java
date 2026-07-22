@@ -45,7 +45,7 @@ import java.util.Map;
 import java.util.OptionalInt;
 
 public final class HeldItemOutlineRenderer {
-    private static final int OUTLINE_UNIFORM_BYTES = 224;
+    private static final int OUTLINE_UNIFORM_BYTES = 256;
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
     private static final CaptureState MAIN_HAND = new CaptureState();
     private static final CaptureState OFF_HAND = new CaptureState();
@@ -133,29 +133,34 @@ public final class HeldItemOutlineRenderer {
         }
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         ensureTarget(mainTarget);
-        clear(sceneDepth);
-        sceneDepth.copyDepthFrom(mainTarget);
-
-        renderCapture(minecraft, MAIN_HAND);
-        renderCapture(minecraft, OFF_HAND);
         captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
         captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
-        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, ItemGlintRelightConfigManager.get(), minecraft, resolveMaterialPalette()));
+        compositeCapture(minecraft, mainTarget, MAIN_HAND, "main");
+        compositeCapture(minecraft, mainTarget, OFF_HAND, "off");
+        MAIN_HAND.reset();
+        OFF_HAND.reset();
+    }
+
+    private static void compositeCapture(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, String hand) {
+        if (!state.captured) {
+            return;
+        }
+        clear(sceneDepth);
+        sceneDepth.copyDepthFrom(mainTarget);
+        renderCapture(minecraft, state);
+        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, ItemGlintRelightConfigManager.get(), minecraft, resolveMaterialPalette(state)));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_held_outline", mainTarget.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.outline());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("MaskSampler", sceneDepth.getColorTextureView(), maskSampler);
             pass.bindTexture("ItemDepthSampler", sceneDepth.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", mainTarget.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
-            diagnostic("composite submitted target=" + mainTarget.width + "x" + mainTarget.height
+            diagnostic("composite " + hand + " submitted target=" + mainTarget.width + "x" + mainTarget.height
                     + " radius=" + resolveOutlineRadius(mainTarget, ItemGlintRelightConfigManager.get().outlineWidth()));
-        } finally {
-            MAIN_HAND.reset();
-            OFF_HAND.reset();
         }
     }
 
@@ -287,9 +292,9 @@ public final class HeldItemOutlineRenderer {
 
     private static int sampleCount(RenderQuality quality) {
         return switch (quality) {
-            case LOW -> 8;
-            case MEDIUM -> 16;
-            case HIGH -> 32;
+            case LOW -> 16;
+            case MEDIUM -> 32;
+            case HIGH -> 64;
         };
     }
 
@@ -367,11 +372,10 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
-    private static float[][] resolveMaterialPalette() {
+    private static float[][] resolveMaterialPalette(CaptureState source) {
         if (ItemGlintRelightConfigManager.get().outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
             return new float[][]{{1.0F, 1.0F, 1.0F}};
         }
-        CaptureState source = !MAIN_HAND.materialColors.isEmpty() ? MAIN_HAND : OFF_HAND;
         if (source.materialColors.isEmpty()) {
             int fallback = ItemGlintRelightConfigManager.get().outlinePrimaryColor();
             return new float[][]{{((fallback >>> 16) & 255) / 255.0F, ((fallback >>> 8) & 255) / 255.0F, (fallback & 255) / 255.0F}};
