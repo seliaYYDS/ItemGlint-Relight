@@ -15,6 +15,20 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Pseudo
 @Mixin(targets = "net.irisshaders.iris.pathways.HandRenderer")
 public abstract class IrisHandRendererMixin {
+    @Inject(method = "renderSolid", at = @At("HEAD"), remap = false)
+    private void itemglintrelight$beginSolidCapture(CallbackInfo ci) {
+        if (IrisOutlineBridge.isActive()) {
+            HeldItemOutlineRenderer.beginCompatibilityHandPass();
+        }
+    }
+
+    @Inject(method = "renderTranslucent", at = @At("HEAD"), remap = false)
+    private void itemglintrelight$beginTranslucentCapture(CallbackInfo ci) {
+        if (IrisOutlineBridge.isActive()) {
+            HeldItemOutlineRenderer.beginCompatibilityHandPass();
+        }
+    }
+
     @ModifyArg(
             method = "renderSolid",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeStorage;Lnet/minecraft/client/player/LocalPlayer;I)V", remap = false),
@@ -33,25 +47,9 @@ public abstract class IrisHandRendererMixin {
         return wrap(storage);
     }
 
-    @Inject(method = "renderSolid", at = @At("RETURN"), remap = false)
-    private void itemglintrelight$compositeSolid(CallbackInfo ci) {
-        composite();
-    }
-
-    @Inject(method = "renderTranslucent", at = @At("RETURN"), remap = false)
-    private void itemglintrelight$compositeTranslucent(CallbackInfo ci) {
-        composite();
-    }
-
     private static SubmitNodeStorage wrap(SubmitNodeStorage storage) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
         return IrisOutlineBridge.isActive() && player != null ? HeldItemOutlineRenderer.wrapStorage(minecraft, storage) : storage;
-    }
-
-    private static void composite() {
-        if (IrisOutlineBridge.isActive()) {
-            HeldItemOutlineRenderer.composite(Minecraft.getInstance());
-        }
     }
 }

@@ -60,6 +60,7 @@ public final class HeldItemOutlineRenderer {
         }
     };
     private static InteractionHand recordingHand;
+    private static InteractionHand submittingHand;
     private static int itemSubmissionDepth;
     private static TextureTarget sceneDepth;
     private static TextureTarget bloomFirst;
@@ -77,6 +78,7 @@ public final class HeldItemOutlineRenderer {
     public static void beginFrame() {
         frameNumber++;
         recordingHand = null;
+        submittingHand = null;
         itemSubmissionDepth = 0;
         storageWrapped = false;
         handPasses = 0;
@@ -88,6 +90,15 @@ public final class HeldItemOutlineRenderer {
 
     public static void beginHandPass(Matrix4f projection) {
         handProjectionMatrix = projection == null ? null : new Matrix4f(projection);
+        beginCompatibilityHandPass();
+    }
+
+    public static void beginCompatibilityHandPass() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (shouldRender(minecraft) && minecraft.player != null) {
+            prepareHand(InteractionHand.MAIN_HAND, minecraft.player.getMainHandItem());
+            prepareHand(InteractionHand.OFF_HAND, minecraft.player.getOffhandItem());
+        }
     }
 
     public static void endHandPass() {
@@ -96,22 +107,10 @@ public final class HeldItemOutlineRenderer {
 
     public static void beginHand(InteractionHand hand, ItemStack stack) {
         handPasses++;
-        if (!isEnabled(hand, stack)) {
-            stateFor(hand).disabledStack = stack == null ? "null" : stack.toString();
+        if (!prepareHand(hand, stack)) {
             recordingHand = null;
             return;
         }
-        CaptureState state = stateFor(hand);
-        state.requested = true;
-        state.item = stack;
-        state.stack = stack.toString();
-        if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
-            state.materialPaletteKey = materialPaletteKey(stack);
-            state.materialPalette = MATERIAL_PALETTE_CACHE.get(state.materialPaletteKey);
-        }
-        state.modelViewMatrix = new Matrix4f(RenderSystem.getModelViewMatrix());
-        state.projectionMatrix = RenderSystem.getProjectionMatrixBuffer();
-        state.projectionType = RenderSystem.getProjectionType();
         recordingHand = hand;
     }
 
@@ -120,17 +119,22 @@ public final class HeldItemOutlineRenderer {
     }
 
     public static void beginItemSubmission(ItemDisplayContext context, PoseStack pose) {
-        if (recordingHand != null && isFirstPersonContext(context)) {
+        InteractionHand hand = handForContext(context);
+        if (hand != null && stateFor(hand).requested) {
             if (itemSubmissionDepth == 0 && pose != null) {
-                stateFor(recordingHand).itemPoseMatrix = new Matrix4f(pose.last().pose());
+                stateFor(hand).itemPoseMatrix = new Matrix4f(pose.last().pose());
             }
+            submittingHand = hand;
             itemSubmissionDepth++;
         }
     }
 
     public static void endItemSubmission(ItemDisplayContext context) {
-        if (isFirstPersonContext(context) && itemSubmissionDepth > 0) {
+        if (handForContext(context) != null && itemSubmissionDepth > 0) {
             itemSubmissionDepth--;
+            if (itemSubmissionDepth == 0) {
+                submittingHand = null;
+            }
         }
     }
 
@@ -229,6 +233,25 @@ public final class HeldItemOutlineRenderer {
                 && (hand == InteractionHand.MAIN_HAND ? config.outlineMainHand() : config.outlineOffHand());
     }
 
+    private static boolean prepareHand(InteractionHand hand, ItemStack stack) {
+        CaptureState state = stateFor(hand);
+        if (!isEnabled(hand, stack)) {
+            state.disabledStack = stack == null ? "null" : stack.toString();
+            return false;
+        }
+        state.requested = true;
+        state.item = stack;
+        state.stack = stack.toString();
+        if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            state.materialPaletteKey = materialPaletteKey(stack);
+            state.materialPalette = MATERIAL_PALETTE_CACHE.get(state.materialPaletteKey);
+        }
+        state.modelViewMatrix = new Matrix4f(RenderSystem.getModelViewMatrix());
+        state.projectionMatrix = RenderSystem.getProjectionMatrixBuffer();
+        state.projectionType = RenderSystem.getProjectionType();
+        return true;
+    }
+
     private static CaptureState stateFor(InteractionHand hand) {
         return hand == InteractionHand.MAIN_HAND ? MAIN_HAND : OFF_HAND;
     }
@@ -237,11 +260,23 @@ public final class HeldItemOutlineRenderer {
         return context == ItemDisplayContext.FIRST_PERSON_LEFT_HAND || context == ItemDisplayContext.FIRST_PERSON_RIGHT_HAND;
     }
 
+    private static InteractionHand handForContext(ItemDisplayContext context) {
+        if (context == ItemDisplayContext.FIRST_PERSON_RIGHT_HAND) return InteractionHand.MAIN_HAND;
+        if (context == ItemDisplayContext.FIRST_PERSON_LEFT_HAND) return InteractionHand.OFF_HAND;
+        return null;
+    }
+
     private static SubmitNodeCollection captureCollection(int order) {
-        if (recordingHand == null || itemSubmissionDepth <= 0) {
+        return captureCollection(order, null);
+    }
+
+    private static SubmitNodeCollection captureCollection(int order, InteractionHand directHand) {
+        InteractionHand hand = submittingHand != null ? submittingHand : recordingHand;
+        if (hand == null) hand = directHand;
+        if (hand == null || (directHand == null && itemSubmissionDepth <= 0)) {
             return null;
         }
-        CaptureState capture = stateFor(recordingHand);
+        CaptureState capture = stateFor(hand);
         if (capture.storage == null) {
             return null;
         }
@@ -429,13 +464,14 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void captureTextureColors(List<BakedQuad> quads, int[] tints) {
-        if (recordingHand == null || itemSubmissionDepth <= 0
+        InteractionHand hand = submittingHand != null ? submittingHand : recordingHand;
+        if (hand == null || itemSubmissionDepth <= 0
                 || ItemGlintRelightConfigManager.get().outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE
                 || quads == null || quads.isEmpty()) {
             return;
         }
 
-        CaptureState state = stateFor(recordingHand);
+        CaptureState state = stateFor(hand);
         if (state.materialPalette != null) {
             return;
         }
@@ -461,11 +497,12 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void captureTextureColors(TextureAtlasSprite sprite, int tint) {
-        if (recordingHand == null || itemSubmissionDepth <= 0
+        InteractionHand hand = submittingHand != null ? submittingHand : recordingHand;
+        if (hand == null || itemSubmissionDepth <= 0
                 || ItemGlintRelightConfigManager.get().outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
             return;
         }
-        captureTextureColors(stateFor(recordingHand), sprite, tint);
+        captureTextureColors(stateFor(hand), sprite, tint);
     }
 
     private static void captureFallbackTextureColors(Minecraft minecraft, CaptureState capture, InteractionHand hand) {
@@ -818,8 +855,11 @@ public final class HeldItemOutlineRenderer {
                                        int[] tints, java.util.List<net.minecraft.client.renderer.block.model.BakedQuad> quads, RenderType type,
                                        net.minecraft.client.renderer.item.ItemStackRenderState.FoilType foil) {
             if (!isFirstPersonContext(context)) return;
-            captureTextureColors(quads, tints);
-            SubmitNodeCollection capture = captureCollection(order);
+            InteractionHand hand = handForContext(context);
+            if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && hand != null) {
+                captureTextureColors(stateFor(hand), quads, tints);
+            }
+            SubmitNodeCollection capture = captureCollection(order, hand);
             if (capture != null) capture.submitItem(pose, context, light, overlay, color, tints, quads, type, foil);
         }
     }

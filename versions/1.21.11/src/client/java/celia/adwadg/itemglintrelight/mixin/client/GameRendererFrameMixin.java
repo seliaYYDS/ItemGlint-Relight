@@ -1,7 +1,6 @@
 package celia.adwadg.itemglintrelight.mixin.client;
 
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
-import celia.adwadg.itemglintrelight.client.render.IrisOutlineBridge;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
@@ -24,9 +23,7 @@ public abstract class GameRendererFrameMixin {
 
     @Inject(method = "renderItemInHand", at = @At("RETURN"))
     private void itemglintrelight$compositeHandOutline(float partialTick, boolean renderLevel, Matrix4f projectionMatrix, CallbackInfo ci) {
-        if (!IrisOutlineBridge.isActive()) {
-            HeldItemOutlineRenderer.composite(net.minecraft.client.Minecraft.getInstance());
-        }
+        HeldItemOutlineRenderer.composite(net.minecraft.client.Minecraft.getInstance());
         HeldItemOutlineRenderer.endHandPass();
     }
 }
