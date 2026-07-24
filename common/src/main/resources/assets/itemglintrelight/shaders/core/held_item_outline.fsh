@@ -17,7 +17,7 @@ layout(std140) uniform OutlineInfo {
 in vec2 texCoord;
 out vec4 fragColor;
 
-const int MAX_OUTLINE_SAMPLES = 64;
+const int MAX_OUTLINE_SAMPLES = 48;
 const float TAU = 6.28318530718;
 
 float coverage(vec2 uv) {
@@ -112,7 +112,7 @@ void main() {
             }
         }
     } else {
-        int sampleCount = softness >= 0.999 ? MAX_OUTLINE_SAMPLES : outlineSampleCount();
+        int sampleCount = outlineSampleCount();
         int ringCount = softness >= 0.999 ? 2 : 1;
         for (int i = 0; i < MAX_OUTLINE_SAMPLES; i++) {
             if (i >= sampleCount) break;
@@ -122,6 +122,7 @@ void main() {
             vec2 sampleDirection = mix(squareDirection, circleDirection, softness);
             for (int ring = 0; ring < 2; ring++) {
                 if (ring >= ringCount) break;
+                if (ring == 1 && (i & 1) != 0) break;
                 float radius = geometry.z * (ring == 0 ? 1.0 : 0.5);
                 vec2 sampleUv = texCoord + sampleDirection * texel * radius;
                 outer = max(outer, coverage(sampleUv));

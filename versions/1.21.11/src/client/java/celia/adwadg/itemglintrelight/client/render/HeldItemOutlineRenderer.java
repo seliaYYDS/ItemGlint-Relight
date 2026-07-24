@@ -20,6 +20,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.OrderedSubmitNodeCollector;
 import net.minecraft.client.renderer.RenderBuffers;
@@ -35,6 +36,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
+import org.joml.Vector4f;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -49,6 +51,12 @@ public final class HeldItemOutlineRenderer {
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
     private static final CaptureState MAIN_HAND = new CaptureState();
     private static final CaptureState OFF_HAND = new CaptureState();
+    private static final Map<String, float[][]> MATERIAL_PALETTE_CACHE = new LinkedHashMap<>(128, 0.75F, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, float[][]> eldest) {
+            return size() > 128;
+        }
+    };
     private static InteractionHand recordingHand;
     private static int itemSubmissionDepth;
     private static TextureTarget sceneDepth;
@@ -57,6 +65,7 @@ public final class HeldItemOutlineRenderer {
     private static long nextDiagnosticMillis;
     private static boolean storageWrapped;
     private static int handPasses;
+    private static Matrix4f handProjectionMatrix;
 
     private HeldItemOutlineRenderer() { }
 
@@ -72,9 +81,11 @@ public final class HeldItemOutlineRenderer {
     }
 
     public static void beginHandPass(Matrix4f projection) {
+        handProjectionMatrix = projection == null ? null : new Matrix4f(projection);
     }
 
     public static void endHandPass() {
+        handProjectionMatrix = null;
     }
 
     public static void beginHand(InteractionHand hand, ItemStack stack) {
@@ -88,6 +99,10 @@ public final class HeldItemOutlineRenderer {
         state.requested = true;
         state.item = stack;
         state.stack = stack.toString();
+        if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            state.materialPaletteKey = materialPaletteKey(stack);
+            state.materialPalette = MATERIAL_PALETTE_CACHE.get(state.materialPaletteKey);
+        }
         state.modelViewMatrix = new Matrix4f(RenderSystem.getModelViewMatrix());
         state.projectionMatrix = RenderSystem.getProjectionMatrixBuffer();
         state.projectionType = RenderSystem.getProjectionType();
@@ -98,8 +113,11 @@ public final class HeldItemOutlineRenderer {
         recordingHand = null;
     }
 
-    public static void beginItemSubmission(ItemDisplayContext context) {
+    public static void beginItemSubmission(ItemDisplayContext context, PoseStack pose) {
         if (recordingHand != null && isFirstPersonContext(context)) {
+            if (itemSubmissionDepth == 0 && pose != null) {
+                stateFor(recordingHand).itemPoseMatrix = new Matrix4f(pose.last().pose());
+            }
             itemSubmissionDepth++;
         }
     }
@@ -133,12 +151,19 @@ public final class HeldItemOutlineRenderer {
         }
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         ensureTarget(mainTarget);
-        captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
-        captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
-        compositeCapture(minecraft, mainTarget, MAIN_HAND, "main");
-        compositeCapture(minecraft, mainTarget, OFF_HAND, "off");
-        MAIN_HAND.reset();
-        OFF_HAND.reset();
+        try {
+            if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+                captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
+                captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
+                compositeCapture(minecraft, mainTarget, MAIN_HAND, "main");
+                compositeCapture(minecraft, mainTarget, OFF_HAND, "off");
+            } else {
+                compositeCombined(minecraft, mainTarget);
+            }
+        } finally {
+            MAIN_HAND.reset();
+            OFF_HAND.reset();
+        }
     }
 
     private static void compositeCapture(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, String hand) {
@@ -148,11 +173,27 @@ public final class HeldItemOutlineRenderer {
         clear(sceneDepth);
         sceneDepth.copyDepthFrom(mainTarget);
         renderCapture(minecraft, state);
-        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, ItemGlintRelightConfigManager.get(), minecraft, resolveMaterialPalette(state)));
+        submitComposite(minecraft, mainTarget, resolveMaterialPalette(state), hand, resolveCompositeScissor(mainTarget, state));
+    }
+
+    private static void compositeCombined(Minecraft minecraft, RenderTarget mainTarget) {
+        clear(sceneDepth);
+        sceneDepth.copyDepthFrom(mainTarget);
+        renderCapture(minecraft, MAIN_HAND);
+        renderCapture(minecraft, OFF_HAND);
+        submitComposite(minecraft, mainTarget, resolveMaterialPalette(MAIN_HAND), "combined",
+                ScissorRect.union(resolveCompositeScissor(mainTarget, MAIN_HAND), resolveCompositeScissor(mainTarget, OFF_HAND)));
+    }
+
+    private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, float[][] palette, String hand, ScissorRect scissor) {
+        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, ItemGlintRelightConfigManager.get(), minecraft, palette));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
+            if (scissor != null) {
+                pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
+            }
             pass.setPipeline(HeldItemOutlinePipelines.outline());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("MaskSampler", sceneDepth.getColorTextureView(), maskSampler);
@@ -292,9 +333,9 @@ public final class HeldItemOutlineRenderer {
 
     private static int sampleCount(RenderQuality quality) {
         return switch (quality) {
-            case LOW -> 16;
-            case MEDIUM -> 32;
-            case HIGH -> 64;
+            case LOW -> 12;
+            case MEDIUM -> 24;
+            case HIGH -> 48;
         };
     }
 
@@ -306,13 +347,16 @@ public final class HeldItemOutlineRenderer {
         }
 
         CaptureState state = stateFor(recordingHand);
+        if (state.materialPalette != null) {
+            return;
+        }
         for (BakedQuad quad : quads) {
             if (quad != null) captureTextureColors(state, quad.sprite(), resolveTint(quad, tints));
         }
     }
 
     private static void captureTextureColors(CaptureState state, TextureAtlasSprite sprite, int tint) {
-        if (state == null || sprite == null || sprite.contents() == null) return;
+        if (state == null || state.materialPalette != null || sprite == null || sprite.contents() == null) return;
         NativeImage[] mipLevels = ((SpriteContentsAccessor) (Object) sprite.contents()).itemglintrelight$getByMipLevel();
         NativeImage image = mipLevels == null || mipLevels.length == 0 ? null : mipLevels[0];
         if (image == null) return;
@@ -337,7 +381,7 @@ public final class HeldItemOutlineRenderer {
 
     private static void captureFallbackTextureColors(Minecraft minecraft, CaptureState capture, InteractionHand hand) {
         if (ItemGlintRelightConfigManager.get().outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE
-                || capture == null || !capture.materialColors.isEmpty() || capture.item == null || capture.item.isEmpty()) {
+                || capture == null || capture.materialPalette != null || !capture.materialColors.isEmpty() || capture.item == null || capture.item.isEmpty()) {
             return;
         }
 
@@ -376,9 +420,14 @@ public final class HeldItemOutlineRenderer {
         if (ItemGlintRelightConfigManager.get().outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
             return new float[][]{{1.0F, 1.0F, 1.0F}};
         }
+        if (source.materialPalette != null) {
+            return source.materialPalette;
+        }
         if (source.materialColors.isEmpty()) {
             int fallback = ItemGlintRelightConfigManager.get().outlinePrimaryColor();
-            return new float[][]{{((fallback >>> 16) & 255) / 255.0F, ((fallback >>> 8) & 255) / 255.0F, (fallback & 255) / 255.0F}};
+            source.materialPalette = new float[][]{{((fallback >>> 16) & 255) / 255.0F, ((fallback >>> 8) & 255) / 255.0F, (fallback & 255) / 255.0F}};
+            cacheMaterialPalette(source);
+            return source.materialPalette;
         }
         int limit = Math.min(8, ItemGlintRelightConfigManager.get().outlineSampleColorCount());
         List<Map.Entry<Integer, Integer>> colors = new ArrayList<>(source.materialColors.entrySet());
@@ -392,7 +441,20 @@ public final class HeldItemOutlineRenderer {
             int color = colors.get(index).getKey();
             palette[index] = new float[]{((color >>> 16) & 255) / 255.0F, ((color >>> 8) & 255) / 255.0F, (color & 255) / 255.0F};
         }
+        source.materialPalette = palette;
+        cacheMaterialPalette(source);
         return palette;
+    }
+
+    private static String materialPaletteKey(ItemStack stack) {
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        return stack + "|" + config.outlineSampleSize() + "|" + config.outlineSampleColorCount();
+    }
+
+    private static void cacheMaterialPalette(CaptureState state) {
+        if (state.materialPaletteKey != null && state.materialPalette != null) {
+            MATERIAL_PALETTE_CACHE.put(state.materialPaletteKey, state.materialPalette);
+        }
     }
 
     private static float colorHue(int color) {
@@ -438,8 +500,73 @@ public final class HeldItemOutlineRenderer {
                 | (argb & 0xE0);
     }
 
+    private static ScissorRect resolveCompositeScissor(RenderTarget target, CaptureState state) {
+        if (!state.captured || handProjectionMatrix == null || (state.itemPoseMatrix == null && state.modelViewMatrix == null)) {
+            return null;
+        }
+        Matrix4f itemTransform = state.itemPoseMatrix == null ? state.modelViewMatrix : state.itemPoseMatrix;
+        if (itemTransform == null) {
+            return null;
+        }
+        Matrix4f transform = new Matrix4f(handProjectionMatrix).mul(itemTransform);
+        float minX = Float.POSITIVE_INFINITY;
+        float minY = Float.POSITIVE_INFINITY;
+        float maxX = Float.NEGATIVE_INFINITY;
+        float maxY = Float.NEGATIVE_INFINITY;
+        float[] bounds = new float[]{-1.1F, 0.5F, 2.1F};
+        for (float x : bounds) {
+            for (float y : bounds) {
+                for (float z : bounds) {
+                    Vector4f clip = transform.transform(new Vector4f(x, y, z, 1.0F));
+                    if (!Float.isFinite(clip.w) || Math.abs(clip.w) < 0.0001F) {
+                        continue;
+                    }
+                    float projectedX = clip.x / clip.w;
+                    float projectedY = clip.y / clip.w;
+                    if (!Float.isFinite(projectedX) || !Float.isFinite(projectedY)) {
+                        continue;
+                    }
+                    minX = Math.min(minX, projectedX);
+                    minY = Math.min(minY, projectedY);
+                    maxX = Math.max(maxX, projectedX);
+                    maxY = Math.max(maxY, projectedY);
+                }
+            }
+        }
+        if (!Float.isFinite(minX) || !Float.isFinite(minY) || !Float.isFinite(maxX) || !Float.isFinite(maxY)) {
+            return null;
+        }
+        int x0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, minX)) * 0.5F + 0.5F) * target.width);
+        int y0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, minY)) * 0.5F + 0.5F) * target.height);
+        int x1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxX)) * 0.5F + 0.5F) * target.width);
+        int y1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxY)) * 0.5F + 0.5F) * target.height);
+        int padding = (int) Math.ceil(resolveOutlineRadius(target, ItemGlintRelightConfigManager.get().outlineWidth())) + 8;
+        return ScissorRect.fromCorners(x0 - padding, y0 - padding, x1 + padding, y1 + padding, target.width, target.height);
+    }
+
     private static float resolveOutlineRadius(RenderTarget target, float logicalWidth) {
         return logicalWidth * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
+    }
+
+    private record ScissorRect(int x, int y, int width, int height) {
+        private static ScissorRect fromCorners(int x0, int y0, int x1, int y1, int maxWidth, int maxHeight) {
+            int minimumX = Math.max(0, Math.min(maxWidth, Math.min(x0, x1)));
+            int minimumY = Math.max(0, Math.min(maxHeight, Math.min(y0, y1)));
+            int maximumX = Math.max(0, Math.min(maxWidth, Math.max(x0, x1)));
+            int maximumY = Math.max(0, Math.min(maxHeight, Math.max(y0, y1)));
+            return maximumX > minimumX && maximumY > minimumY
+                    ? new ScissorRect(minimumX, minimumY, maximumX - minimumX, maximumY - minimumY) : null;
+        }
+
+        private static ScissorRect union(ScissorRect first, ScissorRect second) {
+            if (first == null) return second;
+            if (second == null) return first;
+            int x0 = Math.min(first.x, second.x);
+            int y0 = Math.min(first.y, second.y);
+            int x1 = Math.max(first.x + first.width, second.x + second.width);
+            int y1 = Math.max(first.y + first.height, second.y + second.height);
+            return new ScissorRect(x0, y0, x1 - x0, y1 - y0);
+        }
     }
 
     private static void putColor(ByteBuffer buffer, int color, float opacity) {
@@ -479,10 +606,13 @@ public final class HeldItemOutlineRenderer {
         private boolean replayed;
         private int submittedItems;
         private final Map<Integer, Integer> materialColors = new LinkedHashMap<>();
+        private float[][] materialPalette;
+        private String materialPaletteKey;
         private String stack = "-";
         private ItemStack item;
         private String disabledStack = "-";
         private Matrix4f modelViewMatrix;
+        private Matrix4f itemPoseMatrix;
         private GpuBufferSlice projectionMatrix;
         private ProjectionType projectionType;
 
@@ -492,10 +622,13 @@ public final class HeldItemOutlineRenderer {
             replayed = false;
             submittedItems = 0;
             materialColors.clear();
+            materialPalette = null;
+            materialPaletteKey = null;
             item = null;
             stack = "-";
             disabledStack = "-";
             modelViewMatrix = null;
+            itemPoseMatrix = null;
             projectionMatrix = null;
             projectionType = null;
             if (storage != null) storage.clear();

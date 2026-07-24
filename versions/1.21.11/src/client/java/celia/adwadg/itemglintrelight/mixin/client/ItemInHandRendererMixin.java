@@ -44,7 +44,7 @@ public abstract class ItemInHandRendererMixin {
     @Inject(method = "renderItem", at = @At("HEAD"))
     private void itemglintrelight$beginItemSubmission(LivingEntity entity, ItemStack stack, ItemDisplayContext displayContext,
                                                        PoseStack poseStack, SubmitNodeCollector collector, int light, CallbackInfo ci) {
-        HeldItemOutlineRenderer.beginItemSubmission(displayContext);
+        HeldItemOutlineRenderer.beginItemSubmission(displayContext, poseStack);
     }
 
     @Inject(method = "renderItem", at = @At("RETURN"))
