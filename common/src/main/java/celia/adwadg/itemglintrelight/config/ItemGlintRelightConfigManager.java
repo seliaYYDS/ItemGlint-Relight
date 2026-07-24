@@ -61,6 +61,7 @@ public final class ItemGlintRelightConfigManager {
         values.setProperty("outlineColorScrollSpeed", Float.toString(CONFIG.outlineColorScrollSpeed()));
         values.setProperty("outlineColorScrollDirection", Float.toString(CONFIG.outlineColorScrollDirection()));
         values.setProperty("outlineColorScrollInterval", Float.toString(CONFIG.outlineColorScrollInterval()));
+        values.setProperty("outlineColorScrollMode", CONFIG.outlineColorScrollMode().name());
         values.setProperty("outlineSampleSize", Integer.toString(CONFIG.outlineSampleSize()));
         values.setProperty("outlineSampleColorCount", Integer.toString(CONFIG.outlineSampleColorCount()));
 
@@ -115,6 +116,7 @@ public final class ItemGlintRelightConfigManager {
             CONFIG.setOutlineColorScrollSpeed(floatValue(values, "outlineColorScrollSpeed", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_SCROLL_SPEED));
             CONFIG.setOutlineColorScrollDirection(floatValue(values, "outlineColorScrollDirection", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_SCROLL_DIRECTION));
             CONFIG.setOutlineColorScrollInterval(floatValue(values, "outlineColorScrollInterval", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_SCROLL_INTERVAL));
+            CONFIG.setOutlineColorScrollMode(enumValue(values, "outlineColorScrollMode", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_SCROLL_MODE));
             CONFIG.setOutlineSampleSize(intValue(values, "outlineSampleSize", ItemGlintRelightConfig.DEFAULT_OUTLINE_SAMPLE_SIZE));
             CONFIG.setOutlineSampleColorCount(intValue(values, "outlineSampleColorCount", ItemGlintRelightConfig.DEFAULT_OUTLINE_SAMPLE_COLOR_COUNT));
         } catch (IOException exception) {

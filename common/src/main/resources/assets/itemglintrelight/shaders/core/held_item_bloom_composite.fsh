@@ -10,6 +10,8 @@ layout(std140) uniform OutlineInfo {
     vec4 animation;
     vec4 effect;
     vec4 colorScroll;
+    vec4 scrollMode;
+    vec4 scrollBounds;
     vec4 materialPalette[8];
 };
 
@@ -23,7 +25,14 @@ vec3 paletteColor(int index) {
 float scrollPosition() {
     float normalizedInterval = clamp((colorScroll.z - 0.25) / 1.25, 0.0, 1.0);
     float segmentPixels = mix(72.0, 384.0, normalizedInterval);
-    return dot(texCoord * geometry.xy, colorScroll.xy) / segmentPixels - animation.y * animation.z * 0.12;
+    float timeOffset = animation.y * animation.z * 0.12;
+    if (scrollMode.x < 0.5) {
+        return dot(texCoord * geometry.xy, colorScroll.xy) / segmentPixels - timeOffset;
+    }
+    vec2 relative = (texCoord * geometry.xy - scrollMode.yz) / max(scrollBounds.xy, vec2(1.0));
+    float angle = atan(relative.y, relative.x) - atan(colorScroll.y, colorScroll.x);
+    float direction = colorScroll.x < 0.0 ? -1.0 : 1.0;
+    return angle * scrollMode.w / segmentPixels - timeOffset * direction;
 }
 
 vec3 hsvToRgb(float hue, float saturation, float value) {

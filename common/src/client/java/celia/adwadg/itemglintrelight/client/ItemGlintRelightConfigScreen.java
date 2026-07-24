@@ -15,6 +15,7 @@ import celia.adwadg.itemglintrelight.client.ui.UiToggle;
 import celia.adwadg.itemglintrelight.config.RenderQuality;
 import celia.adwadg.itemglintrelight.config.OutlineColorMode;
 import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
+import celia.adwadg.itemglintrelight.config.ColorScrollMode;
 import celia.adwadg.itemglintrelight.config.ui.ItemGlintRelightConfigScreenModel;
 import java.util.List;
 import net.minecraft.client.gui.GuiGraphics;
@@ -47,6 +48,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private UiColorPicker outlinePrimaryColorPicker;
     private UiColorPicker outlineSecondaryColorPicker;
     private UiSlider outlineColorScrollSpeedSlider;
+    private UiDropdown outlineColorScrollModeDropdown;
     private UiColorScrollControl outlineColorScrollControl;
     private UiSlider outlineSampleSizeSlider;
     private UiSlider outlineSampleColorCountSlider;
@@ -138,6 +140,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 () -> model.draft().outlineSecondaryColor(), value -> model.draft().setOutlineSecondaryColor(value));
         outlineColorScrollSpeedSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.color_scroll_speed"), 0.1D, 2.0D, 0.01D,
                 () -> model.draft().outlineColorScrollSpeed(), value -> model.draft().setOutlineColorScrollSpeed(value.floatValue()));
+        List<String> scrollModeOptions = List.of(tr("ui.itemglintrelight.color_scroll_mode.planar"), tr("ui.itemglintrelight.color_scroll_mode.outline"));
+        outlineColorScrollModeDropdown = new UiDropdown(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.color_scroll_mode"), scrollModeOptions,
+                model.draft().outlineColorScrollMode().ordinal(), value -> model.draft().setOutlineColorScrollMode(ColorScrollMode.values()[value]));
         outlineColorScrollControl = new UiColorScrollControl(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.color_scroll_pattern"),
                 () -> model.draft().outlineColorScrollDirection(), () -> model.draft().outlineColorScrollInterval(),
                 (direction, interval) -> {
@@ -209,6 +214,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (outlineRenderModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (outlineQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (usesColorAnimation() && outlineColorScrollModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (model.draft().outlineBloomEnabled() && outlineBloomQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseClicked(mouseX, mouseY, event.button())) return true;
@@ -327,6 +333,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 if (usesPrimaryColor()) outlinePrimaryColorPicker.render(graphics, font, mouseX, mouseY);
                 if (usesSecondaryColor()) outlineSecondaryColorPicker.render(graphics, font, mouseX, mouseY);
                 if (usesColorAnimation()) outlineColorScrollSpeedSlider.render(graphics, font, mouseX, mouseY);
+                if (usesColorAnimation()) outlineColorScrollModeDropdown.render(graphics, font, mouseX, mouseY);
                 if (usesColorAnimation()) outlineColorScrollControl.render(graphics, font, mouseX, mouseY);
                 if (usesTextureSampling()) {
                     outlineSampleSizeSlider.render(graphics, font, mouseX, mouseY);
@@ -389,6 +396,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         }
         if (usesColorAnimation()) {
             outlineColorScrollSpeedSlider.setPosition(contentX, y); y += 42;
+            outlineColorScrollModeDropdown.setPosition(contentX, y); y += 46 + outlineColorScrollModeDropdown.expandedHeight();
             outlineColorScrollControl.setPosition(contentX, y); y += outlineColorScrollControl.height() + 10;
         }
         if (usesTextureSampling()) {

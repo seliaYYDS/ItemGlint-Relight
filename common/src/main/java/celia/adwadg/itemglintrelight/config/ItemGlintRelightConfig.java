@@ -30,6 +30,7 @@ public final class ItemGlintRelightConfig {
     public static final float DEFAULT_OUTLINE_COLOR_SCROLL_SPEED = 1.0F;
     public static final float DEFAULT_OUTLINE_COLOR_SCROLL_DIRECTION = 0.0F;
     public static final float DEFAULT_OUTLINE_COLOR_SCROLL_INTERVAL = 0.75F;
+    public static final ColorScrollMode DEFAULT_OUTLINE_COLOR_SCROLL_MODE = ColorScrollMode.PLANAR;
     public static final int DEFAULT_OUTLINE_SAMPLE_SIZE = 4;
     public static final int DEFAULT_OUTLINE_SAMPLE_COLOR_COUNT = 4;
 
@@ -62,6 +63,7 @@ public final class ItemGlintRelightConfig {
     private float outlineColorScrollSpeed = DEFAULT_OUTLINE_COLOR_SCROLL_SPEED;
     private float outlineColorScrollDirection = DEFAULT_OUTLINE_COLOR_SCROLL_DIRECTION;
     private float outlineColorScrollInterval = DEFAULT_OUTLINE_COLOR_SCROLL_INTERVAL;
+    private ColorScrollMode outlineColorScrollMode = DEFAULT_OUTLINE_COLOR_SCROLL_MODE;
     private int outlineSampleSize = DEFAULT_OUTLINE_SAMPLE_SIZE;
     private int outlineSampleColorCount = DEFAULT_OUTLINE_SAMPLE_COLOR_COUNT;
 
@@ -96,6 +98,7 @@ public final class ItemGlintRelightConfig {
         copy.outlineColorScrollSpeed = outlineColorScrollSpeed;
         copy.outlineColorScrollDirection = outlineColorScrollDirection;
         copy.outlineColorScrollInterval = outlineColorScrollInterval;
+        copy.outlineColorScrollMode = outlineColorScrollMode;
         copy.outlineSampleSize = outlineSampleSize;
         copy.outlineSampleColorCount = outlineSampleColorCount;
         return copy;
@@ -131,6 +134,7 @@ public final class ItemGlintRelightConfig {
         outlineColorScrollSpeed = source.outlineColorScrollSpeed;
         outlineColorScrollDirection = source.outlineColorScrollDirection;
         outlineColorScrollInterval = source.outlineColorScrollInterval;
+        outlineColorScrollMode = source.outlineColorScrollMode;
         outlineSampleSize = source.outlineSampleSize;
         outlineSampleColorCount = source.outlineSampleColorCount;
     }
@@ -195,6 +199,8 @@ public final class ItemGlintRelightConfig {
     }
     public float outlineColorScrollInterval() { return outlineColorScrollInterval; }
     public void setOutlineColorScrollInterval(float outlineColorScrollInterval) { this.outlineColorScrollInterval = clamp(outlineColorScrollInterval, 0.25F, 1.5F); }
+    public ColorScrollMode outlineColorScrollMode() { return outlineColorScrollMode; }
+    public void setOutlineColorScrollMode(ColorScrollMode outlineColorScrollMode) { this.outlineColorScrollMode = outlineColorScrollMode == null ? DEFAULT_OUTLINE_COLOR_SCROLL_MODE : outlineColorScrollMode; }
     public int outlineSampleSize() { return outlineSampleSize; }
     public void setOutlineSampleSize(int outlineSampleSize) { this.outlineSampleSize = Math.max(1, Math.min(8, outlineSampleSize)); }
     public int outlineSampleColorCount() { return outlineSampleColorCount; }
