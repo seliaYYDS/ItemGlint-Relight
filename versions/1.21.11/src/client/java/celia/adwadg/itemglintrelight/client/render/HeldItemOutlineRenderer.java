@@ -60,7 +60,10 @@ public final class HeldItemOutlineRenderer {
     private static InteractionHand recordingHand;
     private static int itemSubmissionDepth;
     private static TextureTarget sceneDepth;
+    private static TextureTarget bloomFirst;
+    private static TextureTarget bloomSecond;
     private static UniformRing uniforms = new UniformRing("itemglintrelight_outline", OUTLINE_UNIFORM_BYTES, 8);
+    private static UniformRing blurUniforms = new UniformRing("itemglintrelight_bloom_blur", OUTLINE_UNIFORM_BYTES, 16);
     private static long frameNumber;
     private static long nextDiagnosticMillis;
     private static boolean storageWrapped;
@@ -78,6 +81,7 @@ public final class HeldItemOutlineRenderer {
         MAIN_HAND.reset();
         OFF_HAND.reset();
         uniforms.beginFrame();
+        blurUniforms.beginFrame();
     }
 
     public static void beginHandPass(Matrix4f projection) {
@@ -186,9 +190,14 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, float[][] palette, String hand, ScissorRect scissor) {
-        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, ItemGlintRelightConfigManager.get(), minecraft, palette));
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        if (config.outlineBloomEnabled()) {
+            GpuTextureView bloom = renderBloom(mainTarget, config, scissor, maskSampler);
+            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, hand);
+        }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
             if (scissor != null) {
@@ -260,8 +269,55 @@ public final class HeldItemOutlineRenderer {
     private static void ensureTarget(RenderTarget mainTarget) {
         if (sceneDepth == null) {
             sceneDepth = new TextureTarget("itemglintrelight_hand_mask", mainTarget.width, mainTarget.height, true);
+            bloomFirst = new TextureTarget("itemglintrelight_hand_bloom_first", mainTarget.width, mainTarget.height, false);
+            bloomSecond = new TextureTarget("itemglintrelight_hand_bloom_second", mainTarget.width, mainTarget.height, false);
         } else if (sceneDepth.width != mainTarget.width || sceneDepth.height != mainTarget.height) {
             sceneDepth.resize(mainTarget.width, mainTarget.height);
+            bloomFirst.resize(mainTarget.width, mainTarget.height);
+            bloomSecond.resize(mainTarget.width, mainTarget.height);
+        }
+    }
+
+    private static GpuTextureView renderBloom(RenderTarget target, ItemGlintRelightConfig config, ScissorRect scissor, GpuSampler sampler) {
+        int passes = config.outlineBloomBlurPasses();
+        float radius = resolveBloomRadius(target, config) / (float) Math.sqrt(passes);
+        GpuTextureView source = sceneDepth.getColorTextureView();
+        for (int pass = 0; pass < passes; pass++) {
+            renderBloomBlur(target, bloomFirst, source, radius, 1.0F, 0.0F, config.outlineBloomQuality(), scissor, sampler, "horizontal");
+            renderBloomBlur(target, bloomSecond, bloomFirst.getColorTextureView(), radius, 0.0F, 1.0F, config.outlineBloomQuality(), scissor, sampler, "vertical");
+            source = bloomSecond.getColorTextureView();
+        }
+        return source;
+    }
+
+    private static void renderBloomBlur(RenderTarget mainTarget, TextureTarget destination, GpuTextureView source, float radius, float directionX,
+                                        float directionY, RenderQuality quality, ScissorRect scissor, GpuSampler sampler, String direction) {
+        GpuBufferSlice blurInfo = blurUniforms.write(buffer -> put(buffer, directionX / mainTarget.width, directionY / mainTarget.height,
+                radius, bloomSamples(quality)));
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_held_bloom_blur_" + direction, destination.getColorTextureView(), OptionalInt.empty())) {
+            if (scissor != null) {
+                pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
+            }
+            pass.setPipeline(HeldItemOutlinePipelines.bloomBlur());
+            pass.setUniform("BlurInfo", blurInfo);
+            pass.bindTexture("InputSampler", source, sampler);
+            pass.draw(0, 3);
+        }
+    }
+
+    private static void submitBloomComposite(RenderTarget mainTarget, GpuTextureView bloom, GpuBufferSlice info, ScissorRect scissor,
+                                             GpuSampler sampler, String hand) {
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_held_bloom_composite_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
+            if (scissor != null) {
+                pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
+            }
+            pass.setPipeline(HeldItemOutlinePipelines.bloomComposite());
+            pass.setUniform("OutlineInfo", info);
+            pass.bindTexture("BloomSampler", bloom, sampler);
+            pass.bindTexture("MaskSampler", sceneDepth.getColorTextureView(), sampler);
+            pass.draw(0, 3);
         }
     }
 
@@ -313,7 +369,7 @@ public final class HeldItemOutlineRenderer {
         float time = minecraft.level == null ? 0.0F
                 : (minecraft.level.getGameTime() + minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false)) * 0.05F;
         put(buffer, colorMode(config.outlineColorMode()), time, config.outlineColorScrollSpeed() * 9.0F, config.outlineSoftness());
-        put(buffer, sampleCount(config.outlineQuality()), config.outlineGlowIntensity(), materialPalette.length, 0.0F);
+        put(buffer, sampleCount(config.outlineQuality()), config.outlineGlowIntensity(), materialPalette.length, config.outlineBloomIntensity());
         float directionRadians = (float) Math.toRadians(config.outlineColorScrollDirection());
         put(buffer, (float) Math.cos(directionRadians), -(float) Math.sin(directionRadians), config.outlineColorScrollInterval(), 0.0F);
         for (int index = 0; index < 8; index++) {
@@ -336,6 +392,14 @@ public final class HeldItemOutlineRenderer {
             case LOW -> 12;
             case MEDIUM -> 24;
             case HIGH -> 48;
+        };
+    }
+
+    private static int bloomSamples(RenderQuality quality) {
+        return switch (quality) {
+            case LOW -> 2;
+            case MEDIUM -> 4;
+            case HIGH -> 6;
         };
     }
 
@@ -540,12 +604,21 @@ public final class HeldItemOutlineRenderer {
         int y0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, minY)) * 0.5F + 0.5F) * target.height);
         int x1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxX)) * 0.5F + 0.5F) * target.width);
         int y1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxY)) * 0.5F + 0.5F) * target.height);
-        int padding = (int) Math.ceil(resolveOutlineRadius(target, ItemGlintRelightConfigManager.get().outlineWidth())) + 8;
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        float paddingRadius = resolveOutlineRadius(target, config.outlineWidth());
+        if (config.outlineBloomEnabled()) {
+            paddingRadius += resolveBloomRadius(target, config) * config.outlineBloomBlurPasses();
+        }
+        int padding = (int) Math.ceil(paddingRadius) + 8;
         return ScissorRect.fromCorners(x0 - padding, y0 - padding, x1 + padding, y1 + padding, target.width, target.height);
     }
 
     private static float resolveOutlineRadius(RenderTarget target, float logicalWidth) {
         return logicalWidth * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
+    }
+
+    private static float resolveBloomRadius(RenderTarget target, ItemGlintRelightConfig config) {
+        return config.outlineBloomRadius() * 3.0F * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
     }
 
     private record ScissorRect(int x, int y, int width, int height) {
