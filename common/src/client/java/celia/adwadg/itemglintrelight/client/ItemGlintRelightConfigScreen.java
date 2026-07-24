@@ -14,6 +14,7 @@ import celia.adwadg.itemglintrelight.client.ui.UiTrailStarParticles;
 import celia.adwadg.itemglintrelight.client.ui.UiToggle;
 import celia.adwadg.itemglintrelight.config.RenderQuality;
 import celia.adwadg.itemglintrelight.config.OutlineColorMode;
+import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
 import celia.adwadg.itemglintrelight.config.ui.ItemGlintRelightConfigScreenModel;
 import java.util.List;
 import net.minecraft.client.gui.GuiGraphics;
@@ -34,6 +35,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private UiSlider outlineSoftnessSlider;
     private UiSlider outlineThresholdSlider;
     private UiSlider outlineOpacitySlider;
+    private UiDropdown outlineRenderModeDropdown;
     private UiDropdown outlineQualityDropdown;
     private UiSlider outlineGlowIntensitySlider;
     private UiToggle outlineBloomToggle;
@@ -108,6 +110,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 () -> model.draft().outlineAlphaThreshold(), value -> model.draft().setOutlineAlphaThreshold(value.floatValue()));
         outlineOpacitySlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.outline_opacity"), 0.0D, 100.0D, 1.0D,
                 () -> model.draft().outlineOpacity() * 100.0D, value -> model.draft().setOutlineOpacity(value.floatValue() / 100.0F));
+        List<String> renderModeOptions = List.of(tr("ui.itemglintrelight.render_mode.flat"), tr("ui.itemglintrelight.render_mode.cubic"));
+        outlineRenderModeDropdown = new UiDropdown(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.render_mode"), renderModeOptions,
+                model.draft().outlineRenderMode().ordinal(), value -> model.draft().setOutlineRenderMode(OutlineRenderMode.values()[value]));
         List<String> qualityOptions = List.of(tr("ui.itemglintrelight.quality.low"), tr("ui.itemglintrelight.quality.medium"), tr("ui.itemglintrelight.quality.high"));
         outlineQualityDropdown = new UiDropdown(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.outline_quality"), qualityOptions,
                 model.draft().outlineQuality().ordinal(), value -> model.draft().setOutlineQuality(RenderQuality.values()[value]));
@@ -202,6 +207,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         }
         if (page == Page.RENDER) {
             if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (outlineRenderModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (outlineQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (model.draft().outlineBloomEnabled() && outlineBloomQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseClicked(mouseX, mouseY, event.button())) return true;
@@ -316,6 +322,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 outlineSoftnessSlider.render(graphics, font, mouseX, mouseY);
                 outlineThresholdSlider.render(graphics, font, mouseX, mouseY);
                 outlineOpacitySlider.render(graphics, font, mouseX, mouseY);
+                outlineRenderModeDropdown.render(graphics, font, mouseX, mouseY);
                 outlineColorModeDropdown.render(graphics, font, mouseX, mouseY);
                 if (usesPrimaryColor()) outlinePrimaryColorPicker.render(graphics, font, mouseX, mouseY);
                 if (usesSecondaryColor()) outlineSecondaryColorPicker.render(graphics, font, mouseX, mouseY);
@@ -372,6 +379,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         outlineSoftnessSlider.setPosition(contentX, y); y += 42;
         outlineThresholdSlider.setPosition(contentX, y); y += 42;
         outlineOpacitySlider.setPosition(contentX, y); y += 42;
+        outlineRenderModeDropdown.setPosition(contentX, y); y += 46 + outlineRenderModeDropdown.expandedHeight();
         outlineColorModeDropdown.setPosition(contentX, y); y += 46 + outlineColorModeDropdown.expandedHeight();
         if (usesPrimaryColor()) {
             outlinePrimaryColorPicker.setPosition(contentX, y); y += outlinePrimaryColorPicker.height() + 16;

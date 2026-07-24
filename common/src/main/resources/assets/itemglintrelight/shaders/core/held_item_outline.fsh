@@ -91,6 +91,10 @@ float glowIntensity() {
     return clamp(effect.y, 0.0, 2.0);
 }
 
+bool cubicMode() {
+    return colorScroll.w > 0.5;
+}
+
 void main() {
     vec2 texel = 1.0 / max(geometry.xy, vec2(1.0));
     float softness = cornerSoftness();
@@ -101,8 +105,35 @@ void main() {
         : smoothstep(geometry.w - 0.02, geometry.w + 0.02, coverage(texCoord));
     float outer = 0.0;
     float nearestDepth = 1.0;
+    float cubicLight = 1.0;
     float glow = glowIntensity();
-    if (softness <= 0.001) {
+    if (cubicMode()) {
+        int cubicRadius = max(1, int(floor(geometry.z + 0.5)));
+        vec2 faceSum = vec2(0.0);
+        float lightWeight = 0.0;
+        for (int y = -cubicRadius; y <= cubicRadius; y++) {
+            for (int x = -cubicRadius; x <= cubicRadius; x++) {
+                ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), maskSize - ivec2(1));
+                float sampleCoverage = texelFetch(MaskSampler, samplePixel, 0).a;
+                if (sampleCoverage > geometry.w) {
+                    float layer = 1.0 - float(max(abs(x), abs(y))) / float(cubicRadius + 1);
+                    float weight = 0.20 + 0.80 * layer;
+                    faceSum += vec2(float(-x), float(-y)) * weight;
+                    lightWeight += weight;
+                    nearestDepth = min(nearestDepth, texelFetch(ItemDepthSampler, samplePixel, 0).r);
+                }
+                outer = max(outer, sampleCoverage);
+            }
+        }
+        if (lightWeight > 0.0001) {
+            vec2 face = normalize(faceSum);
+            float horizontalLight = face.x < 0.0 ? 0.96 : 0.72;
+            float verticalLight = face.y < 0.0 ? 1.14 : 0.64;
+            float faceDelta = abs(face.x) - abs(face.y);
+            float seam = max(fwidth(faceDelta) * 2.5, 0.055);
+            cubicLight = mix(verticalLight, horizontalLight, smoothstep(-seam, seam, faceDelta));
+        }
+    } else if (softness <= 0.001) {
         int sharpRadius = max(1, int(floor(geometry.z + 0.5)));
         for (int y = -sharpRadius; y <= sharpRadius; y++) {
             for (int x = -sharpRadius; x <= sharpRadius; x++) {
@@ -138,5 +169,5 @@ void main() {
     vec3 outlineColor = resolveColor();
     float chromaSafeGain = 1.0 / max(max(outlineColor.r, outlineColor.g), max(outlineColor.b, 0.0001));
     float brightnessGain = min(1.0 + glow * 0.35, chromaSafeGain);
-    fragColor = vec4(outlineColor * brightnessGain, alpha);
+    fragColor = vec4(outlineColor * brightnessGain * cubicLight, alpha);
 }

@@ -4,6 +4,7 @@ import celia.adwadg.itemglintrelight.ItemGlintRelight;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfigManager;
 import celia.adwadg.itemglintrelight.config.OutlineColorMode;
+import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
 import celia.adwadg.itemglintrelight.config.RenderQuality;
 import celia.adwadg.itemglintrelight.mixin.client.FeatureRenderDispatcherAccessor;
 import celia.adwadg.itemglintrelight.mixin.client.ItemStackLayerRenderStateAccessor;
@@ -210,7 +211,7 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("SceneDepthSampler", mainTarget.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
             diagnostic("composite " + hand + " submitted target=" + mainTarget.width + "x" + mainTarget.height
-                    + " radius=" + resolveOutlineRadius(mainTarget, ItemGlintRelightConfigManager.get().outlineWidth()));
+                    + " radius=" + resolveOutlineRadius(mainTarget, ItemGlintRelightConfigManager.get()));
         }
     }
 
@@ -365,13 +366,13 @@ public final class HeldItemOutlineRenderer {
     private static void writeUniforms(ByteBuffer buffer, RenderTarget target, ItemGlintRelightConfig config, Minecraft minecraft, float[][] materialPalette) {
         putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
         putColor(buffer, config.outlineSecondaryColor(), config.outlineOpacity());
-        put(buffer, target.width, target.height, resolveOutlineRadius(target, config.outlineWidth()), config.outlineAlphaThreshold());
+        put(buffer, target.width, target.height, resolveOutlineRadius(target, config), config.outlineAlphaThreshold());
         float time = minecraft.level == null ? 0.0F
                 : (minecraft.level.getGameTime() + minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false)) * 0.05F;
         put(buffer, colorMode(config.outlineColorMode()), time, config.outlineColorScrollSpeed() * 9.0F, config.outlineSoftness());
         put(buffer, sampleCount(config.outlineQuality()), config.outlineGlowIntensity(), materialPalette.length, config.outlineBloomIntensity());
         float directionRadians = (float) Math.toRadians(config.outlineColorScrollDirection());
-        put(buffer, (float) Math.cos(directionRadians), -(float) Math.sin(directionRadians), config.outlineColorScrollInterval(), 0.0F);
+        put(buffer, (float) Math.cos(directionRadians), -(float) Math.sin(directionRadians), config.outlineColorScrollInterval(), renderMode(config.outlineRenderMode()));
         for (int index = 0; index < 8; index++) {
             float[] color = index < materialPalette.length ? materialPalette[index] : materialPalette[0];
             put(buffer, color[0], color[1], color[2], 1.0F);
@@ -393,6 +394,10 @@ public final class HeldItemOutlineRenderer {
             case MEDIUM -> 24;
             case HIGH -> 48;
         };
+    }
+
+    private static float renderMode(OutlineRenderMode mode) {
+        return mode == OutlineRenderMode.CUBIC ? 1.0F : 0.0F;
     }
 
     private static int bloomSamples(RenderQuality quality) {
@@ -605,7 +610,7 @@ public final class HeldItemOutlineRenderer {
         int x1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxX)) * 0.5F + 0.5F) * target.width);
         int y1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxY)) * 0.5F + 0.5F) * target.height);
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
-        float paddingRadius = resolveOutlineRadius(target, config.outlineWidth());
+        float paddingRadius = resolveOutlineRadius(target, config);
         if (config.outlineBloomEnabled()) {
             paddingRadius += resolveBloomRadius(target, config) * config.outlineBloomBlurPasses();
         }
@@ -613,8 +618,12 @@ public final class HeldItemOutlineRenderer {
         return ScissorRect.fromCorners(x0 - padding, y0 - padding, x1 + padding, y1 + padding, target.width, target.height);
     }
 
-    private static float resolveOutlineRadius(RenderTarget target, float logicalWidth) {
-        return logicalWidth * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
+    private static float resolveOutlineRadius(RenderTarget target, ItemGlintRelightConfig config) {
+        float width = config.outlineWidth();
+        if (config.outlineRenderMode() == OutlineRenderMode.CUBIC) {
+            width *= 1.2F;
+        }
+        return width * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
     }
 
     private static float resolveBloomRadius(RenderTarget target, ItemGlintRelightConfig config) {

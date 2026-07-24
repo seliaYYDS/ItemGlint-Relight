@@ -23,6 +23,7 @@ public final class ItemGlintRelightConfig {
     public static final float DEFAULT_OUTLINE_BLOOM_RADIUS = 2.0F;
     public static final float DEFAULT_OUTLINE_BLOOM_INTENSITY = 1.0F;
     public static final int DEFAULT_OUTLINE_BLOOM_BLUR_PASSES = 2;
+    public static final OutlineRenderMode DEFAULT_OUTLINE_RENDER_MODE = OutlineRenderMode.FLAT;
     public static final OutlineColorMode DEFAULT_OUTLINE_COLOR_MODE = OutlineColorMode.SINGLE;
     public static final int DEFAULT_OUTLINE_PRIMARY_COLOR = 0xFF30B8FF;
     public static final int DEFAULT_OUTLINE_SECONDARY_COLOR = 0xFF8CFF45;
@@ -54,6 +55,7 @@ public final class ItemGlintRelightConfig {
     private float outlineBloomRadius = DEFAULT_OUTLINE_BLOOM_RADIUS;
     private float outlineBloomIntensity = DEFAULT_OUTLINE_BLOOM_INTENSITY;
     private int outlineBloomBlurPasses = DEFAULT_OUTLINE_BLOOM_BLUR_PASSES;
+    private OutlineRenderMode outlineRenderMode = DEFAULT_OUTLINE_RENDER_MODE;
     private OutlineColorMode outlineColorMode = DEFAULT_OUTLINE_COLOR_MODE;
     private int outlinePrimaryColor = DEFAULT_OUTLINE_PRIMARY_COLOR;
     private int outlineSecondaryColor = DEFAULT_OUTLINE_SECONDARY_COLOR;
@@ -87,6 +89,7 @@ public final class ItemGlintRelightConfig {
         copy.outlineBloomRadius = outlineBloomRadius;
         copy.outlineBloomIntensity = outlineBloomIntensity;
         copy.outlineBloomBlurPasses = outlineBloomBlurPasses;
+        copy.outlineRenderMode = outlineRenderMode;
         copy.outlineColorMode = outlineColorMode;
         copy.outlinePrimaryColor = outlinePrimaryColor;
         copy.outlineSecondaryColor = outlineSecondaryColor;
@@ -121,6 +124,7 @@ public final class ItemGlintRelightConfig {
         outlineBloomRadius = source.outlineBloomRadius;
         outlineBloomIntensity = source.outlineBloomIntensity;
         outlineBloomBlurPasses = source.outlineBloomBlurPasses;
+        outlineRenderMode = source.outlineRenderMode;
         outlineColorMode = source.outlineColorMode;
         outlinePrimaryColor = source.outlinePrimaryColor;
         outlineSecondaryColor = source.outlineSecondaryColor;
@@ -175,6 +179,8 @@ public final class ItemGlintRelightConfig {
     public void setOutlineBloomIntensity(float outlineBloomIntensity) { this.outlineBloomIntensity = clamp(outlineBloomIntensity, 0.25F, 8.0F); }
     public int outlineBloomBlurPasses() { return outlineBloomBlurPasses; }
     public void setOutlineBloomBlurPasses(int outlineBloomBlurPasses) { this.outlineBloomBlurPasses = Math.max(1, Math.min(6, outlineBloomBlurPasses)); }
+    public OutlineRenderMode outlineRenderMode() { return outlineRenderMode; }
+    public void setOutlineRenderMode(OutlineRenderMode outlineRenderMode) { this.outlineRenderMode = outlineRenderMode == null ? DEFAULT_OUTLINE_RENDER_MODE : outlineRenderMode; }
     public OutlineColorMode outlineColorMode() { return outlineColorMode; }
     public void setOutlineColorMode(OutlineColorMode outlineColorMode) { this.outlineColorMode = outlineColorMode == null ? DEFAULT_OUTLINE_COLOR_MODE : outlineColorMode; }
     public int outlinePrimaryColor() { return outlinePrimaryColor; }
