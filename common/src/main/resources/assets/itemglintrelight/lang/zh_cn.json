@@ -74,5 +74,7 @@
   "ui.itemglintrelight.reset": "恢复默认",
   "ui.itemglintrelight.save": "保存",
   "ui.itemglintrelight.save_hint": "点击保存以应用更改。",
-  "ui.itemglintrelight.color_picker_demo": "颜色选择器"
+  "ui.itemglintrelight.color_picker_demo": "颜色选择器",
+  "ui.itemglintrelight.preview.title": "描边预览",
+  "ui.itemglintrelight.preview.item": "钻石剑"
 }

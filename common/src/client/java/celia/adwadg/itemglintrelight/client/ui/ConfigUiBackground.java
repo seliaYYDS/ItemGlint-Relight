@@ -13,8 +13,8 @@ public final class ConfigUiBackground {
         renderAnimatedBorder(graphics, left - 1, top - 1, right + 1, bottom + 1);
         graphics.fill(left, top, right, bottom, UiPalette.DEEP_BLUE);
         graphics.fill(sidebarRight, top + 18, sidebarRight + 1, bottom - 18, UiPalette.DIVIDER);
-        graphics.fill(right - 130, top + 63, right - 24, top + 64, UiPalette.DIVIDER);
-        graphics.fill(right - 130, bottom - 58, right - 24, bottom - 57, UiPalette.DIVIDER);
+        graphics.fill(sidebarRight + 12, top + 28, right - 12, top + 29, UiPalette.DIVIDER);
+        graphics.fill(sidebarRight + 12, bottom - 50, right - 12, bottom - 49, UiPalette.DIVIDER);
     }
 
     private static void renderAnimatedBorder(GuiGraphics graphics, int left, int top, int right, int bottom) {

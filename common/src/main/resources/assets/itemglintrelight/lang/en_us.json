@@ -73,6 +73,8 @@
   "ui.itemglintrelight.glint.animation_speed": "Glint animation speed",
   "ui.itemglintrelight.reset": "RESET",
   "ui.itemglintrelight.save": "SAVE",
-  "ui.itemglintrelight.save_hint": "Save changes with SAVE."
-  ,"ui.itemglintrelight.color_picker_demo": "COLOUR PICKER"
+  "ui.itemglintrelight.save_hint": "Save changes with SAVE.",
+  "ui.itemglintrelight.color_picker_demo": "COLOUR PICKER",
+  "ui.itemglintrelight.preview.title": "OUTLINE PREVIEW",
+  "ui.itemglintrelight.preview.item": "Diamond Sword"
 }

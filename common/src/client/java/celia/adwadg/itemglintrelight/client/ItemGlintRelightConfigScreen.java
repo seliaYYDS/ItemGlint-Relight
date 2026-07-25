@@ -12,18 +12,44 @@ import celia.adwadg.itemglintrelight.client.ui.UiPalette;
 import celia.adwadg.itemglintrelight.client.ui.UiSlider;
 import celia.adwadg.itemglintrelight.client.ui.UiTrailStarParticles;
 import celia.adwadg.itemglintrelight.client.ui.UiToggle;
+import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
+import celia.adwadg.itemglintrelight.client.render.ItemPreviewRenderState;
+import celia.adwadg.itemglintrelight.mixin.client.GuiGraphicsAccessor;
 import celia.adwadg.itemglintrelight.config.RenderQuality;
 import celia.adwadg.itemglintrelight.config.OutlineColorMode;
 import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
 import celia.adwadg.itemglintrelight.config.ColorScrollMode;
 import celia.adwadg.itemglintrelight.config.ui.ItemGlintRelightConfigScreenModel;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import org.lwjgl.glfw.GLFW;
 
 public final class ItemGlintRelightConfigScreen extends Screen {
+    private static final int ITEM_PICKER_X = 156;
+    private static final int ITEM_PICKER_Y = 36;
+    private static final int ITEM_PICKER_WIDTH = 472;
+    private static final int ITEM_PICKER_HEIGHT = 248;
+    private static final int ITEM_PICKER_ROW_HEIGHT = 34;
+    private static final int PREVIEW_X = 156;
+    private static final int PREVIEW_Y = 28;
+    private static final int PREVIEW_WIDTH = 472;
+    private static final int PREVIEW_HEIGHT = 262;
+    private static final int RIGHT_CONTENT_TOP = 28;
+    private static final int RIGHT_CONTENT_BOTTOM = 50;
     private final Screen parent;
     private final ItemGlintRelightConfigScreenModel model = new ItemGlintRelightConfigScreenModel();
     private UiButton saveButton;
@@ -71,6 +97,26 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private long lastRenderScrollFrame;
     private final float[] navigationFill = new float[Page.values().length];
     private long lastNavigationFrame;
+    private float previewPitch = -25.0F;
+    private float previewYaw = -35.0F;
+    private float previewRoll;
+    private float previewOffsetX;
+    private float previewOffsetY;
+    private float previewZoom = 72.0F;
+    private boolean draggingPreview;
+    private boolean panningPreview;
+    private boolean rollingPreview;
+    private ItemStack previewItem = new ItemStack(Items.DIAMOND_SWORD);
+    private final List<ItemChoice> allItemChoices = new ArrayList<>();
+    private List<ItemChoice> filteredItemChoices = List.of();
+    private boolean itemPickerOpen;
+    private float itemPickerAnimation;
+    private String itemSearch = "";
+    private float itemPickerScroll;
+    private float itemPickerScrollTarget;
+    private float previewItemNameHover;
+    private long lastPreviewNameFrame;
+    private long lastPickerScrollFrame;
 
     public ItemGlintRelightConfigScreen(Screen parent) {
         super(Component.literal("ItemGlintRelight"));
@@ -94,15 +140,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         });
         int contentX = sidebarRight + 24;
         int contentWidth = right - contentX - 24;
-        outlineToggle = new UiToggle(contentX, top + 92, contentWidth, tr("ui.itemglintrelight.outline.enabled"),
+        outlineToggle = new UiToggle(contentX, top + 44, contentWidth, tr("ui.itemglintrelight.outline.enabled"),
                 () -> model.draft().outlineEnabled(), value -> model.draft().setOutlineEnabled(value));
-        mainHandToggle = new UiToggle(contentX, top + 126, contentWidth, tr("ui.itemglintrelight.outline.main_hand"),
+        mainHandToggle = new UiToggle(contentX, top + 78, contentWidth, tr("ui.itemglintrelight.outline.main_hand"),
                 () -> model.draft().outlineMainHand(), value -> model.draft().setOutlineMainHand(value));
-        offHandToggle = new UiToggle(contentX, top + 152, contentWidth, tr("ui.itemglintrelight.outline.off_hand"),
+        offHandToggle = new UiToggle(contentX, top + 104, contentWidth, tr("ui.itemglintrelight.outline.off_hand"),
                 () -> model.draft().outlineOffHand(), value -> model.draft().setOutlineOffHand(value));
-        thirdPersonToggle = new UiToggle(contentX, top + 178, contentWidth, tr("ui.itemglintrelight.outline.third_person"),
+        thirdPersonToggle = new UiToggle(contentX, top + 130, contentWidth, tr("ui.itemglintrelight.outline.third_person"),
                 () -> model.draft().outlineThirdPerson(), value -> model.draft().setOutlineThirdPerson(value));
-        guiItemsToggle = new UiToggle(contentX, top + 204, contentWidth, tr("ui.itemglintrelight.outline.gui_items"),
+        guiItemsToggle = new UiToggle(contentX, top + 156, contentWidth, tr("ui.itemglintrelight.outline.gui_items"),
                 () -> model.draft().outlineGuiItems(), value -> model.draft().setOutlineGuiItems(value));
         outlineWidthSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.outline_width"), 0.25D, 8.0D, 0.05D,
                 () -> model.draft().outlineWidth(), value -> model.draft().setOutlineWidth(value.floatValue()));
@@ -155,9 +201,11 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 () -> model.draft().outlineSampleColorCount(), value -> model.draft().setOutlineSampleColorCount(value.intValue()));
         mouseGlow = new UiMouseGlow();
         starParticles = new UiTrailStarParticles();
+        rebuildItemChoices();
         navigationFill[page.ordinal()] = 1.0F;
         lastNavigationFrame = System.nanoTime();
         lastPageTransitionFrame = System.nanoTime();
+        lastPreviewNameFrame = System.nanoTime();
     }
 
     @Override
@@ -183,6 +231,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         renderPageContent(graphics, logicalMouseX, logicalMouseY);
         saveButton.render(graphics, font, logicalMouseX, logicalMouseY);
         SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.save_hint"), sidebarRight + 24, bottom - 35, 0.66F, UiPalette.MUTED_TEXT);
+        if (itemPickerOpen) {
+            renderItemPicker(graphics, logicalMouseX, logicalMouseY);
+        }
         graphics.pose().popMatrix();
     }
 
@@ -190,6 +241,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         double mouseX = (event.x() - originX) / uiScale;
         double mouseY = (event.y() - originY) / uiScale;
+        if (itemPickerOpen) {
+            return handleItemPickerClick(mouseX, mouseY, event.button());
+        }
         Page nextPage = pageAt(mouseX, mouseY);
         if (nextPage != null) {
             if (nextPage != page) {
@@ -209,6 +263,16 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (offHandToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (thirdPersonToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (guiItemsToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
+        }
+        if (page == Page.PREVIEW && isPreviewItemLabel(mouseX, mouseY)) {
+            openItemPicker();
+            return true;
+        }
+        if (page == Page.PREVIEW && isInPreviewCanvas(mouseX, mouseY)) {
+            if (event.button() == 0) draggingPreview = true;
+            if (event.button() == 2) panningPreview = true;
+            if (event.button() == 1) rollingPreview = true;
+            return event.button() == 0 || event.button() == 1 || event.button() == 2;
         }
         if (page == Page.RENDER) {
             if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
@@ -257,11 +321,30 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineBloomIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
         }
+        if (page == Page.PREVIEW) {
+            if (draggingPreview && event.button() == 0) {
+                previewYaw += (float) dragX / uiScale * 0.8F;
+                previewPitch = Math.max(-89.0F, Math.min(89.0F, previewPitch + (float) dragY / uiScale * 0.8F));
+                return true;
+            }
+            if (panningPreview && event.button() == 2) {
+                previewOffsetX += (float) dragX / uiScale;
+                previewOffsetY += (float) dragY / uiScale;
+                return true;
+            }
+            if (rollingPreview && event.button() == 1) {
+                previewRoll += (float) dragX / uiScale * 0.8F;
+                return true;
+            }
+        }
         return super.mouseDragged(event, dragX, dragY);
     }
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
+        draggingPreview = false;
+        panningPreview = false;
+        rollingPreview = false;
         outlineWidthSlider.stopDragging();
         outlineSoftnessSlider.stopDragging();
         outlineThresholdSlider.stopDragging();
@@ -283,16 +366,54 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         double localMouseX = (mouseX - originX) / uiScale;
         double localMouseY = (mouseY - originY) / uiScale;
+        if (itemPickerOpen) {
+            itemPickerScrollTarget = clampItemPickerScroll(itemPickerScrollTarget - (float) verticalAmount * 2.5F);
+            return true;
+        }
         if (page == Page.RENDER && localMouseX >= sidebarRight && localMouseX < right
-                && localMouseY >= top + 72 && localMouseY < bottom - 64) {
+                && localMouseY >= top + RIGHT_CONTENT_TOP && localMouseY < bottom - RIGHT_CONTENT_BOTTOM) {
             renderScrollTarget = Math.max(0.0F, Math.min(maxRenderScroll(), renderScrollTarget - (float) verticalAmount * 48.0F));
+            return true;
+        }
+        if (page == Page.PREVIEW && isInPreviewCanvas(localMouseX, localMouseY)) {
+            zoomPreview((float) localMouseX, (float) localMouseY, (float) verticalAmount);
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
     @Override
+    public boolean keyPressed(KeyEvent event) {
+        if (!itemPickerOpen) return super.keyPressed(event);
+        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+            closeItemPicker();
+            return true;
+        }
+        if (event.key() == GLFW.GLFW_KEY_BACKSPACE && !itemSearch.isEmpty()) {
+            itemSearch = itemSearch.substring(0, itemSearch.offsetByCodePoints(itemSearch.length(), -1));
+            filterItemChoices();
+            return true;
+        }
+        if (event.key() == GLFW.GLFW_KEY_ENTER && !filteredItemChoices.isEmpty()) {
+            selectPreviewItem(filteredItemChoices.get(0));
+            return true;
+        }
+        return true;
+    }
+
+    @Override
+    public boolean charTyped(CharacterEvent event) {
+        if (!itemPickerOpen) return super.charTyped(event);
+        if (event.isAllowedChatCharacter() && itemSearch.length() < 96) {
+            itemSearch += event.codepointAsString();
+            filterItemChoices();
+        }
+        return true;
+    }
+
+    @Override
     public void onClose() {
+        HeldItemOutlineRenderer.clearQueuedPreview();
         if (mouseGlow != null) {
             mouseGlow.close();
         }
@@ -318,7 +439,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
 
     private void renderPageContent(GuiGraphics graphics, int mouseX, int mouseY) {
         updatePageTransition();
-        graphics.enableScissor(sidebarRight + 12, top + 72, right - 12, bottom - 64);
+        graphics.enableScissor(sidebarRight + 12, top + RIGHT_CONTENT_TOP, right - 12, bottom - RIGHT_CONTENT_BOTTOM);
         graphics.pose().pushMatrix();
         graphics.pose().translate(Math.round((1.0F - pageTransition) * 24.0F), 0.0F);
         if (page != Page.GENERAL) {
@@ -348,6 +469,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                     outlineBloomIntensitySlider.render(graphics, font, mouseX, mouseY);
                     outlineBloomBlurPassesSlider.render(graphics, font, mouseX, mouseY);
                 }
+            } else if (page == Page.PREVIEW) {
+                renderPreview(graphics, mouseX, mouseY);
             }
             graphics.pose().popMatrix();
             graphics.disableScissor();
@@ -372,6 +495,232 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         pageTransition = UiMath.approach(pageTransition, 1.0F, delta, 14.0F);
     }
 
+    private void renderPreview(GuiGraphics graphics, int mouseX, int mouseY) {
+        renderPreviewGrid(graphics);
+        String itemName = previewItem.getHoverName().getString();
+        boolean hovered = isPreviewItemLabel(mouseX, mouseY);
+        previewItemNameHover = UiMath.approach(previewItemNameHover, hovered ? 1.0F : 0.0F, previewDeltaSeconds(), 12.0F);
+        int itemNameColor = UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, previewItemNameHover);
+        SmoothTextRenderer.draw(graphics, font, itemName, PREVIEW_X + 14, PREVIEW_Y + 12, 0.88F, itemNameColor);
+        int itemNameWidth = SmoothTextRenderer.width(itemName, 0.88F, itemNameColor);
+        graphics.fill(PREVIEW_X + 14, PREVIEW_Y + 29, PREVIEW_X + 14 + Math.round(itemNameWidth * previewItemNameHover), PREVIEW_Y + 30, itemNameColor);
+        SmoothTextRenderer.draw(graphics, font, "点击更换物品", PREVIEW_X + 14, PREVIEW_Y + 31, 0.56F, UiPalette.MUTED_TEXT);
+
+        int previewLeft = Math.round(originX + PREVIEW_X * uiScale);
+        int previewTop = Math.round(originY + PREVIEW_Y * uiScale);
+        int previewRight = Math.round(originX + (PREVIEW_X + PREVIEW_WIDTH) * uiScale);
+        int previewBottom = Math.round(originY + (PREVIEW_Y + PREVIEW_HEIGHT) * uiScale);
+        ((GuiGraphicsAccessor) graphics).itemglintrelight$getGuiRenderState().submitPicturesInPictureState(
+                new ItemPreviewRenderState(previewItem.copy(), previewLeft, previewTop, previewRight, previewBottom,
+                        previewZoom * uiScale, previewPitch, previewYaw, previewRoll, previewOffsetX, previewOffsetY, previewZoom / 72.0F, model.draft().copy(),
+                        new ScreenRectangle(previewLeft, previewTop, previewRight - previewLeft, previewBottom - previewTop)));
+    }
+
+    private boolean isPreviewItemLabel(double mouseX, double mouseY) {
+        int labelWidth = Math.max(96, Math.round(SmoothTextRenderer.width(previewItem.getHoverName().getString(), 0.88F, UiPalette.BRIGHT_BLUE)));
+        return mouseX >= PREVIEW_X + 10 && mouseX < PREVIEW_X + 16 + labelWidth
+                && mouseY >= PREVIEW_Y + 8 && mouseY < PREVIEW_Y + 29;
+    }
+
+    private void openItemPicker() {
+        itemPickerOpen = true;
+        itemPickerAnimation = 0.0F;
+        itemSearch = "";
+        itemPickerScroll = 0;
+        itemPickerScrollTarget = 0;
+        lastPickerScrollFrame = System.nanoTime();
+        filterItemChoices();
+    }
+
+    private void rebuildItemChoices() {
+        allItemChoices.clear();
+        for (var entry : BuiltInRegistries.ITEM.entrySet()) {
+            Identifier id = entry.getKey().identifier();
+            if (entry.getValue() == Items.AIR) continue;
+            ItemStack stack = new ItemStack(entry.getValue());
+            String name = stack.getHoverName().getString();
+            String modName = FabricLoader.getInstance().getModContainer(id.getNamespace())
+                    .map(container -> container.getMetadata().getName()).orElse(id.getNamespace());
+            allItemChoices.add(new ItemChoice(stack, name, id.toString(), id.getNamespace(), modName));
+        }
+        allItemChoices.sort(Comparator.comparing(ItemChoice::name, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(ItemChoice::id, String.CASE_INSENSITIVE_ORDER));
+        filterItemChoices();
+    }
+
+    private void filterItemChoices() {
+        String query = itemSearch.trim().toLowerCase(Locale.ROOT);
+        if (query.startsWith("@")) {
+            String modQuery = query.substring(1).trim();
+            filteredItemChoices = allItemChoices.stream()
+                    .filter(choice -> choice.namespace().toLowerCase(Locale.ROOT).contains(modQuery)
+                            || choice.modName().toLowerCase(Locale.ROOT).contains(modQuery))
+                    .toList();
+        } else if (query.isEmpty()) {
+            filteredItemChoices = List.copyOf(allItemChoices);
+        } else {
+            filteredItemChoices = allItemChoices.stream()
+                    .filter(choice -> choice.name().toLowerCase(Locale.ROOT).contains(query) || choice.id().toLowerCase(Locale.ROOT).contains(query))
+                    .toList();
+        }
+        itemPickerScroll = clampItemPickerScroll(itemPickerScroll);
+        itemPickerScrollTarget = clampItemPickerScroll(itemPickerScrollTarget);
+    }
+
+    private void renderItemPicker(GuiGraphics graphics, int mouseX, int mouseY) {
+        long now = System.nanoTime();
+        float delta = Math.min(0.05F, (now - lastPickerScrollFrame) / 1_000_000_000.0F);
+        lastPickerScrollFrame = now;
+        itemPickerAnimation = UiMath.approach(itemPickerAnimation, 1.0F, delta, 9.0F);
+        itemPickerScroll = UiMath.approach(itemPickerScroll, itemPickerScrollTarget, delta, 18.0F);
+        int x = ITEM_PICKER_X;
+        int y = ITEM_PICKER_Y;
+        int rightEdge = x + ITEM_PICKER_WIDTH;
+        int bottomEdge = y + ITEM_PICKER_HEIGHT;
+        float scale = 0.96F + itemPickerAnimation * 0.04F;
+        float centerX = x + ITEM_PICKER_WIDTH * 0.5F;
+        float centerY = y + ITEM_PICKER_HEIGHT * 0.5F;
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(centerX, centerY);
+        graphics.pose().scale(scale, scale);
+        graphics.pose().translate(-centerX, -centerY);
+        graphics.fill(x, y, rightEdge, bottomEdge, pickerColor(0xF20A1724));
+        graphics.fill(x, y, rightEdge, y + 1, pickerColor(UiPalette.DIVIDER));
+        graphics.fill(x, bottomEdge - 1, rightEdge, bottomEdge, pickerColor(UiPalette.DIVIDER));
+        graphics.fill(x, y, x + 1, bottomEdge, pickerColor(UiPalette.DIVIDER));
+        graphics.fill(rightEdge - 1, y, rightEdge, bottomEdge, pickerColor(UiPalette.DIVIDER));
+        drawPickerText(graphics, "选择物品", x + 12, y + 10, 0.76F, UiPalette.TEXT);
+        String count = filteredItemChoices.size() + " 项";
+        int countX = Math.max(x + 12, rightEdge - 12 - SmoothTextRenderer.width(count, 0.58F, UiPalette.MUTED_TEXT));
+        drawPickerText(graphics, count, countX, y + 12, 0.58F, UiPalette.MUTED_TEXT);
+
+        int searchY = y + 31;
+        graphics.fill(x + 12, searchY, rightEdge - 12, searchY + 22, pickerColor(UiPalette.DIVIDER));
+        graphics.fill(x + 13, searchY + 1, rightEdge - 13, searchY + 21, pickerColor(UiPalette.SURFACE));
+        String searchText = itemSearch.isEmpty() ? "搜索名称、ID 或 @模组名称" : itemSearch;
+        int searchColor = itemSearch.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT;
+        drawPickerText(graphics, searchText, x + 20, searchY + 6, 0.62F, searchColor);
+        if ((System.currentTimeMillis() / 500L & 1L) == 0) {
+            int cursorX = x + 20 + Math.round(SmoothTextRenderer.width(itemSearch, 0.62F, UiPalette.TEXT));
+            graphics.fill(cursorX, searchY + 5, cursorX + 1, searchY + 17, pickerColor(UiPalette.PALE_BLUE));
+        }
+
+        int rowsY = searchY + 30;
+        int visibleRows = itemPickerVisibleRows();
+        int firstRow = (int) Math.floor(itemPickerScroll);
+        int rowOffset = Math.round((itemPickerScroll - firstRow) * ITEM_PICKER_ROW_HEIGHT);
+        graphics.enableScissor(x + 2, rowsY, rightEdge - 2, bottomEdge - 4);
+        for (int row = 0; row <= visibleRows; row++) {
+            int index = firstRow + row;
+            if (index >= filteredItemChoices.size()) break;
+            ItemChoice choice = filteredItemChoices.get(index);
+            int rowY = rowsY + row * ITEM_PICKER_ROW_HEIGHT - rowOffset;
+            boolean hovered = mouseX >= x + 6 && mouseX < rightEdge - 6 && mouseY >= rowY && mouseY < rowY + ITEM_PICKER_ROW_HEIGHT - 2;
+            graphics.fill(x + 8, rowY, rightEdge - 8, rowY + ITEM_PICKER_ROW_HEIGHT - 2,
+                    pickerColor(hovered ? UiPalette.SURFACE_HOVER : UiPalette.DEEP_BLUE_FADE));
+            graphics.renderItem(choice.stack(), x + 14, rowY + 7);
+            int iconVeilAlpha = Math.round((1.0F - itemPickerAnimation) * 255.0F);
+            if (iconVeilAlpha > 0) {
+                graphics.fill(x + 14, rowY + 7, x + 30, rowY + 23, iconVeilAlpha << 24 | 0x000A1724);
+            }
+            drawPickerText(graphics, truncate(choice.name(), 214, 0.70F), x + 38, rowY + 6, 0.70F, UiPalette.TEXT);
+            drawPickerText(graphics, truncate(choice.id(), 300, 0.54F), x + 38, rowY + 19, 0.54F, UiPalette.MUTED_TEXT);
+        }
+        graphics.disableScissor();
+        renderItemPickerScrollBar(graphics, x, rowsY, visibleRows);
+        graphics.pose().popMatrix();
+    }
+
+    private boolean handleItemPickerClick(double mouseX, double mouseY, int button) {
+        if (button != 0) return true;
+        int x = ITEM_PICKER_X;
+        int y = ITEM_PICKER_Y;
+        if (mouseX < x || mouseX >= x + ITEM_PICKER_WIDTH || mouseY < y || mouseY >= y + ITEM_PICKER_HEIGHT) {
+            closeItemPicker();
+            return true;
+        }
+        int rowsY = y + 61;
+        int row = (int) ((mouseY - rowsY + (itemPickerScroll - Math.floor(itemPickerScroll)) * ITEM_PICKER_ROW_HEIGHT) / ITEM_PICKER_ROW_HEIGHT);
+        int index = (int) Math.floor(itemPickerScroll) + row;
+        if (mouseY >= rowsY && row >= 0 && row < itemPickerVisibleRows() && index < filteredItemChoices.size()) {
+            selectPreviewItem(filteredItemChoices.get(index));
+        }
+        return true;
+    }
+
+    private void selectPreviewItem(ItemChoice choice) {
+        previewItem = choice.stack().copy();
+        closeItemPicker();
+    }
+
+    private void closeItemPicker() {
+        itemPickerOpen = false;
+        itemPickerAnimation = 0.0F;
+    }
+
+    private int itemPickerVisibleRows() {
+        return (ITEM_PICKER_HEIGHT - 65) / ITEM_PICKER_ROW_HEIGHT;
+    }
+
+    private float clampItemPickerScroll(float value) {
+        return Math.max(0.0F, Math.min(Math.max(0, filteredItemChoices.size() - itemPickerVisibleRows()), value));
+    }
+
+    private void renderItemPickerScrollBar(GuiGraphics graphics, int x, int rowsY, int visibleRows) {
+        if (filteredItemChoices.size() <= visibleRows) return;
+        int trackX = x + ITEM_PICKER_WIDTH - 7;
+        int trackHeight = visibleRows * ITEM_PICKER_ROW_HEIGHT - 2;
+        int thumbHeight = Math.max(20, Math.round(trackHeight * visibleRows / (float) filteredItemChoices.size()));
+        float maximum = Math.max(1.0F, filteredItemChoices.size() - visibleRows);
+        int thumbY = rowsY + Math.round((trackHeight - thumbHeight) * itemPickerScroll / maximum);
+        graphics.fill(trackX, rowsY, trackX + 1, rowsY + trackHeight, pickerColor(UiPalette.DIVIDER));
+        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, pickerColor(UiPalette.PALE_BLUE));
+    }
+
+    private int pickerColor(int color) {
+        int alpha = Math.round((color >>> 24) * itemPickerAnimation);
+        return alpha << 24 | (color & 0x00FFFFFF);
+    }
+
+    private void drawPickerText(GuiGraphics graphics, String text, float x, float y, float scale, int color) {
+        SmoothTextRenderer.draw(graphics, font, text, x, y, scale, color, itemPickerAnimation);
+    }
+
+    private float previewDeltaSeconds() {
+        long now = System.nanoTime();
+        float delta = Math.min(0.05F, (now - lastPreviewNameFrame) / 1_000_000_000.0F);
+        lastPreviewNameFrame = now;
+        return delta;
+    }
+
+    private String truncate(String value, int maxWidth, float scale) {
+        if (font.width(value) * scale <= maxWidth) return value;
+        String suffix = "...";
+        int end = value.length();
+        while (end > 0 && font.width(value.substring(0, end) + suffix) * scale > maxWidth) end--;
+        return value.substring(0, end) + suffix;
+    }
+
+    private void renderPreviewGrid(GuiGraphics graphics) {
+        int rightEdge = PREVIEW_X + PREVIEW_WIDTH;
+        int bottomEdge = PREVIEW_Y + PREVIEW_HEIGHT;
+        for (int x = PREVIEW_X; x < rightEdge; x += 16) {
+            graphics.fill(x, PREVIEW_Y, x + 1, bottomEdge, (x - PREVIEW_X) % 64 == 0 ? 0x4A1D4664 : 0x261D4664);
+        }
+        for (int y = PREVIEW_Y; y < bottomEdge; y += 16) {
+            graphics.fill(PREVIEW_X, y, rightEdge, y + 1, (y - PREVIEW_Y) % 64 == 0 ? 0x4A1D4664 : 0x261D4664);
+        }
+    }
+
+    private void zoomPreview(float mouseX, float mouseY, float wheelDelta) {
+        previewZoom = Math.max(16.0F, Math.min(256.0F, previewZoom + wheelDelta * 6.0F));
+    }
+
+    private boolean isInPreviewCanvas(double mouseX, double mouseY) {
+        return mouseX >= PREVIEW_X && mouseX < PREVIEW_X + PREVIEW_WIDTH
+                && mouseY >= PREVIEW_Y && mouseY < PREVIEW_Y + PREVIEW_HEIGHT;
+    }
+
     private void layoutRenderControls() {
         long now = System.nanoTime();
         float delta = Math.min(0.05F, (now - lastRenderScrollFrame) / 1_000_000_000.0F);
@@ -379,7 +728,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         renderScroll = UiMath.approach(renderScroll, renderScrollTarget, delta, 16.0F);
         int contentX = sidebarRight + 24;
         int contentWidth = right - contentX - 24;
-        int startY = top + 80;
+        int startY = top + 44;
         int scroll = Math.round(renderScroll);
         int y = startY - scroll;
         outlineWidthSlider.setPosition(contentX, y); y += 42;
@@ -412,7 +761,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             outlineBloomIntensitySlider.setPosition(contentX, y); y += 42;
             outlineBloomBlurPassesSlider.setPosition(contentX, y); y += 42;
         }
-        y += 24;
+        y += 40;
         renderContentHeight = y + scroll - startY;
         int maximum = maxRenderScroll();
         renderScrollTarget = Math.max(0.0F, Math.min(renderScrollTarget, maximum));
@@ -420,13 +769,13 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private void renderScrollBar(GuiGraphics graphics) {
-        int viewportHeight = bottom - 64 - (top + 72);
+        int viewportHeight = bottom - RIGHT_CONTENT_BOTTOM - (top + RIGHT_CONTENT_TOP);
         int maximum = maxRenderScroll();
         if (maximum == 0) {
             return;
         }
         int trackX = right - 8;
-        int trackY = top + 76;
+        int trackY = top + RIGHT_CONTENT_TOP + 4;
         int trackHeight = viewportHeight - 8;
         int thumbHeight = Math.max(18, Math.round(trackHeight * viewportHeight / (float) renderContentHeight));
         int thumbY = trackY + Math.round((trackHeight - thumbHeight) * renderScroll / maximum);
@@ -435,7 +784,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private int maxRenderScroll() {
-        return Math.max(0, renderContentHeight - (bottom - 64 - (top + 72)));
+        return Math.max(0, renderContentHeight - (bottom - RIGHT_CONTENT_BOTTOM - (top + RIGHT_CONTENT_TOP)));
     }
 
     private boolean usesPrimaryColor() {
@@ -493,6 +842,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private static String tr(String key) {
         return Component.translatable(key).getString();
     }
+
+    private record ItemChoice(ItemStack stack, String name, String id, String namespace, String modName) { }
 
     private enum Page {
         GENERAL("ui.itemglintrelight.nav.general"),

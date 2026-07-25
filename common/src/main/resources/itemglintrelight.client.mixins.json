@@ -4,9 +4,11 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "FeatureRenderDispatcherAccessor",
+    "GuiGraphicsAccessor",
     "SpriteContentsAccessor",
     "ItemStackRenderStateAccessor",
     "ItemStackLayerRenderStateAccessor",
+    "GuiRendererPreviewMixin",
     "GameRendererFrameMixin",
     "ItemInHandRendererMixin",
     "IrisHandRendererMixin",

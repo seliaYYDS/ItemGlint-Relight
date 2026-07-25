@@ -12,6 +12,7 @@ import celia.adwadg.itemglintrelight.mixin.client.ItemStackLayerRenderStateAcces
 import celia.adwadg.itemglintrelight.mixin.client.ItemStackRenderStateAccessor;
 import celia.adwadg.itemglintrelight.mixin.client.SpriteContentsAccessor;
 import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.platform.Lighting;
 import com.mojang.blaze3d.ProjectionType;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
@@ -35,6 +36,7 @@ import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
@@ -55,6 +57,8 @@ public final class HeldItemOutlineRenderer {
     private static final CaptureState MAIN_HAND = new CaptureState();
     private static final CaptureState OFF_HAND = new CaptureState();
     private static final CaptureState ARM_OCCLUDER = new CaptureState();
+    private static final CaptureState PREVIEW = new CaptureState();
+    private static PreviewRequest queuedPreview;
     private static final Map<String, float[][]> MATERIAL_PALETTE_CACHE = new LinkedHashMap<>(128, 0.75F, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, float[][]> eldest) {
@@ -68,12 +72,15 @@ public final class HeldItemOutlineRenderer {
     private static TextureTarget sceneDepth;
     private static TextureTarget bloomFirst;
     private static TextureTarget bloomSecond;
+    private static TextureTarget previewBloomFirst;
+    private static TextureTarget previewBloomSecond;
     private static TextureTarget armOccluder;
     private static boolean capturingArmOccluder;
     private static UniformRing uniforms = new UniformRing("itemglintrelight_outline", OUTLINE_UNIFORM_BYTES, 8);
     private static UniformRing blurUniforms = new UniformRing("itemglintrelight_bloom_blur", OUTLINE_UNIFORM_BYTES, 16);
     private static long frameNumber;
     private static long nextDiagnosticMillis;
+    private static long nextPreviewDiagnosticMillis;
     private static boolean storageWrapped;
     private static int handPasses;
     private static Matrix4f handProjectionMatrix;
@@ -111,6 +118,158 @@ public final class HeldItemOutlineRenderer {
 
     public static void endHandPass() {
         handProjectionMatrix = null;
+    }
+
+    public static void queuePreview(ItemStack item, float centerX, float centerY, float scale, float pitch, float yaw,
+                                    ItemGlintRelightConfig config) {
+        queuedPreview = new PreviewRequest(item.copy(), centerX, centerY, scale, pitch, yaw, config.copy());
+    }
+
+    public static void renderQueuedPreview(Minecraft minecraft) {
+        PreviewRequest request = queuedPreview;
+        previewDiagnostic("callback request=" + (request != null) + " player=" + (minecraft != null && minecraft.player != null)
+                + " mainTarget=" + (minecraft == null ? "null" : minecraft.getMainRenderTarget().width + "x" + minecraft.getMainRenderTarget().height));
+        if (request != null) {
+            if (renderPreview(minecraft, request.item(), request.centerX(), request.centerY(), request.scale(),
+                    request.pitch(), request.yaw(), request.config())) {
+                queuedPreview = null;
+            }
+        }
+    }
+
+    public static void clearQueuedPreview() {
+        queuedPreview = null;
+    }
+
+    public static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
+                                                 GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
+                                                 float outlineScale) {
+        if (minecraft == null || config == null || mask == null || colorTarget == null || depthTarget == null || !config.outlineEnabled()) {
+            return;
+        }
+        int width = colorTarget.getWidth(0);
+        int height = colorTarget.getHeight(0);
+        GpuBufferSlice info = uniforms.write(buffer -> writePreviewUniforms(buffer, width, height, config, materialPalette, outlineScale));
+        GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        if (config.outlineBloomEnabled()) {
+            GpuTextureView bloom = renderPreviewBloom(width, height, mask.getColorTextureView(), config, linear, outlineScale);
+            submitPreviewBloomComposite(colorTarget, bloom, mask.getColorTextureView(), info, linear);
+        }
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_preview_outline", colorTarget, OptionalInt.empty())) {
+            pass.setPipeline(HeldItemOutlinePipelines.outline());
+            pass.setUniform("OutlineInfo", info);
+            pass.bindTexture("MaskSampler", mask.getColorTextureView(), linear);
+            pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), nearest);
+            pass.bindTexture("SceneDepthSampler", depthTarget, nearest);
+            pass.bindTexture("ArmOccluderSampler", mask.getColorTextureView(), linear);
+            pass.bindTexture("ArmOccluderDepthSampler", mask.getDepthTextureView(), nearest);
+            pass.draw(0, 3);
+        }
+    }
+
+    private static GpuTextureView renderPreviewBloom(int width, int height, GpuTextureView mask, ItemGlintRelightConfig config,
+                                                      GpuSampler sampler, float outlineScale) {
+        if (previewBloomFirst == null) {
+            previewBloomFirst = new TextureTarget("itemglintrelight_preview_bloom_first", width, height, false);
+            previewBloomSecond = new TextureTarget("itemglintrelight_preview_bloom_second", width, height, false);
+        } else if (previewBloomFirst.width != width || previewBloomFirst.height != height) {
+            previewBloomFirst.resize(width, height);
+            previewBloomSecond.resize(width, height);
+        }
+        int passes = config.outlineBloomBlurPasses();
+        float radius = config.outlineBloomRadius() * 3.0F * height / REFERENCE_RENDER_HEIGHT
+                * Math.max(0.01F, outlineScale) / (float) Math.sqrt(passes);
+        GpuTextureView source = mask;
+        for (int pass = 0; pass < passes; pass++) {
+            renderPreviewBloomBlur(width, height, previewBloomFirst, source, radius, 1.0F, 0.0F, config.outlineBloomQuality(), sampler, "horizontal");
+            renderPreviewBloomBlur(width, height, previewBloomSecond, previewBloomFirst.getColorTextureView(), radius, 0.0F, 1.0F,
+                    config.outlineBloomQuality(), sampler, "vertical");
+            source = previewBloomSecond.getColorTextureView();
+        }
+        return source;
+    }
+
+    private static void renderPreviewBloomBlur(int width, int height, TextureTarget destination, GpuTextureView source, float radius,
+                                               float directionX, float directionY, RenderQuality quality, GpuSampler sampler, String direction) {
+        GpuBufferSlice blurInfo = blurUniforms.write(buffer -> put(buffer, directionX / width, directionY / height, radius, bloomSamples(quality)));
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_preview_bloom_blur_" + direction, destination.getColorTextureView(), OptionalInt.empty())) {
+            pass.setPipeline(HeldItemOutlinePipelines.bloomBlur());
+            pass.setUniform("BlurInfo", blurInfo);
+            pass.bindTexture("InputSampler", source, sampler);
+            pass.draw(0, 3);
+        }
+    }
+
+    private static void submitPreviewBloomComposite(GpuTextureView colorTarget, GpuTextureView bloom, GpuTextureView mask,
+                                                    GpuBufferSlice info, GpuSampler sampler) {
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_preview_bloom_composite", colorTarget, OptionalInt.empty())) {
+            pass.setPipeline(HeldItemOutlinePipelines.bloomComposite());
+            pass.setUniform("OutlineInfo", info);
+            pass.bindTexture("BloomSampler", bloom, sampler);
+            pass.bindTexture("MaskSampler", mask, sampler);
+            pass.draw(0, 3);
+        }
+    }
+
+    public static boolean renderPreview(Minecraft minecraft, ItemStack item, float centerX, float centerY, float scale,
+                                     float pitch, float yaw, ItemGlintRelightConfig config) {
+        if (minecraft == null || item == null || item.isEmpty() || config == null) {
+            return false;
+        }
+        RenderTarget mainTarget = minecraft.getMainRenderTarget();
+        ensureTarget(mainTarget);
+        ensureDispatcher(minecraft, PREVIEW);
+        PREVIEW.reset();
+        PREVIEW.requested = true;
+        PREVIEW.captured = true;
+        PREVIEW.item = item;
+        snapshotRenderContext(PREVIEW);
+
+        ItemStackRenderState itemState = new ItemStackRenderState();
+        try {
+            minecraft.getItemModelResolver().updateForTopItem(itemState, item, ItemDisplayContext.GUI, minecraft.level, null, 0);
+        } catch (Throwable throwable) {
+            previewDiagnostic("model resolver failed: " + throwable.getClass().getSimpleName() + ": " + throwable.getMessage());
+            return false;
+        }
+        previewDiagnostic("resolved empty=" + itemState.isEmpty() + " blockLight=" + itemState.usesBlockLight()
+                + " bounds=" + itemState.getModelBoundingBox());
+        PoseStack pose = new PoseStack();
+        pose.translate(centerX, centerY, 0.0F);
+        pose.scale(scale, -scale, scale);
+        pose.mulPose(new org.joml.Quaternionf().rotateX((float) Math.toRadians(pitch)));
+        pose.mulPose(new org.joml.Quaternionf().rotateY((float) Math.toRadians(yaw)));
+        itemState.submit(pose, PREVIEW.storage, 15728880, OverlayTexture.NO_OVERLAY, 0);
+        previewDiagnostic("submitted orders=" + PREVIEW.storage.getSubmitsPerOrder().size()
+                + " nodes=" + PREVIEW.storage.getSubmitsPerOrder().values().stream().mapToInt(collection -> 1).sum());
+
+        RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(mainTarget.getDepthTexture(), 1.0D);
+        minecraft.gameRenderer.getLighting().setupFor(itemState.usesBlockLight() ? Lighting.Entry.ITEMS_3D : Lighting.Entry.ITEMS_FLAT);
+        PREVIEW.dispatcher.renderAllFeatures();
+        PREVIEW.buffers.bufferSource().endBatch();
+        PREVIEW.buffers.outlineBufferSource().endOutlineBatch();
+        PREVIEW.buffers.crumblingBufferSource().endBatch();
+        previewDiagnostic("screen replay complete captured=" + PREVIEW.captured + " replayed=" + PREVIEW.replayed);
+
+        clear(sceneDepth);
+        sceneDepth.copyDepthFrom(mainTarget);
+        clear(armOccluder);
+        renderCapture(minecraft, PREVIEW);
+        previewDiagnostic("mask replay complete target=" + sceneDepth.width + "x" + sceneDepth.height
+                + " projection=" + (PREVIEW.projectionType == null ? "null" : PREVIEW.projectionType));
+        if (config.outlineEnabled()) {
+            if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+                capturePreviewTextureColors(itemState, config);
+            }
+            submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(PREVIEW, config), "preview", null);
+            previewDiagnostic("composite submitted outline=" + config.outlineEnabled() + " bloom=" + config.outlineBloomEnabled());
+        }
+        PREVIEW.reset();
+        return true;
     }
 
     public static void beginHand(InteractionHand hand, ItemStack stack) {
@@ -238,7 +397,8 @@ public final class HeldItemOutlineRenderer {
         clear(sceneDepth);
         sceneDepth.copyDepthFrom(mainTarget);
         renderCapture(minecraft, state);
-        submitComposite(minecraft, mainTarget, resolveMaterialPalette(state), hand, resolveCompositeScissor(mainTarget, state));
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(state, config), hand, resolveCompositeScissor(mainTarget, state));
     }
 
     private static void compositeCombined(Minecraft minecraft, RenderTarget mainTarget) {
@@ -246,12 +406,12 @@ public final class HeldItemOutlineRenderer {
         sceneDepth.copyDepthFrom(mainTarget);
         renderCapture(minecraft, MAIN_HAND);
         renderCapture(minecraft, OFF_HAND);
-        submitComposite(minecraft, mainTarget, resolveMaterialPalette(MAIN_HAND), "combined",
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(MAIN_HAND, config), "combined",
                 ScissorRect.union(resolveCompositeScissor(mainTarget, MAIN_HAND), resolveCompositeScissor(mainTarget, OFF_HAND)));
     }
 
-    private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, float[][] palette, String hand, ScissorRect scissor) {
-        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+    private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette, String hand, ScissorRect scissor) {
         GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
@@ -273,7 +433,7 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
             diagnostic("composite " + hand + " submitted target=" + mainTarget.width + "x" + mainTarget.height
-                    + " radius=" + resolveOutlineRadius(mainTarget, ItemGlintRelightConfigManager.get()));
+                    + " radius=" + resolveOutlineRadius(mainTarget, config));
         }
     }
 
@@ -497,6 +657,45 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+    private static void writePreviewUniforms(ByteBuffer buffer, int width, int height, ItemGlintRelightConfig config, float[][] materialPalette,
+                                             float outlineScale) {
+        putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
+        putColor(buffer, config.outlineSecondaryColor(), config.outlineOpacity());
+        float radius = config.outlineWidth() * height / REFERENCE_RENDER_HEIGHT * Math.max(0.01F, outlineScale)
+                * (config.outlineRenderMode() == OutlineRenderMode.CUBIC ? 1.2F : 1.0F);
+        put(buffer, width, height, radius, config.outlineAlphaThreshold());
+        float time = (System.nanoTime() % 3_600_000_000_000L) / 1_000_000_000.0F;
+        put(buffer, colorMode(config.outlineColorMode()), time, config.outlineColorScrollSpeed() * 9.0F, config.outlineSoftness());
+        float[][] palette = materialPalette == null || materialPalette.length == 0
+                ? new float[][]{rgb(config.outlinePrimaryColor())} : materialPalette;
+        put(buffer, sampleCount(config.outlineQuality()), config.outlineGlowIntensity(), palette.length, config.outlineBloomIntensity());
+        float directionRadians = (float) Math.toRadians(config.outlineColorScrollDirection());
+        put(buffer, (float) Math.cos(directionRadians), -(float) Math.sin(directionRadians), config.outlineColorScrollInterval(), renderMode(config.outlineRenderMode()));
+        float halfWidth = Math.max(1.0F, width * 0.25F);
+        float halfHeight = Math.max(1.0F, height * 0.25F);
+        put(buffer, scrollMode(config.outlineColorScrollMode()), width * 0.5F, height * 0.5F, Math.max(ellipsePathRadius(halfWidth, halfHeight), 1.0F));
+        put(buffer, halfWidth, halfHeight, 1.0F, 0.0F);
+        for (int index = 0; index < 8; index++) {
+            float[] color = config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE
+                    ? palette[index % palette.length]
+                    : ((index & 1) == 0 ? rgb(config.outlinePrimaryColor()) : rgb(config.outlineSecondaryColor()));
+            put(buffer, color[0], color[1], color[2], 1.0F);
+        }
+    }
+
+    public static float[][] resolvePreviewMaterialPalette(ItemStackRenderState renderState, ItemGlintRelightConfig config) {
+        if (config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
+            return new float[][]{rgb(config.outlinePrimaryColor()), rgb(config.outlineSecondaryColor())};
+        }
+        CaptureState capture = new CaptureState();
+        capturePreviewTextureColors(capture, renderState, config);
+        return resolveMaterialPalette(capture, config);
+    }
+
+    private static float[] rgb(int color) {
+        return new float[]{((color >>> 16) & 255) / 255.0F, ((color >>> 8) & 255) / 255.0F, (color & 255) / 255.0F};
+    }
+
     private static float colorMode(OutlineColorMode mode) {
         return switch (mode) {
             case SINGLE -> 0.0F;
@@ -609,26 +808,69 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+    private static void capturePreviewTextureColors(ItemStackRenderState renderState, ItemGlintRelightConfig config) {
+        capturePreviewTextureColors(PREVIEW, renderState, config);
+    }
+
+    private static void capturePreviewTextureColors(CaptureState capture, ItemStackRenderState renderState, ItemGlintRelightConfig config) {
+        ItemStackRenderStateAccessor stateAccessor = (ItemStackRenderStateAccessor) (Object) renderState;
+        ItemStackRenderState.LayerRenderState[] layers = stateAccessor.itemglintrelight$getLayers();
+        int layerCount = layers == null ? 0 : Math.min(stateAccessor.itemglintrelight$getActiveLayerCount(), layers.length);
+        for (int index = 0; index < layerCount; index++) {
+            ItemStackLayerRenderStateAccessor layer = (ItemStackLayerRenderStateAccessor) (Object) layers[index];
+            List<BakedQuad> quads = layer.itemglintrelight$getQuads();
+            int[] tints = layer.itemglintrelight$getTintLayers();
+            if (quads != null && !quads.isEmpty()) {
+                for (BakedQuad quad : quads) {
+                    if (quad != null) capturePreviewTextureColors(capture, quad.sprite(), resolveTint(quad, tints), config);
+                }
+            }
+            if (capture.materialColors.isEmpty()) {
+                capturePreviewTextureColors(capture, layer.itemglintrelight$getParticleIcon(), -1, config);
+            }
+        }
+    }
+
+    private static void capturePreviewTextureColors(TextureAtlasSprite sprite, int tint, ItemGlintRelightConfig config) {
+        capturePreviewTextureColors(PREVIEW, sprite, tint, config);
+    }
+
+    private static void capturePreviewTextureColors(CaptureState capture, TextureAtlasSprite sprite, int tint, ItemGlintRelightConfig config) {
+        if (sprite == null || sprite.contents() == null) return;
+        NativeImage[] mipLevels = ((SpriteContentsAccessor) (Object) sprite.contents()).itemglintrelight$getByMipLevel();
+        NativeImage image = mipLevels == null || mipLevels.length == 0 ? null : mipLevels[0];
+        if (image == null) return;
+        int sampleStep = config.outlineSampleSize();
+        for (int y = 0; y < image.getHeight(); y += sampleStep) {
+            for (int x = 0; x < image.getWidth(); x += sampleStep) {
+                int argb = image.getPixel(x, y);
+                if ((argb >>> 24) >= 24) {
+                    capture.materialColors.merge(quantize(applyTint(argb, tint)), 1, Integer::sum);
+                }
+            }
+        }
+    }
+
     private static void captureTextureColors(CaptureState state, List<BakedQuad> quads, int[] tints) {
         for (BakedQuad quad : quads) {
             if (quad != null) captureTextureColors(state, quad.sprite(), resolveTint(quad, tints));
         }
     }
 
-    private static float[][] resolveMaterialPalette(CaptureState source) {
-        if (ItemGlintRelightConfigManager.get().outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
+    private static float[][] resolveMaterialPalette(CaptureState source, ItemGlintRelightConfig config) {
+        if (config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
             return new float[][]{{1.0F, 1.0F, 1.0F}};
         }
         if (source.materialPalette != null) {
             return source.materialPalette;
         }
         if (source.materialColors.isEmpty()) {
-            int fallback = ItemGlintRelightConfigManager.get().outlinePrimaryColor();
+            int fallback = config.outlinePrimaryColor();
             source.materialPalette = new float[][]{{((fallback >>> 16) & 255) / 255.0F, ((fallback >>> 8) & 255) / 255.0F, (fallback & 255) / 255.0F}};
             cacheMaterialPalette(source);
             return source.materialPalette;
         }
-        int limit = Math.min(8, ItemGlintRelightConfigManager.get().outlineSampleColorCount());
+        int limit = Math.min(8, config.outlineSampleColorCount());
         List<Map.Entry<Integer, Integer>> colors = new ArrayList<>(source.materialColors.entrySet());
         colors.sort(Map.Entry.<Integer, Integer>comparingByValue(Comparator.reverseOrder()));
         colors = new ArrayList<>(colors.subList(0, Math.min(limit, colors.size())));
@@ -813,6 +1055,15 @@ public final class HeldItemOutlineRenderer {
                 frameNumber, outcome, storageWrapped, handPasses, MAIN_HAND.describe(), OFF_HAND.describe());
     }
 
+    private static void previewDiagnostic(String outcome) {
+        long now = System.currentTimeMillis();
+        if (now < nextPreviewDiagnosticMillis) {
+            return;
+        }
+        nextPreviewDiagnosticMillis = now + 250L;
+        ItemGlintRelight.LOGGER.info("[PreviewOutline] frame={} {}", frameNumber, outcome);
+    }
+
     private static final class CaptureState {
         private SubmitNodeStorage storage;
         private FeatureRenderDispatcher dispatcher;
@@ -857,6 +1108,9 @@ public final class HeldItemOutlineRenderer {
                     + ", replayed=" + replayed + ", stack=" + stack + ", disabled=" + disabledStack + "}";
         }
     }
+
+    private record PreviewRequest(ItemStack item, float centerX, float centerY, float scale, float pitch, float yaw,
+                                  ItemGlintRelightConfig config) { }
 
     private static final class MirroringCollector implements SubmitNodeCollector {
         private final SubmitNodeCollector delegate;

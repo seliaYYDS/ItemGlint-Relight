@@ -18,6 +18,7 @@ import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.resources.Identifier;
 
 public final class SmoothTextRenderer {
+    private static final int OPACITY_STEPS = 32;
     private static final java.awt.Font SYSTEM_FONT = new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 18);
     private static final Map<TextKey, TextureEntry> TEXTURES = new HashMap<>();
     private static final Map<GradientKey, GradientTexture> GRADIENT_TEXTURES = new HashMap<>();
@@ -27,26 +28,43 @@ public final class SmoothTextRenderer {
     }
 
     public static void draw(GuiGraphics graphics, Font ignored, String text, float x, float y, float scale, int color) {
+        if (text == null || text.isEmpty()) return;
         TextureEntry texture = texture(text, scale, color);
         drawTexture(graphics, texture, Math.round(x) - texture.inset(), Math.round(y) - texture.inset());
     }
 
+    public static void draw(GuiGraphics graphics, Font ignored, String text, float x, float y, float scale, int color, float opacity) {
+        int translucentColor = withOpacity(color, opacity);
+        if ((translucentColor >>> 24) == 0) return;
+        draw(graphics, ignored, text, x, y, scale, translucentColor);
+    }
+
     public static void drawCentered(GuiGraphics graphics, Font ignored, String text, float centerX, float y, float scale, int color) {
+        if (text == null || text.isEmpty()) return;
         TextureEntry texture = texture(text, scale, color);
         drawTexture(graphics, texture, Math.round(centerX - texture.width() / 2.0F), Math.round(y) - texture.inset());
     }
 
     public static int height(String text, float scale, int color) {
+        if (text == null || text.isEmpty()) return 0;
         TextureEntry texture = texture(text, scale, color);
         return Math.max(1, texture.height() - texture.inset() * 2);
     }
 
+    public static void drawCentered(GuiGraphics graphics, Font ignored, String text, float centerX, float y, float scale, int color, float opacity) {
+        int translucentColor = withOpacity(color, opacity);
+        if ((translucentColor >>> 24) == 0) return;
+        drawCentered(graphics, ignored, text, centerX, y, scale, translucentColor);
+    }
+
     public static int width(String text, float scale, int color) {
+        if (text == null || text.isEmpty()) return 0;
         TextureEntry texture = texture(text, scale, color);
         return Math.max(1, texture.width() - texture.inset() * 2);
     }
 
     public static void drawGradient(GuiGraphics graphics, Font ignored, String text, float x, float y, float scale) {
+        if (text == null || text.isEmpty()) return;
         int sampling = Math.max(2, Minecraft.getInstance().getWindow().getGuiScale());
         GradientKey key = new GradientKey(text, Math.round(scale * 100.0F), sampling);
         GradientTexture texture = GRADIENT_TEXTURES.computeIfAbsent(key, unused -> createGradientTexture(text, scale, sampling));
@@ -69,6 +87,12 @@ public final class SmoothTextRenderer {
         int sampling = Math.max(2, Minecraft.getInstance().getWindow().getGuiScale());
         TextKey key = new TextKey(text, Math.round(scale * 100.0F), color, sampling);
         return TEXTURES.computeIfAbsent(key, unused -> createTexture(text, scale, color, sampling));
+    }
+
+    private static int withOpacity(int color, float opacity) {
+        int step = Math.max(0, Math.min(OPACITY_STEPS, Math.round(opacity * OPACITY_STEPS)));
+        int alpha = Math.round((color >>> 24) * step / (float) OPACITY_STEPS);
+        return alpha << 24 | (color & 0x00FFFFFF);
     }
 
     private static void drawTexture(GuiGraphics graphics, TextureEntry texture, int x, int y) {
