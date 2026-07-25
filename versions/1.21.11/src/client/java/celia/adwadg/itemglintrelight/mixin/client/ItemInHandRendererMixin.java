@@ -24,7 +24,7 @@ public abstract class ItemInHandRendererMixin {
         if (collector instanceof SubmitNodeStorage storage) {
             return HeldItemOutlineRenderer.wrapStorage(Minecraft.getInstance(), storage);
         }
-        return collector;
+        return HeldItemOutlineRenderer.wrapCollector(Minecraft.getInstance(), collector);
     }
 
     @Inject(method = "renderArmWithItem", at = @At("HEAD"))

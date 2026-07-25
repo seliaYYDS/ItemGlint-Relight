@@ -3,6 +3,8 @@
 uniform sampler2D MaskSampler;
 uniform sampler2D ItemDepthSampler;
 uniform sampler2D SceneDepthSampler;
+uniform sampler2D ArmOccluderSampler;
+uniform sampler2D ArmOccluderDepthSampler;
 
 layout(std140) uniform OutlineInfo {
     vec4 primaryColor;
@@ -171,8 +173,14 @@ void main() {
         }
     }
     float edge = smoothstep(geometry.w, 1.0, outer) * (1.0 - center);
-    float sceneDepth = texture(SceneDepthSampler, texCoord).r;
-    float visible = smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);
+    float visible = 1.0;
+    if (scrollBounds.z < 0.5) {
+        float sceneDepth = texture(SceneDepthSampler, texCoord).r;
+        visible = smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);
+        float armCoverage = texture(ArmOccluderSampler, texCoord).a;
+        float armDepth = texture(ArmOccluderDepthSampler, texCoord).r;
+        visible *= mix(1.0, 1.0 - smoothstep(armDepth - 0.0003, armDepth + 0.0003, nearestDepth), armCoverage);
+    }
     float alpha = edge * primaryColor.a * visible;
     if (alpha <= 0.001) discard;
     vec3 outlineColor = resolveColor();

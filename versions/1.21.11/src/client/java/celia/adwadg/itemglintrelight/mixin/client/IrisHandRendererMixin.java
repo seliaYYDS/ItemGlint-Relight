@@ -17,14 +17,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class IrisHandRendererMixin {
     @Inject(method = "renderSolid", at = @At("HEAD"), remap = false)
     private void itemglintrelight$beginSolidCapture(CallbackInfo ci) {
-        if (IrisOutlineBridge.isActive()) {
+        if (IrisOutlineBridge.isShaderPackActive()) {
             HeldItemOutlineRenderer.beginCompatibilityHandPass();
         }
     }
 
     @Inject(method = "renderTranslucent", at = @At("HEAD"), remap = false)
     private void itemglintrelight$beginTranslucentCapture(CallbackInfo ci) {
-        if (IrisOutlineBridge.isActive()) {
+        if (IrisOutlineBridge.isShaderPackActive()) {
             HeldItemOutlineRenderer.beginCompatibilityHandPass();
         }
     }
@@ -38,6 +38,13 @@ public abstract class IrisHandRendererMixin {
         return wrap(storage);
     }
 
+    @Inject(method = "renderSolid", at = @At("RETURN"), remap = false)
+    private void itemglintrelight$compositeSolidCapture(CallbackInfo ci) {
+        if (IrisOutlineBridge.isShaderPackActive()) {
+            HeldItemOutlineRenderer.composite(Minecraft.getInstance());
+        }
+    }
+
     @ModifyArg(
             method = "renderTranslucent",
             at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeStorage;Lnet/minecraft/client/player/LocalPlayer;I)V", remap = false),
@@ -47,9 +54,16 @@ public abstract class IrisHandRendererMixin {
         return wrap(storage);
     }
 
+    @Inject(method = "renderTranslucent", at = @At("RETURN"), remap = false)
+    private void itemglintrelight$compositeTranslucentCapture(CallbackInfo ci) {
+        if (IrisOutlineBridge.isShaderPackActive()) {
+            HeldItemOutlineRenderer.composite(Minecraft.getInstance());
+        }
+    }
+
     private static SubmitNodeStorage wrap(SubmitNodeStorage storage) {
         Minecraft minecraft = Minecraft.getInstance();
         LocalPlayer player = minecraft.player;
-        return IrisOutlineBridge.isActive() && player != null ? HeldItemOutlineRenderer.wrapStorage(minecraft, storage) : storage;
+        return IrisOutlineBridge.isShaderPackActive() && player != null ? HeldItemOutlineRenderer.wrapStorage(minecraft, storage) : storage;
     }
 }
