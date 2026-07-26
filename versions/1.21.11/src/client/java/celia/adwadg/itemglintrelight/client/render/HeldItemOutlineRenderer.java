@@ -38,6 +38,7 @@ import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
@@ -179,7 +180,7 @@ public final class HeldItemOutlineRenderer {
             previewBloomSecond.resize(width, height);
         }
         int passes = config.outlineBloomBlurPasses();
-        float radius = config.outlineBloomRadius() * 3.0F * height / REFERENCE_RENDER_HEIGHT
+        float radius = config.outlineBloomRadius() * 3.0F * 0.4F * height / REFERENCE_RENDER_HEIGHT
                 * Math.max(0.01F, outlineScale) / (float) Math.sqrt(passes);
         GpuTextureView source = mask;
         for (int pass = 0; pass < passes; pass++) {
@@ -379,11 +380,9 @@ public final class HeldItemOutlineRenderer {
             if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
                 captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
                 captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
-                compositeCapture(minecraft, mainTarget, MAIN_HAND, "main");
-                compositeCapture(minecraft, mainTarget, OFF_HAND, "off");
-            } else {
-                compositeCombined(minecraft, mainTarget);
             }
+            compositeCapture(minecraft, mainTarget, MAIN_HAND, "main");
+            compositeCapture(minecraft, mainTarget, OFF_HAND, "off");
         } finally {
             MAIN_HAND.reset();
             OFF_HAND.reset();
@@ -483,9 +482,22 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static InteractionHand handForContext(ItemDisplayContext context) {
-        if (context == ItemDisplayContext.FIRST_PERSON_RIGHT_HAND) return InteractionHand.MAIN_HAND;
-        if (context == ItemDisplayContext.FIRST_PERSON_LEFT_HAND) return InteractionHand.OFF_HAND;
+        boolean mainHandOnRight = Minecraft.getInstance().player == null
+                || Minecraft.getInstance().player.getMainArm() == HumanoidArm.RIGHT;
+        if (context == ItemDisplayContext.FIRST_PERSON_RIGHT_HAND) {
+            return mainHandOnRight ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+        }
+        if (context == ItemDisplayContext.FIRST_PERSON_LEFT_HAND) {
+            return mainHandOnRight ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        }
         return null;
+    }
+
+    private static ItemDisplayContext contextForHand(InteractionHand hand) {
+        boolean mainHandOnRight = Minecraft.getInstance().player == null
+                || Minecraft.getInstance().player.getMainArm() == HumanoidArm.RIGHT;
+        boolean renderOnRight = (hand == InteractionHand.MAIN_HAND) == mainHandOnRight;
+        return renderOnRight ? ItemDisplayContext.FIRST_PERSON_RIGHT_HAND : ItemDisplayContext.FIRST_PERSON_LEFT_HAND;
     }
 
     private static SubmitNodeCollection captureCollection(int order) {
@@ -504,7 +516,7 @@ public final class HeldItemOutlineRenderer {
             return null;
         }
         CaptureState capture = stateFor(hand);
-        if (capture.storage == null) {
+        if (!capture.requested || capture.storage == null) {
             return null;
         }
         capture.captured = true;
@@ -545,6 +557,8 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static GpuTextureView renderBloom(RenderTarget target, ItemGlintRelightConfig config, ScissorRect scissor, GpuSampler sampler) {
+        clearColor(bloomFirst);
+        clearColor(bloomSecond);
         int passes = config.outlineBloomBlurPasses();
         float radius = resolveBloomRadius(target, config) / (float) Math.sqrt(passes);
         GpuTextureView source = sceneDepth.getColorTextureView();
@@ -632,6 +646,10 @@ public final class HeldItemOutlineRenderer {
                 target.getColorTexture(), 0, target.getDepthTexture(), 1.0D);
     }
 
+    private static void clearColor(TextureTarget target) {
+        RenderSystem.getDevice().createCommandEncoder().clearColorTexture(target.getColorTexture(), 0);
+    }
+
     private static void writeUniforms(ByteBuffer buffer, RenderTarget target, ItemGlintRelightConfig config, Minecraft minecraft, float[][] materialPalette,
                                       ScissorRect scissor) {
         putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
@@ -661,7 +679,7 @@ public final class HeldItemOutlineRenderer {
                                              float outlineScale) {
         putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
         putColor(buffer, config.outlineSecondaryColor(), config.outlineOpacity());
-        float radius = config.outlineWidth() * height / REFERENCE_RENDER_HEIGHT * Math.max(0.01F, outlineScale)
+        float radius = config.outlineWidth() * 0.4F * height / REFERENCE_RENDER_HEIGHT * Math.max(0.01F, outlineScale)
                 * (config.outlineRenderMode() == OutlineRenderMode.CUBIC ? 1.2F : 1.0F);
         put(buffer, width, height, radius, config.outlineAlphaThreshold());
         float time = (System.nanoTime() % 3_600_000_000_000L) / 1_000_000_000.0F;
@@ -784,8 +802,7 @@ public final class HeldItemOutlineRenderer {
         }
 
         ItemStackRenderState renderState = new ItemStackRenderState();
-        ItemDisplayContext context = hand == InteractionHand.MAIN_HAND
-                ? ItemDisplayContext.FIRST_PERSON_RIGHT_HAND : ItemDisplayContext.FIRST_PERSON_LEFT_HAND;
+        ItemDisplayContext context = contextForHand(hand);
         if (minecraft.player != null) {
             minecraft.getItemModelResolver().updateForLiving(renderState, capture.item, context, minecraft.player);
         } else {
