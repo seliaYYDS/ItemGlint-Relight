@@ -32,6 +32,7 @@ import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
@@ -48,6 +49,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private static final int PREVIEW_Y = 28;
     private static final int PREVIEW_WIDTH = 472;
     private static final int PREVIEW_HEIGHT = 262;
+    private static final int RULE_DIALOG_X = 156;
+    private static final int RULE_DIALOG_Y = 36;
+    private static final int RULE_DIALOG_WIDTH = 472;
+    private static final int RULE_DIALOG_HEIGHT = 248;
     private static final int RIGHT_CONTENT_TOP = 28;
     private static final int RIGHT_CONTENT_BOTTOM = 50;
     private final Screen parent;
@@ -117,6 +122,40 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private float previewItemNameHover;
     private long lastPreviewNameFrame;
     private long lastPickerScrollFrame;
+    private final List<RuleTargetChoice> allRuleTargetChoices = new ArrayList<>();
+    private List<RuleTargetChoice> filteredRuleTargetChoices = List.of();
+    private boolean ruleTargetPickerOpen;
+    private float ruleTargetPickerAnimation;
+    private String ruleTargetSearch = "";
+    private float ruleTargetPickerScroll;
+    private float ruleTargetPickerScrollTarget;
+    private long lastRuleTargetPickerFrame;
+    private UiDropdown ruleModeDropdown;
+    private boolean ruleDialogOpen;
+    private RuleMatchMode ruleMatchMode = RuleMatchMode.WHITELIST;
+    private RuleInputFocus ruleInputFocus = RuleInputFocus.NONE;
+    private String ruleName = "";
+    private String ruleItemId = "";
+    private String ruleNbtPath = "";
+    private String ruleNbtValue = "";
+    private NbtMatchMode ruleNbtMatchMode = NbtMatchMode.EQUAL;
+    private float addRuleHover;
+    private long lastRuleFrame;
+    private float ruleDialogAnimation;
+    private long lastRuleDialogFrame;
+    private float ruleDialogScroll;
+    private float ruleDialogScrollTarget;
+    private int ruleDialogContentHeight;
+    private NbtMatchMode previousNbtMatchMode = NbtMatchMode.EQUAL;
+    private float nbtMatchModeTransition = 1.0F;
+    private int nbtMatchModeDirection = 1;
+    private float nbtPreviousArrowHover;
+    private float nbtNextArrowHover;
+    private float nbtCenterHover;
+    private boolean nbtMatchModeExpanded;
+    private float nbtMatchModeExpansion;
+    private final float[] nbtMatchModeOptionHovers = new float[NbtMatchMode.values().length];
+    private long lastNbtMatchModeFrame;
 
     public ItemGlintRelightConfigScreen(Screen parent) {
         super(Component.literal("ItemGlintRelight"));
@@ -199,9 +238,13 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 () -> model.draft().outlineSampleSize(), value -> model.draft().setOutlineSampleSize(value.intValue()));
         outlineSampleColorCountSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.sample_color_count"), 1.0D, 8.0D, 1.0D,
                 () -> model.draft().outlineSampleColorCount(), value -> model.draft().setOutlineSampleColorCount(value.intValue()));
+        ruleModeDropdown = new UiDropdown(0, 0, RULE_DIALOG_WIDTH - 36, tr("ui.itemglintrelight.rules.match_mode"),
+                List.of(tr("ui.itemglintrelight.rules.mode.whitelist"), tr("ui.itemglintrelight.rules.mode.nbt_match"), tr("ui.itemglintrelight.rules.mode.blacklist")),
+                ruleMatchMode.ordinal(), value -> ruleMatchMode = RuleMatchMode.values()[value]);
         mouseGlow = new UiMouseGlow();
         starParticles = new UiTrailStarParticles();
         rebuildItemChoices();
+        rebuildRuleTargetChoices();
         navigationFill[page.ordinal()] = 1.0F;
         lastNavigationFrame = System.nanoTime();
         lastPageTransitionFrame = System.nanoTime();
@@ -234,6 +277,12 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (itemPickerOpen) {
             renderItemPicker(graphics, logicalMouseX, logicalMouseY);
         }
+        if (ruleDialogOpen) {
+            renderRuleDialog(graphics, logicalMouseX, logicalMouseY);
+        }
+        if (ruleTargetPickerOpen) {
+            renderRuleTargetPicker(graphics, logicalMouseX, logicalMouseY);
+        }
         graphics.pose().popMatrix();
     }
 
@@ -244,6 +293,12 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (itemPickerOpen) {
             return handleItemPickerClick(mouseX, mouseY, event.button());
         }
+        if (ruleTargetPickerOpen) {
+            return handleRuleTargetPickerClick(mouseX, mouseY, event.button());
+        }
+        if (ruleDialogOpen) {
+            return handleRuleDialogClick(mouseX, mouseY, event.button());
+        }
         Page nextPage = pageAt(mouseX, mouseY);
         if (nextPage != null) {
             if (nextPage != page) {
@@ -253,6 +308,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return true;
         }
         if (saveButton.mouseClicked(mouseX, mouseY, event.button())) {
+            return true;
+        }
+        if (page == Page.RULES && isAddRuleButton(mouseX, mouseY)) {
+            openRuleDialog();
             return true;
         }
         if (page == Page.GENERAL && outlineToggle.mouseClicked(mouseX, mouseY, event.button())) {
@@ -370,6 +429,14 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             itemPickerScrollTarget = clampItemPickerScroll(itemPickerScrollTarget - (float) verticalAmount * 2.5F);
             return true;
         }
+        if (ruleTargetPickerOpen) {
+            ruleTargetPickerScrollTarget = clampRuleTargetPickerScroll(ruleTargetPickerScrollTarget - (float) verticalAmount * 2.5F);
+            return true;
+        }
+        if (ruleDialogOpen) {
+            ruleDialogScrollTarget = clampRuleDialogScroll(ruleDialogScrollTarget - (float) verticalAmount * 28.0F);
+            return true;
+        }
         if (page == Page.RENDER && localMouseX >= sidebarRight && localMouseX < right
                 && localMouseY >= top + RIGHT_CONTENT_TOP && localMouseY < bottom - RIGHT_CONTENT_BOTTOM) {
             renderScrollTarget = Math.max(0.0F, Math.min(maxRenderScroll(), renderScrollTarget - (float) verticalAmount * 48.0F));
@@ -384,6 +451,12 @@ public final class ItemGlintRelightConfigScreen extends Screen {
 
     @Override
     public boolean keyPressed(KeyEvent event) {
+        if (ruleTargetPickerOpen) {
+            return handleRuleTargetPickerKey(event);
+        }
+        if (ruleDialogOpen) {
+            return handleRuleDialogKey(event);
+        }
         if (!itemPickerOpen) return super.keyPressed(event);
         if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
             closeItemPicker();
@@ -403,6 +476,19 @@ public final class ItemGlintRelightConfigScreen extends Screen {
 
     @Override
     public boolean charTyped(CharacterEvent event) {
+        if (ruleTargetPickerOpen) {
+            if (event.isAllowedChatCharacter() && ruleTargetSearch.length() < 96) {
+                ruleTargetSearch += event.codepointAsString();
+                filterRuleTargetChoices();
+            }
+            return true;
+        }
+        if (ruleDialogOpen) {
+            if (event.isAllowedChatCharacter()) {
+                appendRuleInput(event.codepointAsString());
+            }
+            return true;
+        }
         if (!itemPickerOpen) return super.charTyped(event);
         if (event.isAllowedChatCharacter() && itemSearch.length() < 96) {
             itemSearch += event.codepointAsString();
@@ -471,6 +557,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 }
             } else if (page == Page.PREVIEW) {
                 renderPreview(graphics, mouseX, mouseY);
+            } else if (page == Page.RULES) {
+                renderRules(graphics, mouseX, mouseY);
             }
             graphics.pose().popMatrix();
             graphics.disableScissor();
@@ -495,6 +583,358 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         pageTransition = UiMath.approach(pageTransition, 1.0F, delta, 14.0F);
     }
 
+    private void renderRules(GuiGraphics graphics, int mouseX, int mouseY) {
+        updateAddRuleAnimation(mouseX, mouseY);
+        int buttonRight = right - 24;
+        int buttonWidth = Math.round(24.0F + addRuleHover * 66.0F);
+        int buttonX = buttonRight - buttonWidth;
+        int buttonY = top + 40;
+        graphics.fill(buttonX, buttonY, buttonRight, buttonY + 24, UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, addRuleHover));
+        graphics.fill(buttonX + 1, buttonY + 1, buttonRight - 1, buttonY + 23, UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, addRuleHover));
+        String plus = "+";
+        SmoothTextRenderer.drawCentered(graphics, font, plus, buttonRight - 12.0F,
+                buttonY + (24 - SmoothTextRenderer.height(plus, 1.05F, UiPalette.PALE_BLUE)) / 2.0F, 1.05F, UiPalette.PALE_BLUE);
+        if (addRuleHover > 0.05F) {
+            graphics.enableScissor(buttonX, buttonY, buttonRight, buttonY + 24);
+            SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.rules.add"), buttonX + 9, buttonY + 7, 0.62F,
+                    UiMath.mix(UiPalette.MUTED_TEXT, UiPalette.TEXT, addRuleHover));
+            graphics.disableScissor();
+        }
+        SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.rules.empty"), sidebarRight + 24, top + 82, 0.72F, UiPalette.MUTED_TEXT);
+    }
+
+    private void renderRuleDialog(GuiGraphics graphics, int mouseX, int mouseY) {
+        long now = System.nanoTime();
+        float delta = Math.min(0.05F, (now - lastRuleDialogFrame) / 1_000_000_000.0F);
+        lastRuleDialogFrame = now;
+        ruleDialogAnimation = UiMath.approach(ruleDialogAnimation, 1.0F, delta, 9.0F);
+        ruleDialogScroll = UiMath.approach(ruleDialogScroll, ruleDialogScrollTarget, delta, 18.0F);
+        int x = RULE_DIALOG_X;
+        int y = RULE_DIALOG_Y;
+        int width = RULE_DIALOG_WIDTH;
+        int height = RULE_DIALOG_HEIGHT;
+        float scale = 0.96F + ruleDialogAnimation * 0.04F;
+        float centerX = x + width * 0.5F;
+        float centerY = y + height * 0.5F;
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(centerX, centerY);
+        graphics.pose().scale(scale, scale);
+        graphics.pose().translate(-centerX, -centerY);
+        graphics.fill(x, y, x + width, y + height, ruleDialogColor(0xEE07111F));
+        graphics.fill(x, y, x + width, y + 1, ruleDialogColor(UiPalette.DIVIDER));
+        graphics.fill(x, y + height - 1, x + width, y + height, ruleDialogColor(UiPalette.DIVIDER));
+        graphics.fill(x, y, x + 1, y + height, ruleDialogColor(UiPalette.DIVIDER));
+        graphics.fill(x + width - 1, y, x + width, y + height, ruleDialogColor(UiPalette.DIVIDER));
+        drawRuleDialogText(graphics, tr("ui.itemglintrelight.rules.create"), x + 18, y + 10, 0.86F, UiPalette.TEXT);
+        drawRuleDialogText(graphics, "x", x + width - 22, y + 13, 0.82F, UiPalette.MUTED_TEXT);
+        graphics.enableScissor(x + 1, y + 1, x + width - 1, y + height - 1);
+        int contentRowsHeight = 34 + (ruleMatchMode == RuleMatchMode.NBT_MATCH ? nbtMatchModeExpandedHeight() : 0);
+        ruleDialogContentHeight = 95 + ruleModeDropdown.expandedHeight() + contentRowsHeight;
+        ruleDialogScrollTarget = clampRuleDialogScroll(ruleDialogScrollTarget);
+        ruleDialogScroll = clampRuleDialogScroll(ruleDialogScroll);
+        int scroll = Math.round(ruleDialogScroll);
+        int formY = y + 31 - scroll;
+        renderRuleTextField(graphics, x + 18, formY, width - 36, tr("ui.itemglintrelight.rules.name"), ruleName, RuleInputFocus.NAME, false, mouseX, mouseY);
+        ruleModeDropdown.setPosition(x + 18, y + 72 - scroll);
+        int contentY = y + 126 + ruleModeDropdown.expandedHeight() - scroll;
+        int contentViewportY = y + 31;
+        int contentViewportBottom = y + height - 42;
+        if (ruleMatchMode == RuleMatchMode.WHITELIST) {
+            renderRuleTextField(graphics, x + 18, contentY, width - 36, tr("ui.itemglintrelight.rules.item_id"), ruleItemId, RuleInputFocus.ITEM, true, mouseX, mouseY);
+        } else if (ruleMatchMode == RuleMatchMode.NBT_MATCH) {
+            int inputWidth = (width - 36 - 92) / 2;
+            int keyX = x + 18;
+            int modeX = keyX + inputWidth + 8;
+            int valueX = modeX + 76 + 8;
+            renderRuleTextField(graphics, keyX, contentY, inputWidth, tr("ui.itemglintrelight.rules.nbt_key"), ruleNbtPath, RuleInputFocus.NBT_PATH, false, mouseX, mouseY);
+            renderNbtMatchModeControl(graphics, modeX, contentY, 76, mouseX, mouseY);
+            renderRuleTextField(graphics, valueX, contentY, inputWidth, tr("ui.itemglintrelight.rules.nbt_value"), ruleNbtValue, RuleInputFocus.NBT_VALUE, false, mouseX, mouseY);
+        } else {
+            renderRuleTextField(graphics, x + 18, contentY, width - 36, tr("ui.itemglintrelight.rules.item_or_tag"), ruleItemId, RuleInputFocus.ITEM, true, mouseX, mouseY);
+        }
+        ruleModeDropdown.render(graphics, font, mouseX, mouseY, ruleDialogAnimation);
+        graphics.disableScissor();
+        renderRuleDialogScrollBar(graphics, x, contentViewportY, contentViewportBottom - contentViewportY);
+        renderRuleAddButton(graphics, x, y, width, height, mouseX, mouseY);
+        graphics.pose().popMatrix();
+    }
+
+    private void renderRuleTextField(GuiGraphics graphics, int x, int y, int width, String label, String value, RuleInputFocus focus, boolean selectable, int mouseX, int mouseY) {
+        drawRuleDialogText(graphics, label, x, y, 0.68F, UiPalette.MUTED_TEXT);
+        int inputWidth = selectable ? width - 62 : width;
+        boolean focused = ruleInputFocus == focus;
+        boolean hovered = UiMath.contains(x, y + 12, inputWidth, 22, mouseX, mouseY);
+        graphics.fill(x, y + 12, x + inputWidth, y + 34, ruleDialogColor(focused || hovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER));
+        graphics.fill(x + 1, y + 13, x + inputWidth - 1, y + 33, ruleDialogColor(UiPalette.SURFACE));
+        String visible = value.isEmpty() ? tr("ui.itemglintrelight.rules.optional") : value;
+        drawRuleDialogText(graphics, truncate(visible, inputWidth - 18, 0.68F), x + 8, y + 18, 0.68F, value.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT);
+        if (focused && (System.currentTimeMillis() / 500L & 1L) == 0) {
+            int cursorX = x + 8 + SmoothTextRenderer.width(value, 0.68F, UiPalette.TEXT);
+            graphics.fill(cursorX, y + 17, cursorX + 1, y + 29, ruleDialogColor(UiPalette.PALE_BLUE));
+        }
+        if (selectable) {
+            int buttonX = x + inputWidth + 6;
+            boolean buttonHovered = UiMath.contains(buttonX, y + 12, 56, 22, mouseX, mouseY);
+            graphics.fill(buttonX, y + 12, buttonX + 56, y + 34, ruleDialogColor(buttonHovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER));
+            graphics.fill(buttonX + 1, y + 13, buttonX + 55, y + 33, ruleDialogColor(UiPalette.SURFACE_HOVER));
+            drawRuleDialogText(graphics, tr("ui.itemglintrelight.rules.select"), buttonX + 11, y + 18, 0.58F, UiPalette.TEXT);
+        }
+    }
+
+    private void renderNbtMatchModeControl(GuiGraphics graphics, int x, int y, int width, int mouseX, int mouseY) {
+        SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.rules.nbt_match_mode"), x, y, 0.68F, UiPalette.MUTED_TEXT, ruleDialogAnimation);
+        long now = System.nanoTime();
+        float delta = Math.min(0.05F, (now - lastNbtMatchModeFrame) / 1_000_000_000.0F);
+        lastNbtMatchModeFrame = now;
+        nbtMatchModeTransition = UiMath.approach(nbtMatchModeTransition, 1.0F, delta, 16.0F);
+        nbtMatchModeExpansion = UiMath.approach(nbtMatchModeExpansion, nbtMatchModeExpanded ? 1.0F : 0.0F, delta, 18.0F);
+        int fieldY = y + 12;
+        boolean hovered = UiMath.contains(x, fieldY, width, 22, mouseX, mouseY);
+        nbtPreviousArrowHover = UiMath.approach(nbtPreviousArrowHover, UiMath.contains(x + 1, fieldY + 1, 20, 20, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
+        nbtNextArrowHover = UiMath.approach(nbtNextArrowHover, UiMath.contains(x + width - 21, fieldY + 1, 20, 20, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
+        nbtCenterHover = UiMath.approach(nbtCenterHover, UiMath.contains(x + 22, fieldY + 1, width - 44, 20, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
+        graphics.fill(x, y + 12, x + width, y + 34, ruleDialogColor(hovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER));
+        graphics.fill(x + 1, y + 13, x + width - 1, y + 33, ruleDialogColor(UiPalette.SURFACE));
+        graphics.fill(x + 1, fieldY + 1, x + 21, fieldY + 21, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nbtPreviousArrowHover)));
+        graphics.fill(x + width - 21, fieldY + 1, x + width - 1, fieldY + 21, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nbtNextArrowHover)));
+        graphics.fill(x + 22, fieldY + 1, x + width - 22, fieldY + 21, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nbtCenterHover)));
+        float arrowY = fieldY + (22 - SmoothTextRenderer.height("<", 0.68F, UiPalette.PALE_BLUE)) * 0.5F;
+        drawRuleDialogText(graphics, "<", x + 7, arrowY, 0.68F, UiMath.mix(UiPalette.PALE_BLUE, UiPalette.LIGHT_GREEN, nbtPreviousArrowHover));
+        drawRuleDialogText(graphics, ">", x + width - 13, arrowY, 0.68F, UiMath.mix(UiPalette.PALE_BLUE, UiPalette.LIGHT_GREEN, nbtNextArrowHover));
+        int centerX = x + width / 2;
+        if (nbtMatchModeTransition < 0.995F) {
+            drawNbtMatchModeSymbol(graphics, previousNbtMatchMode.symbol, centerX - nbtMatchModeDirection * nbtMatchModeTransition * 22.0F,
+                    fieldY, 1.0F - nbtMatchModeTransition);
+        }
+        drawNbtMatchModeSymbol(graphics, ruleNbtMatchMode.symbol, centerX + nbtMatchModeDirection * (1.0F - nbtMatchModeTransition) * 22.0F,
+                fieldY, 1.0F);
+        int optionHeight = nbtMatchModeExpandedHeight();
+        if (optionHeight > 0) {
+            int optionsY = fieldY + 23;
+            graphics.fill(x, optionsY, x + width, optionsY + optionHeight, ruleDialogColor(UiPalette.BRIGHT_BLUE));
+            graphics.fill(x + 1, optionsY + 1, x + width - 1, optionsY + optionHeight - 1, ruleDialogColor(UiPalette.DEEP_BLUE_FADE));
+            graphics.fill(x, optionsY + optionHeight - 1, x + width, optionsY + optionHeight, ruleDialogColor(UiPalette.BRIGHT_BLUE));
+            for (int index = 0; index < NbtMatchMode.values().length; index++) {
+                int optionY = optionsY + index * 22;
+                if (optionY >= optionsY + optionHeight) break;
+                boolean optionHovered = UiMath.contains(x, optionY, width, 22, mouseX, mouseY);
+                nbtMatchModeOptionHovers[index] = UiMath.approach(nbtMatchModeOptionHovers[index], optionHovered ? 1.0F : 0.0F, delta, 12.0F);
+                graphics.fill(x + 1, optionY, x + width - 1, optionY + 22,
+                        ruleDialogColor(UiMath.mix(UiPalette.DEEP_BLUE_FADE, UiPalette.SURFACE_HOVER, nbtMatchModeOptionHovers[index])));
+                NbtMatchMode mode = NbtMatchMode.values()[index];
+                int symbolWidth = SmoothTextRenderer.width(mode.symbol, 0.68F, UiPalette.TEXT);
+                float symbolY = optionY + (22 - SmoothTextRenderer.height(mode.symbol, 0.68F, UiPalette.TEXT)) * 0.5F;
+                drawRuleDialogText(graphics, mode.symbol, x + (width - symbolWidth) * 0.5F, symbolY, 0.68F,
+                        mode == ruleNbtMatchMode ? UiPalette.LIGHT_GREEN : UiPalette.TEXT);
+            }
+        }
+    }
+
+    private void drawNbtMatchModeSymbol(GuiGraphics graphics, String symbol, float centerX, int fieldY, float opacity) {
+        int symbolWidth = SmoothTextRenderer.width(symbol, 0.68F, UiPalette.TEXT);
+        float symbolY = fieldY + (22 - SmoothTextRenderer.height(symbol, 0.68F, UiPalette.TEXT)) * 0.5F;
+        SmoothTextRenderer.draw(graphics, font, symbol, centerX - symbolWidth * 0.5F, symbolY, 0.68F,
+                ruleDialogColor(UiPalette.TEXT), ruleDialogAnimation * opacity);
+    }
+
+    private void renderRuleAddButton(GuiGraphics graphics, int x, int y, int width, int height, int mouseX, int mouseY) {
+        int buttonX = x + width - 106;
+        int buttonY = y + height - 32;
+        boolean hovered = UiMath.contains(buttonX, buttonY, 88, 24, mouseX, mouseY);
+        graphics.fill(buttonX, buttonY, buttonX + 88, buttonY + 24, ruleDialogColor(hovered ? UiPalette.LIGHT_GREEN : UiPalette.BRIGHT_BLUE));
+        graphics.fill(buttonX + 1, buttonY + 1, buttonX + 87, buttonY + 23, ruleDialogColor(hovered ? UiPalette.SURFACE_HOVER : UiPalette.SURFACE));
+        String label = tr("ui.itemglintrelight.rules.confirm_add");
+        SmoothTextRenderer.drawCentered(graphics, font, label, buttonX + 44.0F,
+                buttonY + (24 - SmoothTextRenderer.height(label, 0.72F, UiPalette.TEXT)) * 0.5F, 0.72F, ruleDialogColor(UiPalette.TEXT), ruleDialogAnimation);
+    }
+
+    private boolean isAddRuleButton(double mouseX, double mouseY) {
+        int buttonRight = right - 24;
+        int buttonWidth = Math.round(24.0F + addRuleHover * 66.0F);
+        return UiMath.contains(buttonRight - buttonWidth, top + 40, buttonWidth, 24, mouseX, mouseY)
+                || UiMath.contains(buttonRight - 24, top + 40, 24, 24, mouseX, mouseY);
+    }
+
+    private void updateAddRuleAnimation(int mouseX, int mouseY) {
+        long now = System.nanoTime();
+        float delta = Math.min(0.05F, (now - lastRuleFrame) / 1_000_000_000.0F);
+        lastRuleFrame = now;
+        addRuleHover = UiMath.approach(addRuleHover, isAddRuleButton(mouseX, mouseY) ? 1.0F : 0.0F, delta, 13.0F);
+    }
+
+    private void openRuleDialog() {
+        ruleDialogOpen = true;
+        ruleDialogAnimation = 0.0F;
+        lastRuleDialogFrame = System.nanoTime();
+        ruleDialogScroll = 0.0F;
+        ruleDialogScrollTarget = 0.0F;
+        ruleInputFocus = RuleInputFocus.NAME;
+    }
+
+    private boolean handleRuleDialogClick(double mouseX, double mouseY, int button) {
+        if (button != 0) return true;
+        int x = RULE_DIALOG_X;
+        int y = RULE_DIALOG_Y;
+        int width = RULE_DIALOG_WIDTH;
+        if (mouseX < x || mouseX >= x + width || mouseY < y || mouseY >= y + RULE_DIALOG_HEIGHT) {
+            ruleDialogOpen = false;
+            ruleInputFocus = RuleInputFocus.NONE;
+            return true;
+        }
+        if (UiMath.contains(x + width - 32, y + 6, 24, 24, mouseX, mouseY)) {
+            ruleDialogOpen = false;
+            ruleInputFocus = RuleInputFocus.NONE;
+            return true;
+        }
+        if (UiMath.contains(x + width - 106, y + RULE_DIALOG_HEIGHT - 32, 88, 24, mouseX, mouseY)) {
+            ruleDialogOpen = false;
+            ruleInputFocus = RuleInputFocus.NONE;
+            return true;
+        }
+        int scroll = Math.round(ruleDialogScroll);
+        ruleModeDropdown.setPosition(x + 18, y + 72 - scroll);
+        boolean modeExpanded = ruleModeDropdown.isExpanded();
+        if (ruleModeDropdown.mouseClicked(mouseX, mouseY, button) || modeExpanded) return true;
+        if (UiMath.contains(x + 18, y + 43 - scroll, width - 36, 22, mouseX, mouseY)) {
+            ruleInputFocus = RuleInputFocus.NAME;
+            return true;
+        }
+        int contentY = y + 126 + ruleModeDropdown.expandedHeight() - scroll;
+        if (usesRuleTargetPicker() && UiMath.contains(x + width - 74, contentY + 12, 56, 22, mouseX, mouseY)) {
+            openRuleTargetPicker();
+            return true;
+        }
+        if (ruleMatchMode != RuleMatchMode.NBT_MATCH && UiMath.contains(x + 18, contentY + 12, width - 36, 22, mouseX, mouseY)) {
+            ruleInputFocus = RuleInputFocus.ITEM;
+            return true;
+        }
+        if (ruleMatchMode == RuleMatchMode.NBT_MATCH) {
+            int inputWidth = (width - 36 - 92) / 2;
+            int keyX = x + 18;
+            int modeX = keyX + inputWidth + 8;
+            int valueX = modeX + 76 + 8;
+            int optionsY = contentY + 35;
+            if (nbtMatchModeExpanded) {
+                for (int index = 0; index < NbtMatchMode.values().length; index++) {
+                    if (UiMath.contains(modeX, optionsY + index * 22, 76, 22, mouseX, mouseY)) {
+                        selectNbtMatchMode(NbtMatchMode.values()[index], index >= ruleNbtMatchMode.ordinal() ? 1 : -1);
+                        nbtMatchModeExpanded = false;
+                        return true;
+                    }
+                }
+            }
+            if (UiMath.contains(keyX, contentY + 12, inputWidth, 22, mouseX, mouseY)) {
+                ruleInputFocus = RuleInputFocus.NBT_PATH;
+                return true;
+            }
+            if (UiMath.contains(valueX, contentY + 12, inputWidth, 22, mouseX, mouseY)) {
+                ruleInputFocus = RuleInputFocus.NBT_VALUE;
+                return true;
+            }
+            if (UiMath.contains(modeX, contentY + 12, 24, 22, mouseX, mouseY)) {
+                selectNbtMatchMode(ruleNbtMatchMode.previous(), -1);
+                return true;
+            }
+            if (UiMath.contains(modeX + 52, contentY + 12, 24, 22, mouseX, mouseY)) {
+                selectNbtMatchMode(ruleNbtMatchMode.next(), 1);
+                return true;
+            }
+            if (UiMath.contains(modeX + 24, contentY + 12, 28, 22, mouseX, mouseY)) {
+                nbtMatchModeExpanded = !nbtMatchModeExpanded;
+                return true;
+            }
+        }
+        ruleInputFocus = RuleInputFocus.NONE;
+        return true;
+    }
+
+    private boolean usesRuleTargetPicker() {
+        return ruleMatchMode == RuleMatchMode.WHITELIST || ruleMatchMode == RuleMatchMode.BLACKLIST;
+    }
+
+    private void selectNbtMatchMode(NbtMatchMode next, int direction) {
+        previousNbtMatchMode = ruleNbtMatchMode;
+        ruleNbtMatchMode = next;
+        nbtMatchModeDirection = direction;
+        nbtMatchModeTransition = 0.0F;
+    }
+
+    private int nbtMatchModeExpandedHeight() {
+        return Math.round(NbtMatchMode.values().length * 22.0F * nbtMatchModeExpansion);
+    }
+
+    private boolean handleRuleDialogKey(KeyEvent event) {
+        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+            ruleDialogOpen = false;
+            ruleInputFocus = RuleInputFocus.NONE;
+            return true;
+        }
+        if (event.key() == GLFW.GLFW_KEY_ENTER) {
+            ruleInputFocus = RuleInputFocus.NONE;
+            return true;
+        }
+        if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+            deleteRuleInputCharacter();
+            return true;
+        }
+        return true;
+    }
+
+    private void appendRuleInput(String value) {
+        switch (ruleInputFocus) {
+            case NAME -> ruleName = appendRuleInput(ruleName, value);
+            case ITEM -> ruleItemId = appendRuleInput(ruleItemId, value);
+            case NBT_PATH -> ruleNbtPath = appendRuleInput(ruleNbtPath, value);
+            case NBT_VALUE -> ruleNbtValue = appendRuleInput(ruleNbtValue, value);
+            case NONE -> { }
+        }
+    }
+
+    private String appendRuleInput(String current, String value) {
+        return current.length() >= 128 ? current : current + value;
+    }
+
+    private void deleteRuleInputCharacter() {
+        switch (ruleInputFocus) {
+            case NAME -> ruleName = deleteRuleInputCharacter(ruleName);
+            case ITEM -> ruleItemId = deleteRuleInputCharacter(ruleItemId);
+            case NBT_PATH -> ruleNbtPath = deleteRuleInputCharacter(ruleNbtPath);
+            case NBT_VALUE -> ruleNbtValue = deleteRuleInputCharacter(ruleNbtValue);
+            case NONE -> { }
+        }
+    }
+
+    private String deleteRuleInputCharacter(String value) {
+        return value.isEmpty() ? value : value.substring(0, value.offsetByCodePoints(value.length(), -1));
+    }
+
+    private int ruleDialogColor(int color) {
+        int alpha = Math.round((color >>> 24) * ruleDialogAnimation);
+        return alpha << 24 | (color & 0x00FFFFFF);
+    }
+
+    private void drawRuleDialogText(GuiGraphics graphics, String text, float x, float y, float scale, int color) {
+        SmoothTextRenderer.draw(graphics, font, text, x, y, scale, ruleDialogColor(color), ruleDialogAnimation);
+    }
+
+    private int ruleDialogViewportHeight() {
+        return RULE_DIALOG_HEIGHT - 73;
+    }
+
+    private float clampRuleDialogScroll(float value) {
+        return Math.max(0.0F, Math.min(Math.max(0, ruleDialogContentHeight - ruleDialogViewportHeight()), value));
+    }
+
+    private void renderRuleDialogScrollBar(GuiGraphics graphics, int x, int y, int height) {
+        int maximum = Math.max(0, ruleDialogContentHeight - height);
+        if (maximum == 0) return;
+        int trackX = x + RULE_DIALOG_WIDTH - 7;
+        int thumbHeight = Math.max(18, Math.round(height * height / (float) ruleDialogContentHeight));
+        int thumbY = y + Math.round((height - thumbHeight) * ruleDialogScroll / maximum);
+        graphics.fill(trackX, y, trackX + 1, y + height, ruleDialogColor(UiPalette.DIVIDER));
+        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, ruleDialogColor(UiPalette.PALE_BLUE));
+    }
+
     private void renderPreview(GuiGraphics graphics, int mouseX, int mouseY) {
         renderPreviewGrid(graphics);
         String itemName = previewItem.getHoverName().getString();
@@ -504,7 +944,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         SmoothTextRenderer.draw(graphics, font, itemName, PREVIEW_X + 14, PREVIEW_Y + 12, 0.88F, itemNameColor);
         int itemNameWidth = SmoothTextRenderer.width(itemName, 0.88F, itemNameColor);
         graphics.fill(PREVIEW_X + 14, PREVIEW_Y + 29, PREVIEW_X + 14 + Math.round(itemNameWidth * previewItemNameHover), PREVIEW_Y + 30, itemNameColor);
-        SmoothTextRenderer.draw(graphics, font, "点击更换物品", PREVIEW_X + 14, PREVIEW_Y + 31, 0.56F, UiPalette.MUTED_TEXT);
+        SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.preview.change_item"), PREVIEW_X + 14, PREVIEW_Y + 31, 0.56F, UiPalette.MUTED_TEXT);
 
         int previewLeft = Math.round(originX + PREVIEW_X * uiScale);
         int previewTop = Math.round(originY + PREVIEW_Y * uiScale);
@@ -548,6 +988,44 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         filterItemChoices();
     }
 
+    private void rebuildRuleTargetChoices() {
+        allRuleTargetChoices.clear();
+        for (var entry : BuiltInRegistries.ITEM.entrySet()) {
+            Identifier id = entry.getKey().identifier();
+            if (entry.getValue() == Items.AIR) continue;
+            ItemStack stack = new ItemStack(entry.getValue());
+            allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.ITEM, stack, stack.getHoverName().getString(), id.toString(), id.toString()));
+        }
+        FabricLoader.getInstance().getAllMods().forEach(container -> {
+            String id = container.getMetadata().getId();
+            allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.MOD, ItemStack.EMPTY, container.getMetadata().getName(), "@" + id, id));
+        });
+        if (minecraft != null && minecraft.level != null) {
+            minecraft.level.registryAccess().lookupOrThrow(Registries.ITEM).listTags().forEach(tag -> {
+                Identifier id = tag.key().location();
+                allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.TAG, ItemStack.EMPTY,
+                        tr("ui.itemglintrelight.rules.target.tag"), "#" + id, id.toString()));
+            });
+        }
+        allRuleTargetChoices.sort(Comparator.comparing((RuleTargetChoice choice) -> choice.kind().ordinal())
+                .thenComparing(RuleTargetChoice::label, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(RuleTargetChoice::value, String.CASE_INSENSITIVE_ORDER));
+        filterRuleTargetChoices();
+    }
+
+    private void filterRuleTargetChoices() {
+        String query = ruleTargetSearch.trim().toLowerCase(Locale.ROOT);
+        filteredRuleTargetChoices = allRuleTargetChoices.stream()
+                .filter(choice -> query.startsWith("#") ? choice.kind() == RuleTargetKind.TAG && choice.value().toLowerCase(Locale.ROOT).contains(query)
+                        : query.startsWith("@") ? choice.kind() == RuleTargetKind.MOD && choice.value().toLowerCase(Locale.ROOT).contains(query)
+                        : query.isEmpty() || choice.value().toLowerCase(Locale.ROOT).contains(query)
+                        || choice.label().toLowerCase(Locale.ROOT).contains(query)
+                        || choice.searchText().toLowerCase(Locale.ROOT).contains(query))
+                .toList();
+        ruleTargetPickerScroll = clampRuleTargetPickerScroll(ruleTargetPickerScroll);
+        ruleTargetPickerScrollTarget = clampRuleTargetPickerScroll(ruleTargetPickerScrollTarget);
+    }
+
     private void filterItemChoices() {
         String query = itemSearch.trim().toLowerCase(Locale.ROOT);
         if (query.startsWith("@")) {
@@ -589,15 +1067,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         graphics.fill(x, bottomEdge - 1, rightEdge, bottomEdge, pickerColor(UiPalette.DIVIDER));
         graphics.fill(x, y, x + 1, bottomEdge, pickerColor(UiPalette.DIVIDER));
         graphics.fill(rightEdge - 1, y, rightEdge, bottomEdge, pickerColor(UiPalette.DIVIDER));
-        drawPickerText(graphics, "选择物品", x + 12, y + 10, 0.76F, UiPalette.TEXT);
-        String count = filteredItemChoices.size() + " 项";
+        drawPickerText(graphics, tr("ui.itemglintrelight.preview.picker.title"), x + 12, y + 10, 0.76F, UiPalette.TEXT);
+        String count = tr("ui.itemglintrelight.preview.picker.count", filteredItemChoices.size());
         int countX = Math.max(x + 12, rightEdge - 12 - SmoothTextRenderer.width(count, 0.58F, UiPalette.MUTED_TEXT));
         drawPickerText(graphics, count, countX, y + 12, 0.58F, UiPalette.MUTED_TEXT);
 
         int searchY = y + 31;
         graphics.fill(x + 12, searchY, rightEdge - 12, searchY + 22, pickerColor(UiPalette.DIVIDER));
         graphics.fill(x + 13, searchY + 1, rightEdge - 13, searchY + 21, pickerColor(UiPalette.SURFACE));
-        String searchText = itemSearch.isEmpty() ? "搜索名称、ID 或 @模组名称" : itemSearch;
+        String searchText = itemSearch.isEmpty() ? tr("ui.itemglintrelight.preview.picker.search") : itemSearch;
         int searchColor = itemSearch.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT;
         drawPickerText(graphics, searchText, x + 20, searchY + 6, 0.62F, searchColor);
         if ((System.currentTimeMillis() / 500L & 1L) == 0) {
@@ -656,6 +1134,146 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private void closeItemPicker() {
         itemPickerOpen = false;
         itemPickerAnimation = 0.0F;
+    }
+
+    private void openRuleTargetPicker() {
+        rebuildRuleTargetChoices();
+        ruleTargetPickerOpen = true;
+        ruleTargetPickerAnimation = 0.0F;
+        ruleTargetSearch = "";
+        ruleTargetPickerScroll = 0.0F;
+        ruleTargetPickerScrollTarget = 0.0F;
+        lastRuleTargetPickerFrame = System.nanoTime();
+        filterRuleTargetChoices();
+    }
+
+    private void closeRuleTargetPicker() {
+        ruleTargetPickerOpen = false;
+        ruleTargetPickerAnimation = 0.0F;
+    }
+
+    private void renderRuleTargetPicker(GuiGraphics graphics, int mouseX, int mouseY) {
+        long now = System.nanoTime();
+        float delta = Math.min(0.05F, (now - lastRuleTargetPickerFrame) / 1_000_000_000.0F);
+        lastRuleTargetPickerFrame = now;
+        ruleTargetPickerAnimation = UiMath.approach(ruleTargetPickerAnimation, 1.0F, delta, 9.0F);
+        ruleTargetPickerScroll = UiMath.approach(ruleTargetPickerScroll, ruleTargetPickerScrollTarget, delta, 18.0F);
+        int x = ITEM_PICKER_X;
+        int y = ITEM_PICKER_Y;
+        int rightEdge = x + ITEM_PICKER_WIDTH;
+        int bottomEdge = y + ITEM_PICKER_HEIGHT;
+        float scale = 0.96F + ruleTargetPickerAnimation * 0.04F;
+        float centerX = x + ITEM_PICKER_WIDTH * 0.5F;
+        float centerY = y + ITEM_PICKER_HEIGHT * 0.5F;
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(centerX, centerY);
+        graphics.pose().scale(scale, scale);
+        graphics.pose().translate(-centerX, -centerY);
+        graphics.fill(x, y, rightEdge, bottomEdge, ruleTargetPickerColor(0xF20A1724));
+        graphics.fill(x, y, rightEdge, y + 1, ruleTargetPickerColor(UiPalette.DIVIDER));
+        graphics.fill(x, bottomEdge - 1, rightEdge, bottomEdge, ruleTargetPickerColor(UiPalette.DIVIDER));
+        graphics.fill(x, y, x + 1, bottomEdge, ruleTargetPickerColor(UiPalette.DIVIDER));
+        graphics.fill(rightEdge - 1, y, rightEdge, bottomEdge, ruleTargetPickerColor(UiPalette.DIVIDER));
+        drawRuleTargetPickerText(graphics, tr("ui.itemglintrelight.rules.target.title"), x + 12, y + 10, 0.76F, UiPalette.TEXT);
+        String count = tr("ui.itemglintrelight.rules.target.count", filteredRuleTargetChoices.size());
+        int countX = Math.max(x + 12, rightEdge - 12 - SmoothTextRenderer.width(count, 0.58F, UiPalette.MUTED_TEXT));
+        drawRuleTargetPickerText(graphics, count, countX, y + 12, 0.58F, UiPalette.MUTED_TEXT);
+        int searchY = y + 31;
+        graphics.fill(x + 12, searchY, rightEdge - 12, searchY + 22, ruleTargetPickerColor(UiPalette.DIVIDER));
+        graphics.fill(x + 13, searchY + 1, rightEdge - 13, searchY + 21, ruleTargetPickerColor(UiPalette.SURFACE));
+        String searchText = ruleTargetSearch.isEmpty() ? tr("ui.itemglintrelight.rules.target.search") : ruleTargetSearch;
+        drawRuleTargetPickerText(graphics, searchText, x + 20, searchY + 6, 0.62F, ruleTargetSearch.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT);
+        if ((System.currentTimeMillis() / 500L & 1L) == 0) {
+            int cursorX = x + 20 + Math.round(SmoothTextRenderer.width(ruleTargetSearch, 0.62F, UiPalette.TEXT));
+            graphics.fill(cursorX, searchY + 5, cursorX + 1, searchY + 17, ruleTargetPickerColor(UiPalette.PALE_BLUE));
+        }
+        int rowsY = searchY + 30;
+        int visibleRows = itemPickerVisibleRows();
+        int firstRow = (int) Math.floor(ruleTargetPickerScroll);
+        int rowOffset = Math.round((ruleTargetPickerScroll - firstRow) * ITEM_PICKER_ROW_HEIGHT);
+        graphics.enableScissor(x + 2, rowsY, rightEdge - 2, bottomEdge - 4);
+        for (int row = 0; row <= visibleRows; row++) {
+            int index = firstRow + row;
+            if (index >= filteredRuleTargetChoices.size()) break;
+            RuleTargetChoice choice = filteredRuleTargetChoices.get(index);
+            int rowY = rowsY + row * ITEM_PICKER_ROW_HEIGHT - rowOffset;
+            boolean hovered = mouseX >= x + 6 && mouseX < rightEdge - 6 && mouseY >= rowY && mouseY < rowY + ITEM_PICKER_ROW_HEIGHT - 2;
+            graphics.fill(x + 8, rowY, rightEdge - 8, rowY + ITEM_PICKER_ROW_HEIGHT - 2,
+                    ruleTargetPickerColor(hovered ? UiPalette.SURFACE_HOVER : UiPalette.DEEP_BLUE_FADE));
+            if (choice.kind() == RuleTargetKind.ITEM) {
+                graphics.renderItem(choice.stack(), x + 14, rowY + 7);
+            } else {
+                String marker = choice.kind() == RuleTargetKind.MOD ? "@" : "#";
+                drawRuleTargetPickerText(graphics, marker, x + 17, rowY + 8, 0.88F, UiPalette.PALE_BLUE);
+            }
+            drawRuleTargetPickerText(graphics, truncate(choice.label(), 214, 0.70F), x + 38, rowY + 6, 0.70F, UiPalette.TEXT);
+            drawRuleTargetPickerText(graphics, truncate(choice.value(), 300, 0.54F), x + 38, rowY + 19, 0.54F, UiPalette.MUTED_TEXT);
+        }
+        graphics.disableScissor();
+        renderRuleTargetPickerScrollBar(graphics, x, rowsY, visibleRows);
+        graphics.pose().popMatrix();
+    }
+
+    private boolean handleRuleTargetPickerClick(double mouseX, double mouseY, int button) {
+        if (button != 0) return true;
+        int x = ITEM_PICKER_X;
+        int y = ITEM_PICKER_Y;
+        if (mouseX < x || mouseX >= x + ITEM_PICKER_WIDTH || mouseY < y || mouseY >= y + ITEM_PICKER_HEIGHT) {
+            closeRuleTargetPicker();
+            return true;
+        }
+        int rowsY = y + 61;
+        int row = (int) ((mouseY - rowsY + (ruleTargetPickerScroll - Math.floor(ruleTargetPickerScroll)) * ITEM_PICKER_ROW_HEIGHT) / ITEM_PICKER_ROW_HEIGHT);
+        int index = (int) Math.floor(ruleTargetPickerScroll) + row;
+        if (mouseY >= rowsY && row >= 0 && row < itemPickerVisibleRows() && index < filteredRuleTargetChoices.size()) {
+            ruleItemId = filteredRuleTargetChoices.get(index).value();
+            ruleInputFocus = RuleInputFocus.ITEM;
+            closeRuleTargetPicker();
+        }
+        return true;
+    }
+
+    private boolean handleRuleTargetPickerKey(KeyEvent event) {
+        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+            closeRuleTargetPicker();
+            return true;
+        }
+        if (event.key() == GLFW.GLFW_KEY_BACKSPACE && !ruleTargetSearch.isEmpty()) {
+            ruleTargetSearch = ruleTargetSearch.substring(0, ruleTargetSearch.offsetByCodePoints(ruleTargetSearch.length(), -1));
+            filterRuleTargetChoices();
+            return true;
+        }
+        if (event.key() == GLFW.GLFW_KEY_ENTER && !filteredRuleTargetChoices.isEmpty()) {
+            ruleItemId = filteredRuleTargetChoices.get(0).value();
+            ruleInputFocus = RuleInputFocus.ITEM;
+            closeRuleTargetPicker();
+            return true;
+        }
+        return true;
+    }
+
+    private float clampRuleTargetPickerScroll(float value) {
+        return Math.max(0.0F, Math.min(Math.max(0, filteredRuleTargetChoices.size() - itemPickerVisibleRows()), value));
+    }
+
+    private void renderRuleTargetPickerScrollBar(GuiGraphics graphics, int x, int rowsY, int visibleRows) {
+        if (filteredRuleTargetChoices.size() <= visibleRows) return;
+        int trackX = x + ITEM_PICKER_WIDTH - 7;
+        int trackHeight = visibleRows * ITEM_PICKER_ROW_HEIGHT - 2;
+        int thumbHeight = Math.max(20, Math.round(trackHeight * visibleRows / (float) filteredRuleTargetChoices.size()));
+        float maximum = Math.max(1.0F, filteredRuleTargetChoices.size() - visibleRows);
+        int thumbY = rowsY + Math.round((trackHeight - thumbHeight) * ruleTargetPickerScroll / maximum);
+        graphics.fill(trackX, rowsY, trackX + 1, rowsY + trackHeight, ruleTargetPickerColor(UiPalette.DIVIDER));
+        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, ruleTargetPickerColor(UiPalette.PALE_BLUE));
+    }
+
+    private int ruleTargetPickerColor(int color) {
+        int alpha = Math.round((color >>> 24) * ruleTargetPickerAnimation);
+        return alpha << 24 | (color & 0x00FFFFFF);
+    }
+
+    private void drawRuleTargetPickerText(GuiGraphics graphics, String text, float x, float y, float scale, int color) {
+        SmoothTextRenderer.draw(graphics, font, text, x, y, scale, ruleTargetPickerColor(color), ruleTargetPickerAnimation);
     }
 
     private int itemPickerVisibleRows() {
@@ -839,11 +1457,57 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         return null;
     }
 
-    private static String tr(String key) {
-        return Component.translatable(key).getString();
+    private static String tr(String key, Object... arguments) {
+        return Component.translatable(key, arguments).getString();
     }
 
     private record ItemChoice(ItemStack stack, String name, String id, String namespace, String modName) { }
+
+    private record RuleTargetChoice(RuleTargetKind kind, ItemStack stack, String label, String value, String searchText) { }
+
+    private enum RuleTargetKind {
+        ITEM,
+        MOD,
+        TAG
+    }
+
+    private enum NbtMatchMode {
+        EQUAL("="),
+        GREATER_THAN(">"),
+        LESS_THAN("<"),
+        GREATER_OR_EQUAL(">="),
+        LESS_OR_EQUAL("<="),
+        CONTAINS("⊃"),
+        CONTAINED_BY("⊂");
+
+        private final String symbol;
+
+        NbtMatchMode(String symbol) {
+            this.symbol = symbol;
+        }
+
+        private NbtMatchMode previous() {
+            return values()[(ordinal() + values().length - 1) % values().length];
+        }
+
+        private NbtMatchMode next() {
+            return values()[(ordinal() + 1) % values().length];
+        }
+    }
+
+    private enum RuleMatchMode {
+        WHITELIST,
+        NBT_MATCH,
+        BLACKLIST
+    }
+
+    private enum RuleInputFocus {
+        NONE,
+        NAME,
+        ITEM,
+        NBT_PATH,
+        NBT_VALUE
+    }
 
     private enum Page {
         GENERAL("ui.itemglintrelight.nav.general"),
