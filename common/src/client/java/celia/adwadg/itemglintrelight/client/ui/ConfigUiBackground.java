@@ -17,20 +17,37 @@ public final class ConfigUiBackground {
         graphics.fill(sidebarRight + 12, bottom - 50, right - 12, bottom - 49, UiPalette.DIVIDER);
     }
 
-    private static void renderAnimatedBorder(GuiGraphics graphics, int left, int top, int right, int bottom) {
+    public static void renderCompanionPanel(GuiGraphics graphics, int left, int top, int right, int bottom) {
+        renderCompanionPanel(graphics, left, top, right, bottom, 1.0F);
+    }
+
+    public static void renderCompanionPanel(GuiGraphics graphics, int left, int top, int right, int bottom, float opacity) {
+        renderAnimatedBorder(graphics, left - 1, top - 1, right + 1, bottom + 1, opacity);
+        graphics.fill(left, top, right, bottom, withOpacity(UiPalette.DEEP_BLUE, opacity));
+    }
+
+    private static void renderAnimatedBorder(GuiGraphics graphics, int left, int top, int right, int bottom, float opacity) {
         float phase = (System.nanoTime() % 2_400_000_000L) / 2_400_000_000.0F;
         int width = right - left;
         int height = bottom - top;
         for (int offset = 0; offset < width; offset += 3) {
             int length = Math.min(3, width - offset);
-            graphics.fill(left + offset, top, left + offset + length, top + 1, gradient(phase + offset / (float) width));
-            graphics.fill(right - offset - length, bottom - 1, right - offset, bottom, gradient(phase + 0.5F + offset / (float) width));
+            graphics.fill(left + offset, top, left + offset + length, top + 1, withOpacity(gradient(phase + offset / (float) width), opacity));
+            graphics.fill(right - offset - length, bottom - 1, right - offset, bottom, withOpacity(gradient(phase + 0.5F + offset / (float) width), opacity));
         }
         for (int offset = 1; offset < height - 1; offset += 3) {
             int length = Math.min(3, height - 1 - offset);
-            graphics.fill(left, top + offset, left + 1, top + offset + length, gradient(phase + 0.25F + offset / (float) height));
-            graphics.fill(right - 1, bottom - offset - length, right, bottom - offset, gradient(phase + 0.75F + offset / (float) height));
+            graphics.fill(left, top + offset, left + 1, top + offset + length, withOpacity(gradient(phase + 0.25F + offset / (float) height), opacity));
+            graphics.fill(right - 1, bottom - offset - length, right, bottom - offset, withOpacity(gradient(phase + 0.75F + offset / (float) height), opacity));
         }
+    }
+
+    private static int withOpacity(int color, float opacity) {
+        return Math.round((color >>> 24) * Math.max(0.0F, Math.min(1.0F, opacity))) << 24 | color & 0x00FFFFFF;
+    }
+
+    private static void renderAnimatedBorder(GuiGraphics graphics, int left, int top, int right, int bottom) {
+        renderAnimatedBorder(graphics, left, top, right, bottom, 1.0F);
     }
 
     private static int gradient(float position) {

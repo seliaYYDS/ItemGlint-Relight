@@ -111,5 +111,6 @@
   "ui.itemglintrelight.rules.nbt_mode.less_or_equal": "<=",
   "ui.itemglintrelight.rules.nbt_mode.contains": "⊃",
   "ui.itemglintrelight.rules.nbt_mode.contained_by": "⊂",
-  "ui.itemglintrelight.rules.confirm_add": "Add"
+  "ui.itemglintrelight.rules.confirm_add": "Add",
+  "ui.itemglintrelight.quick_preview": "Quick Preview"
 }

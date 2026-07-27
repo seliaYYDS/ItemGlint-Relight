@@ -55,6 +55,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private static final int RULE_DIALOG_HEIGHT = 248;
     private static final int RIGHT_CONTENT_TOP = 28;
     private static final int RIGHT_CONTENT_BOTTOM = 50;
+    private static final int QUICK_PREVIEW_X = 652;
+    private static final int QUICK_PREVIEW_EXPANDED_WIDTH = 172;
+    private static final int QUICK_PREVIEW_COLLAPSED_WIDTH = 24;
     private final Screen parent;
     private final ItemGlintRelightConfigScreenModel model = new ItemGlintRelightConfigScreenModel();
     private UiButton saveButton;
@@ -121,6 +124,17 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private float itemPickerScrollTarget;
     private float previewItemNameHover;
     private long lastPreviewNameFrame;
+    private ItemStack quickPreviewItem = new ItemStack(Items.DIAMOND_SWORD);
+    private float quickPreviewPitch;
+    private float quickPreviewYaw;
+    private float quickPreviewRoll = 45.0F;
+    private float quickPreviewZoom = 9.0F;
+    private boolean draggingQuickPreview;
+    private boolean rollingQuickPreview;
+    private boolean quickPreviewCollapsed;
+    private float quickPreviewWidth = QUICK_PREVIEW_EXPANDED_WIDTH;
+    private float quickPreviewVisibility = 1.0F;
+    private long lastQuickPreviewFrame;
     private long lastPickerScrollFrame;
     private final List<RuleTargetChoice> allRuleTargetChoices = new ArrayList<>();
     private List<RuleTargetChoice> filteredRuleTargetChoices = List.of();
@@ -169,9 +183,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         right = 640;
         bottom = 340;
         sidebarRight = 144;
-        uiScale = Math.min(1.0F, Math.min((this.width - 28.0F) / (right + 4.0F), (this.height - 28.0F) / (bottom + 4.0F)));
+        uiScale = Math.min(1.0F, Math.min((this.width - 28.0F) / (QUICK_PREVIEW_X + QUICK_PREVIEW_EXPANDED_WIDTH + 4.0F), (this.height - 28.0F) / (bottom + 4.0F)));
         uiScale = Math.max(0.35F, uiScale);
-        originX = (this.width - right * uiScale) / 2.0F;
+        originX = (this.width - (QUICK_PREVIEW_X + QUICK_PREVIEW_EXPANDED_WIDTH) * uiScale) / 2.0F;
         originY = (this.height - bottom * uiScale) / 2.0F;
         saveButton = new UiButton(right - 104, bottom - 40, 80, 22, tr("ui.itemglintrelight.save"), () -> {
             model.save();
@@ -249,6 +263,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         lastNavigationFrame = System.nanoTime();
         lastPageTransitionFrame = System.nanoTime();
         lastPreviewNameFrame = System.nanoTime();
+        lastQuickPreviewFrame = System.nanoTime();
     }
 
     @Override
@@ -256,6 +271,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (minecraft.getWindow().isIconified()) {
             return;
         }
+        updateQuickPreviewLayout();
         ConfigUiBackground.renderBackdrop(graphics, width, height);
         graphics.pose().pushMatrix();
         graphics.pose().translate(originX, originY);
@@ -272,6 +288,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int logicalMouseX = Math.round((mouseX - originX) / uiScale);
         int logicalMouseY = Math.round((mouseY - originY) / uiScale);
         renderPageContent(graphics, logicalMouseX, logicalMouseY);
+        renderQuickPreview(graphics, logicalMouseX, logicalMouseY);
         saveButton.render(graphics, font, logicalMouseX, logicalMouseY);
         SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.save_hint"), sidebarRight + 24, bottom - 35, 0.66F, UiPalette.MUTED_TEXT);
         if (itemPickerOpen) {
@@ -298,6 +315,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         }
         if (ruleDialogOpen) {
             return handleRuleDialogClick(mouseX, mouseY, event.button());
+        }
+        if (isQuickPreviewToggle(mouseX, mouseY)) {
+            quickPreviewCollapsed = !quickPreviewCollapsed;
+            return true;
+        }
+        if (isInQuickPreviewCanvas(mouseX, mouseY)) {
+            if (event.button() == 0) draggingQuickPreview = true;
+            if (event.button() == 1) rollingQuickPreview = true;
+            return true;
         }
         Page nextPage = pageAt(mouseX, mouseY);
         if (nextPage != null) {
@@ -364,6 +390,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
         double mouseX = (event.x() - originX) / uiScale;
         double mouseY = (event.y() - originY) / uiScale;
+        if (draggingQuickPreview && event.button() == 0) {
+            quickPreviewYaw += (float) dragX / uiScale * 0.8F;
+            quickPreviewPitch = Math.max(-89.0F, Math.min(89.0F, quickPreviewPitch + (float) dragY / uiScale * 0.8F));
+            return true;
+        }
+        if (rollingQuickPreview && event.button() == 1) {
+            quickPreviewRoll += (float) dragX / uiScale * 0.8F;
+            return true;
+        }
         if (page == Page.RENDER) {
             if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseDragged(mouseX, mouseY, event.button())) return true;
@@ -404,6 +439,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         draggingPreview = false;
         panningPreview = false;
         rollingPreview = false;
+        draggingQuickPreview = false;
+        rollingQuickPreview = false;
         outlineWidthSlider.stopDragging();
         outlineSoftnessSlider.stopDragging();
         outlineThresholdSlider.stopDragging();
@@ -444,6 +481,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         }
         if (page == Page.PREVIEW && isInPreviewCanvas(localMouseX, localMouseY)) {
             zoomPreview((float) localMouseX, (float) localMouseY, (float) verticalAmount);
+            return true;
+        }
+        if (isInQuickPreviewCanvas(localMouseX, localMouseY)) {
+            quickPreviewZoom = Math.max(0.5F, Math.min(16.0F, quickPreviewZoom + (float) verticalAmount * 0.5F));
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
@@ -956,6 +997,69 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                         new ScreenRectangle(previewLeft, previewTop, previewRight - previewLeft, previewBottom - previewTop)));
     }
 
+    private void renderQuickPreview(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (quickPreviewWidth < 1.0F || quickPreviewVisibility < 0.01F) {
+            return;
+        }
+        int panelRight = QUICK_PREVIEW_X + Math.round(quickPreviewWidth);
+        ConfigUiBackground.renderCompanionPanel(graphics, QUICK_PREVIEW_X, top, panelRight, bottom, quickPreviewVisibility);
+        boolean expanded = quickPreviewWidth > QUICK_PREVIEW_COLLAPSED_WIDTH + 8.0F && quickPreviewVisibility >= 0.01F;
+        if (expanded) {
+            graphics.enableScissor(QUICK_PREVIEW_X + 1, top + 1, panelRight - 1, bottom - 1);
+            SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.quick_preview"), QUICK_PREVIEW_X + 12, top + 12, 0.68F, quickPreviewColor(UiPalette.TEXT));
+            graphics.fill(QUICK_PREVIEW_X + 12, top + 30, panelRight - 12, top + 31, quickPreviewColor(UiPalette.DIVIDER));
+            int canvasLeft = QUICK_PREVIEW_X + 10;
+            int canvasTop = top + 40;
+            int canvasRight = panelRight - 10;
+            int canvasBottom = bottom - 10;
+            for (int x = canvasLeft; x < canvasRight; x += 12) {
+                graphics.fill(x, canvasTop, x + 1, canvasBottom, quickPreviewColor((x - canvasLeft) % 48 == 0 ? 0x4A1D4664 : 0x261D4664));
+            }
+            for (int y = canvasTop; y < canvasBottom; y += 12) {
+                graphics.fill(canvasLeft, y, canvasRight, y + 1, quickPreviewColor((y - canvasTop) % 48 == 0 ? 0x4A1D4664 : 0x261D4664));
+            }
+            graphics.disableScissor();
+            if (page != Page.PREVIEW) {
+                int previewLeft = Math.round(originX + canvasLeft * uiScale);
+                int previewTop = Math.round(originY + canvasTop * uiScale);
+                int previewRight = Math.round(originX + canvasRight * uiScale);
+                int previewBottom = Math.round(originY + canvasBottom * uiScale);
+                ((GuiGraphicsAccessor) graphics).itemglintrelight$getGuiRenderState().submitPicturesInPictureState(
+                        new ItemPreviewRenderState(quickPreviewItem.copy(), previewLeft, previewTop, previewRight, previewBottom,
+                                quickPreviewZoom * 16.0F * uiScale, quickPreviewPitch, quickPreviewYaw, quickPreviewRoll, 0.0F, 0.0F,
+                                quickPreviewZoom * 16.0F / 72.0F, model.draft().copy(),
+                                new ScreenRectangle(previewLeft, previewTop, previewRight - previewLeft, previewBottom - previewTop)));
+            }
+        }
+        int toggleLeft = panelRight - 22;
+        boolean hovered = isQuickPreviewToggle(mouseX, mouseY);
+        graphics.fill(toggleLeft, top + 8, panelRight - 8, top + 26,
+                quickPreviewColor(UiMath.mix(UiPalette.DEEP_BLUE, UiPalette.SURFACE_HOVER, hovered ? 1.0F : 0.0F)));
+        SmoothTextRenderer.draw(graphics, font, quickPreviewCollapsed ? ">" : "<", toggleLeft + 6, top + 12, 0.66F,
+                quickPreviewColor(hovered ? UiPalette.LIGHT_GREEN : UiPalette.PALE_BLUE));
+    }
+
+    private void updateQuickPreviewLayout() {
+        long now = System.nanoTime();
+        float delta = Math.min(0.05F, (now - lastQuickPreviewFrame) / 1_000_000_000.0F);
+        lastQuickPreviewFrame = now;
+        float targetWidth = quickPreviewCollapsed ? QUICK_PREVIEW_COLLAPSED_WIDTH : QUICK_PREVIEW_EXPANDED_WIDTH;
+        float targetVisibility = page == Page.PREVIEW ? 0.0F : 1.0F;
+        quickPreviewWidth = UiMath.approach(quickPreviewWidth, targetWidth, delta, 12.0F);
+        quickPreviewVisibility = UiMath.approach(quickPreviewVisibility, targetVisibility, delta, 12.0F);
+        float expandedOriginX = (this.width - (QUICK_PREVIEW_X + QUICK_PREVIEW_EXPANDED_WIDTH) * uiScale) / 2.0F;
+        float collapsedOriginX = (this.width - right * uiScale) / 2.0F;
+        float progress = (quickPreviewWidth - QUICK_PREVIEW_COLLAPSED_WIDTH)
+                / (float) (QUICK_PREVIEW_EXPANDED_WIDTH - QUICK_PREVIEW_COLLAPSED_WIDTH) * quickPreviewVisibility;
+        originX = collapsedOriginX + (expandedOriginX - collapsedOriginX) * Math.max(0.0F, Math.min(1.0F, progress));
+    }
+
+    private boolean isQuickPreviewToggle(double mouseX, double mouseY) {
+        if (page == Page.PREVIEW || quickPreviewWidth < 1.0F || quickPreviewVisibility < 0.01F) return false;
+        int panelRight = QUICK_PREVIEW_X + Math.round(quickPreviewWidth);
+        return mouseX >= panelRight - 22 && mouseX < panelRight - 8 && mouseY >= top + 8 && mouseY < top + 26;
+    }
+
     private boolean isPreviewItemLabel(double mouseX, double mouseY) {
         int labelWidth = Math.max(96, Math.round(SmoothTextRenderer.width(previewItem.getHoverName().getString(), 0.88F, UiPalette.BRIGHT_BLUE)));
         return mouseX >= PREVIEW_X + 10 && mouseX < PREVIEW_X + 16 + labelWidth
@@ -1337,6 +1441,17 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private boolean isInPreviewCanvas(double mouseX, double mouseY) {
         return mouseX >= PREVIEW_X && mouseX < PREVIEW_X + PREVIEW_WIDTH
                 && mouseY >= PREVIEW_Y && mouseY < PREVIEW_Y + PREVIEW_HEIGHT;
+    }
+
+    private boolean isInQuickPreviewCanvas(double mouseX, double mouseY) {
+        int panelRight = QUICK_PREVIEW_X + Math.round(quickPreviewWidth);
+        return page != Page.PREVIEW && quickPreviewVisibility >= 0.01F && quickPreviewWidth > QUICK_PREVIEW_COLLAPSED_WIDTH + 8.0F
+                && mouseX >= QUICK_PREVIEW_X + 10 && mouseX < panelRight - 10
+                && mouseY >= top + 40 && mouseY < bottom - 10;
+    }
+
+    private int quickPreviewColor(int color) {
+        return Math.round((color >>> 24) * quickPreviewVisibility) << 24 | color & 0x00FFFFFF;
     }
 
     private void layoutRenderControls() {
