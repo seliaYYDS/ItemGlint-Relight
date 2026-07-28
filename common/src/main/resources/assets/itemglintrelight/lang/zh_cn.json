@@ -86,7 +86,7 @@
   "ui.itemglintrelight.rules.mode.whitelist": "白名单",
   "ui.itemglintrelight.rules.mode.nbt_match": "NBT 匹配",
   "ui.itemglintrelight.rules.mode.blacklist": "黑名单",
-  "ui.itemglintrelight.rules.item_id": "物品 ID",
+  "ui.itemglintrelight.rules.item_id": "物品 ID 或标签",
   "ui.itemglintrelight.rules.item_or_tag": "物品 ID 或标签",
   "ui.itemglintrelight.rules.all_variants": "匹配所有物品变体",
   "ui.itemglintrelight.rules.nbt_path": "NBT 路径",
@@ -112,5 +112,17 @@
   "ui.itemglintrelight.rules.nbt_mode.contains": "⊃",
   "ui.itemglintrelight.rules.nbt_mode.contained_by": "⊂",
   "ui.itemglintrelight.rules.confirm_add": "添加",
-  "ui.itemglintrelight.quick_preview": "快捷预览"
+  "ui.itemglintrelight.quick_preview": "快捷预览",
+  "ui.itemglintrelight.rules.outline_parameters": "描边参数",
+  "ui.itemglintrelight.rules.outline_default": "留空时使用默认参数",
+  "ui.itemglintrelight.rules.required": "必填",
+  "ui.itemglintrelight.rules.priority": "优先级",
+  "ui.itemglintrelight.rules.presets": "预设",
+  "ui.itemglintrelight.rules.preset.simple_enchantment": "简单附魔描边",
+  "ui.itemglintrelight.rules.preset.tool_outline": "工具描边",
+  "ui.itemglintrelight.rules.preset.advanced_enchantment": "高级附魔描边",
+  "ui.itemglintrelight.rules.custom": "自定义",
+  "ui.itemglintrelight.rules.outline_custom": "自定义描边参数",
+  "ui.itemglintrelight.rules.confirm": "确定",
+  "ui.itemglintrelight.render.color_length": "颜色长度"
 }

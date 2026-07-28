@@ -3,6 +3,7 @@ package celia.adwadg.itemglintrelight.client.render;
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfigManager;
+import celia.adwadg.itemglintrelight.config.DisplayRuleManager;
 import celia.adwadg.itemglintrelight.config.OutlineColorMode;
 import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
 import celia.adwadg.itemglintrelight.config.ColorScrollMode;
@@ -396,7 +397,7 @@ public final class HeldItemOutlineRenderer {
         clear(sceneDepth);
         sceneDepth.copyDepthFrom(mainTarget);
         renderCapture(minecraft, state);
-        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        ItemGlintRelightConfig config = state.config == null ? ItemGlintRelightConfigManager.get() : state.config;
         submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(state, config), hand, resolveCompositeScissor(mainTarget, state));
     }
 
@@ -452,14 +453,21 @@ public final class HeldItemOutlineRenderer {
 
     private static boolean prepareHand(InteractionHand hand, ItemStack stack) {
         CaptureState state = stateFor(hand);
+        state.requested = false;
+        state.config = null;
         if (!isEnabled(hand, stack)) {
             state.disabledStack = stack == null ? "null" : stack.toString();
             return false;
         }
-        state.requested = true;
         state.item = stack;
+        state.config = DisplayRuleManager.resolve(stack, ItemGlintRelightConfigManager.get());
+        if (!state.config.outlineEnabled()) {
+            state.disabledStack = stack.toString();
+            return false;
+        }
+        state.requested = true;
         state.stack = stack.toString();
-        if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+        if (state.config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
             state.materialPaletteKey = materialPaletteKey(stack);
             state.materialPalette = MATERIAL_PALETTE_CACHE.get(state.materialPaletteKey);
         }
@@ -1094,6 +1102,7 @@ public final class HeldItemOutlineRenderer {
         private String materialPaletteKey;
         private String stack = "-";
         private ItemStack item;
+        private ItemGlintRelightConfig config;
         private String disabledStack = "-";
         private Matrix4f modelViewMatrix;
         private Matrix4f itemPoseMatrix;
@@ -1110,6 +1119,7 @@ public final class HeldItemOutlineRenderer {
             materialPalette = null;
             materialPaletteKey = null;
             item = null;
+            config = null;
             stack = "-";
             disabledStack = "-";
             modelViewMatrix = null;

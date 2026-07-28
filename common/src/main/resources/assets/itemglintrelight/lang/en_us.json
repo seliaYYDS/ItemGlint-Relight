@@ -86,7 +86,7 @@
   "ui.itemglintrelight.rules.mode.whitelist": "Whitelist",
   "ui.itemglintrelight.rules.mode.nbt_match": "NBT match",
   "ui.itemglintrelight.rules.mode.blacklist": "Blacklist",
-  "ui.itemglintrelight.rules.item_id": "Item ID",
+  "ui.itemglintrelight.rules.item_id": "Item ID or tag",
   "ui.itemglintrelight.rules.item_or_tag": "Item ID or tag",
   "ui.itemglintrelight.rules.all_variants": "Match all item variants",
   "ui.itemglintrelight.rules.nbt_path": "NBT path",
@@ -112,5 +112,17 @@
   "ui.itemglintrelight.rules.nbt_mode.contains": "⊃",
   "ui.itemglintrelight.rules.nbt_mode.contained_by": "⊂",
   "ui.itemglintrelight.rules.confirm_add": "Add",
-  "ui.itemglintrelight.quick_preview": "Quick Preview"
+  "ui.itemglintrelight.quick_preview": "Quick Preview",
+  "ui.itemglintrelight.rules.outline_parameters": "Outline parameters",
+  "ui.itemglintrelight.rules.outline_default": "Leave empty for default parameters",
+  "ui.itemglintrelight.rules.required": "Required",
+  "ui.itemglintrelight.rules.priority": "Priority",
+  "ui.itemglintrelight.rules.presets": "Presets",
+  "ui.itemglintrelight.rules.preset.simple_enchantment": "Simple Enchantment Outline",
+  "ui.itemglintrelight.rules.preset.tool_outline": "Tool Outline",
+  "ui.itemglintrelight.rules.preset.advanced_enchantment": "Advanced Enchantment Outline",
+  "ui.itemglintrelight.rules.custom": "Custom",
+  "ui.itemglintrelight.rules.outline_custom": "Custom outline parameters",
+  "ui.itemglintrelight.rules.confirm": "Confirm",
+  "ui.itemglintrelight.render.color_length": "Color length"
 }

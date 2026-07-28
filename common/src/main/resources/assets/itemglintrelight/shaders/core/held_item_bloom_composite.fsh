@@ -31,8 +31,9 @@ float scrollPosition() {
     }
     vec2 relative = (texCoord * geometry.xy - scrollMode.yz) / max(scrollBounds.xy, vec2(1.0));
     float angle = atan(relative.y, relative.x) - atan(colorScroll.y, colorScroll.x);
-    float direction = colorScroll.x < 0.0 ? -1.0 : 1.0;
-    return angle * scrollMode.w / segmentPixels - timeOffset * direction;
+    float perimeter = 6.28318530718 * max(scrollMode.w, 1.0);
+    float cycles = max(1.0, round(perimeter / (segmentPixels * 2.0)));
+    return (angle / 6.28318530718 + 0.5) * cycles * 2.0 - timeOffset;
 }
 
 vec3 hsvToRgb(float hue, float saturation, float value) {

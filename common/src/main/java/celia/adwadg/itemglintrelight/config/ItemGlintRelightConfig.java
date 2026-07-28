@@ -1,5 +1,6 @@
 package celia.adwadg.itemglintrelight.config;
 
+
 public final class ItemGlintRelightConfig {
     public static final int DEFAULT_PRIMARY_COLOR = 0xFFFFFFFF;
     public static final int DEFAULT_SECONDARY_COLOR = 0xFF66CCFF;

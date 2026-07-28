@@ -21,6 +21,7 @@ public final class ItemGlintRelightConfigManager {
             return;
         }
         configFile = configDirectory.resolve(FILE_NAME);
+        DisplayRuleManager.register(configDirectory);
         load();
     }
 
@@ -147,6 +148,7 @@ public final class ItemGlintRelightConfigManager {
     private static <T extends Enum<T>> T enumValue(Properties values, String key, T fallback) {
         try { return Enum.valueOf(fallback.getDeclaringClass(), values.getProperty(key)); } catch (RuntimeException ignored) { return fallback; }
     }
+
 
     private static void ensureRegistered() {
         if (configFile == null) {

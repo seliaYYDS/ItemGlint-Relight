@@ -44,6 +44,11 @@ public final class UiDropdown implements UiComponent {
         return expanded;
     }
 
+    public void setSelected(int selected) {
+        this.selected = Math.max(0, Math.min(options.size() - 1, selected));
+        expanded = false;
+    }
+
     @Override
     public void render(GuiGraphics graphics, Font font, int mouseX, int mouseY) {
         float delta = deltaSeconds();
