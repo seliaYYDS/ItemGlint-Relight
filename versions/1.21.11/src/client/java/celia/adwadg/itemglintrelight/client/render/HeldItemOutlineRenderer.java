@@ -72,8 +72,6 @@ public final class HeldItemOutlineRenderer {
     private static int itemSubmissionDepth;
     private static int externalSubmissionDepth;
     private static TextureTarget sceneDepth;
-    private static TextureTarget irisMainHandMask;
-    private static TextureTarget irisOffHandMask;
     private static TextureTarget bloomFirst;
     private static TextureTarget bloomSecond;
     private static TextureTarget previewBloomFirst;
@@ -109,10 +107,6 @@ public final class HeldItemOutlineRenderer {
 
     public static void beginHandPass(Matrix4f projection) {
         handProjectionMatrix = projection == null ? null : new Matrix4f(projection);
-        beginCompatibilityHandPass();
-    }
-
-    public static void beginCompatibilityHandPass() {
         Minecraft minecraft = Minecraft.getInstance();
         if (shouldRender(minecraft) && minecraft.player != null) {
             prepareHand(InteractionHand.MAIN_HAND, minecraft.player.getMainHandItem());
@@ -392,55 +386,6 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
-    /** Captures the Iris hand passes while Iris' hand shader routing is still active. */
-    public static void captureIrisHandMasks(Minecraft minecraft) {
-        if (!shouldRender(minecraft) || (!MAIN_HAND.captured && !OFF_HAND.captured)) {
-            return;
-        }
-
-        RenderTarget mainTarget = minecraft.getMainRenderTarget();
-        ensureTarget(mainTarget);
-        clear(armOccluder);
-        renderCapture(minecraft, ARM_OCCLUDER, armOccluder);
-        if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
-            captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
-            captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
-        }
-        captureIrisMask(minecraft, mainTarget, MAIN_HAND, irisMainHandMask);
-        captureIrisMask(minecraft, mainTarget, OFF_HAND, irisOffHandMask);
-    }
-
-    /** Mirrors the reference implementation's frame-end composite timing. */
-    public static void compositeIrisHandMasks(Minecraft minecraft) {
-        if (!shouldRender(minecraft)) {
-            return;
-        }
-
-        RenderTarget mainTarget = minecraft.getMainRenderTarget();
-        try {
-            compositeIrisMask(minecraft, mainTarget, MAIN_HAND, irisMainHandMask, "main");
-            compositeIrisMask(minecraft, mainTarget, OFF_HAND, irisOffHandMask, "off");
-        } finally {
-            MAIN_HAND.reset();
-            OFF_HAND.reset();
-        }
-    }
-
-    private static void captureIrisMask(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, TextureTarget mask) {
-        if (!state.captured) return;
-        clear(mask);
-        mask.copyDepthFrom(mainTarget);
-        renderCapture(minecraft, state, mask);
-        state.irisMaskCaptured = true;
-    }
-
-    private static void compositeIrisMask(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, TextureTarget mask, String hand) {
-        if (!state.irisMaskCaptured) return;
-        ItemGlintRelightConfig config = state.config == null ? ItemGlintRelightConfigManager.get() : state.config;
-        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(state, config), hand,
-                resolveCompositeScissor(mainTarget, state), mask);
-    }
-
     private static void compositeCapture(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, String hand) {
         if (!state.captured) {
             return;
@@ -497,7 +442,6 @@ public final class HeldItemOutlineRenderer {
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
         return minecraft != null && minecraft.player != null && minecraft.level != null
                 && minecraft.options.getCameraType().isFirstPerson()
-                && !IrisOutlineBridge.isRenderingShadowPass()
                 && config.outlineEnabled();
     }
 
@@ -609,15 +553,11 @@ public final class HeldItemOutlineRenderer {
     private static void ensureTarget(RenderTarget mainTarget) {
         if (sceneDepth == null) {
             sceneDepth = new TextureTarget("itemglintrelight_hand_mask", mainTarget.width, mainTarget.height, true);
-            irisMainHandMask = new TextureTarget("itemglintrelight_iris_main_hand_mask", mainTarget.width, mainTarget.height, true);
-            irisOffHandMask = new TextureTarget("itemglintrelight_iris_off_hand_mask", mainTarget.width, mainTarget.height, true);
             bloomFirst = new TextureTarget("itemglintrelight_hand_bloom_first", mainTarget.width, mainTarget.height, false);
             bloomSecond = new TextureTarget("itemglintrelight_hand_bloom_second", mainTarget.width, mainTarget.height, false);
             armOccluder = new TextureTarget("itemglintrelight_hand_arm_occluder", mainTarget.width, mainTarget.height, true);
         } else if (sceneDepth.width != mainTarget.width || sceneDepth.height != mainTarget.height) {
             sceneDepth.resize(mainTarget.width, mainTarget.height);
-            irisMainHandMask.resize(mainTarget.width, mainTarget.height);
-            irisOffHandMask.resize(mainTarget.width, mainTarget.height);
             bloomFirst.resize(mainTarget.width, mainTarget.height);
             bloomSecond.resize(mainTarget.width, mainTarget.height);
             armOccluder.resize(mainTarget.width, mainTarget.height);
@@ -736,7 +676,7 @@ public final class HeldItemOutlineRenderer {
         float halfHeight = scissor == null ? target.height * 0.25F : Math.max(1.0F, scissor.height * 0.5F - padding);
         float pathRadius = ellipsePathRadius(halfWidth, halfHeight);
         put(buffer, scrollMode(config.outlineColorScrollMode()), centerX, centerY, Math.max(pathRadius, 1.0F));
-        put(buffer, halfWidth, halfHeight, IrisOutlineBridge.isShaderPackActive() ? 1.0F : 0.0F, 0.0F);
+        put(buffer, halfWidth, halfHeight, 0.0F, 0.0F);
         for (int index = 0; index < 8; index++) {
             float[] color = index < materialPalette.length ? materialPalette[index] : materialPalette[0];
             put(buffer, color[0], color[1], color[2], 1.0F);
@@ -1156,7 +1096,6 @@ public final class HeldItemOutlineRenderer {
         private boolean captured;
         private boolean requested;
         private boolean replayed;
-        private boolean irisMaskCaptured;
         private int submittedItems;
         private final Map<Integer, Integer> materialColors = new LinkedHashMap<>();
         private float[][] materialPalette;
@@ -1175,7 +1114,6 @@ public final class HeldItemOutlineRenderer {
             captured = false;
             requested = false;
             replayed = false;
-            irisMaskCaptured = false;
             submittedItems = 0;
             materialColors.clear();
             materialPalette = null;

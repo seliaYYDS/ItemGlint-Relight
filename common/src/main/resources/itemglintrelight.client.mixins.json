@@ -11,9 +11,7 @@
     "ItemStackLayerRenderStateAccessor",
     "GuiRendererPreviewMixin",
     "GameRendererFrameMixin",
-    "ItemInHandRendererMixin",
-    "IrisHandRendererMixin",
-    "PunchyArmRendererMixin"
+    "ItemInHandRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
