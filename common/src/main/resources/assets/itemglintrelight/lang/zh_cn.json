@@ -124,5 +124,7 @@
   "ui.itemglintrelight.rules.custom": "自定义",
   "ui.itemglintrelight.rules.outline_custom": "自定义描边参数",
   "ui.itemglintrelight.rules.confirm": "确定",
-  "ui.itemglintrelight.render.color_length": "颜色长度"
+  "ui.itemglintrelight.render.color_length": "颜色长度",
+  "key.category.itemglintrelight.main": "ItemGlintRelight",
+  "key.itemglintrelight.open_config": "打开配置菜单"
 }

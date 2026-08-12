@@ -1,6 +1,7 @@
 package celia.adwadg.itemglintrelight.mixin.client;
 
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
+import celia.adwadg.itemglintrelight.client.render.IrisOutlineBridge;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.geom.ModelPart;
@@ -30,6 +31,7 @@ public abstract class PunchyArmRendererMixin {
     private static final Method RESOLVE_RENDER_STACK = resolveRenderStackMethod();
     @ModifyVariable(method = "renderFirstPerson", at = @At("HEAD"), argsOnly = true, ordinal = 0)
     private static SubmitNodeCollector itemglintrelight$wrapCollector(SubmitNodeCollector collector) {
+        if (IrisOutlineBridge.isShaderPackActive()) return collector;
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.player == null || collector == null) return collector;
         if (collector instanceof SubmitNodeStorage storage) return HeldItemOutlineRenderer.wrapStorage(minecraft, storage);
@@ -39,7 +41,7 @@ public abstract class PunchyArmRendererMixin {
     @Inject(method = "renderFirstPerson", at = @At("HEAD"))
     private static void itemglintrelight$beginPass(ItemInHandRenderer renderer, LocalPlayer player, float partialTick,
                                                    PoseStack poseStack, SubmitNodeCollector collector, int light, CallbackInfo ci) {
-        HeldItemOutlineRenderer.beginCompatibilityHandPass();
+        if (!IrisOutlineBridge.isShaderPackActive()) HeldItemOutlineRenderer.beginCompatibilityHandPass();
     }
 
     @Inject(method = "renderItemInHand", at = @At("HEAD"))
@@ -47,7 +49,7 @@ public abstract class PunchyArmRendererMixin {
                                                    LocalPlayer player, HumanoidArm arm, PoseStack poseStack, SubmitNodeCollector collector,
                                                    int light, Matrix4f root, ModelPart geoArm, ModelPart geoItem, ModelPart geoGrip,
                                                    float partialTick, CallbackInfo ci) {
-        if (player == null || arm == null) return;
+        if (IrisOutlineBridge.isShaderPackActive() || player == null || arm == null) return;
         InteractionHand hand = player.getMainArm() == arm ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
         ItemStack stack = resolveRenderedStack(player, arm, hand == InteractionHand.MAIN_HAND ? player.getMainHandItem() : player.getOffhandItem());
         HeldItemOutlineRenderer.beginExternalHandSubmission(hand, stack, poseStack);
@@ -58,7 +60,7 @@ public abstract class PunchyArmRendererMixin {
                                                  LocalPlayer player, HumanoidArm arm, PoseStack poseStack, SubmitNodeCollector collector,
                                                  int light, Matrix4f root, ModelPart geoArm, ModelPart geoItem, ModelPart geoGrip,
                                                  float partialTick, CallbackInfo ci) {
-        HeldItemOutlineRenderer.endExternalHandSubmission();
+        if (!IrisOutlineBridge.isShaderPackActive()) HeldItemOutlineRenderer.endExternalHandSubmission();
     }
 
     @Inject(method = "renderArm", at = @At("HEAD"))
@@ -66,7 +68,7 @@ public abstract class PunchyArmRendererMixin {
                                                           PoseStack poseStack, SubmitNodeCollector collector, int light,
                                                           net.minecraft.resources.Identifier texture, boolean slim, float partialTick,
                                                           CallbackInfo ci) {
-        HeldItemOutlineRenderer.beginArmOccluderCapture(poseStack);
+        if (!IrisOutlineBridge.isShaderPackActive()) HeldItemOutlineRenderer.beginArmOccluderCapture(poseStack);
     }
 
     @Inject(method = "renderArm", at = @At("RETURN"))
@@ -74,7 +76,7 @@ public abstract class PunchyArmRendererMixin {
                                                         PoseStack poseStack, SubmitNodeCollector collector, int light,
                                                         net.minecraft.resources.Identifier texture, boolean slim, float partialTick,
                                                         CallbackInfo ci) {
-        HeldItemOutlineRenderer.endArmOccluderCapture();
+        if (!IrisOutlineBridge.isShaderPackActive()) HeldItemOutlineRenderer.endArmOccluderCapture();
     }
 
     private static ItemStack resolveRenderedStack(LocalPlayer player, HumanoidArm arm, ItemStack stack) {

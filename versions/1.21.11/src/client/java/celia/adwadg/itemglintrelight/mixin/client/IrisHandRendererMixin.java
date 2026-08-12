@@ -15,49 +15,35 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Pseudo
 @Mixin(targets = "net.irisshaders.iris.pathways.HandRenderer")
 public abstract class IrisHandRendererMixin {
-    @Inject(method = "renderSolid", at = @At("HEAD"), remap = false)
-    private void itemglintrelight$beginSolidCapture(CallbackInfo ci) {
-        if (IrisOutlineBridge.isShaderPackActive()) {
-            HeldItemOutlineRenderer.beginCompatibilityHandPass();
-        }
-    }
-
-    @Inject(method = "renderTranslucent", at = @At("HEAD"), remap = false)
-    private void itemglintrelight$beginTranslucentCapture(CallbackInfo ci) {
-        if (IrisOutlineBridge.isShaderPackActive()) {
-            HeldItemOutlineRenderer.beginCompatibilityHandPass();
-        }
-    }
-
     @ModifyArg(
             method = "renderSolid",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeStorage;Lnet/minecraft/client/player/LocalPlayer;I)V", remap = false),
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/class_759;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLnet/minecraft/class_4587;Lnet/minecraft/class_11661;Lnet/minecraft/class_746;I)V", remap = false),
             index = 3,
             remap = false)
     private SubmitNodeStorage itemglintrelight$mirrorSolid(SubmitNodeStorage storage) {
         return wrap(storage);
     }
 
-    @Inject(method = "renderSolid", at = @At("RETURN"), remap = false)
-    private void itemglintrelight$compositeSolidCapture(CallbackInfo ci) {
+    @Inject(method = "renderSolid", at = @At(value = "INVOKE", target = "Lnet/minecraft/class_759;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLnet/minecraft/class_4587;Lnet/minecraft/class_11661;Lnet/minecraft/class_746;I)V", shift = At.Shift.AFTER, remap = false), remap = false, require = 0)
+    private void itemglintrelight$captureAfterIrisSolid(CallbackInfo ci) {
         if (IrisOutlineBridge.isShaderPackActive()) {
-            HeldItemOutlineRenderer.composite(Minecraft.getInstance());
+            HeldItemOutlineRenderer.captureIrisHandMasks(Minecraft.getInstance());
         }
     }
 
     @ModifyArg(
             method = "renderTranslucent",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeStorage;Lnet/minecraft/client/player/LocalPlayer;I)V", remap = false),
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/class_759;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLnet/minecraft/class_4587;Lnet/minecraft/class_11661;Lnet/minecraft/class_746;I)V", remap = false),
             index = 3,
             remap = false)
     private SubmitNodeStorage itemglintrelight$mirrorTranslucent(SubmitNodeStorage storage) {
         return wrap(storage);
     }
 
-    @Inject(method = "renderTranslucent", at = @At("RETURN"), remap = false)
-    private void itemglintrelight$compositeTranslucentCapture(CallbackInfo ci) {
+    @Inject(method = "renderTranslucent", at = @At(value = "INVOKE", target = "Lnet/minecraft/class_759;iris$renderHandsWithCustomRenderer(Lnet/irisshaders/iris/pathways/HandRenderer;FLnet/minecraft/class_4587;Lnet/minecraft/class_11661;Lnet/minecraft/class_746;I)V", shift = At.Shift.AFTER, remap = false), remap = false, require = 0)
+    private void itemglintrelight$captureAfterIrisTranslucent(CallbackInfo ci) {
         if (IrisOutlineBridge.isShaderPackActive()) {
-            HeldItemOutlineRenderer.composite(Minecraft.getInstance());
+            HeldItemOutlineRenderer.captureIrisHandMasks(Minecraft.getInstance());
         }
     }
 

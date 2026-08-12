@@ -124,5 +124,7 @@
   "ui.itemglintrelight.rules.custom": "Custom",
   "ui.itemglintrelight.rules.outline_custom": "Custom outline parameters",
   "ui.itemglintrelight.rules.confirm": "Confirm",
-  "ui.itemglintrelight.render.color_length": "Color length"
+  "ui.itemglintrelight.render.color_length": "Color length",
+  "key.category.itemglintrelight.main": "ItemGlintRelight",
+  "key.itemglintrelight.open_config": "Open Config Menu"
 }

@@ -72,6 +72,8 @@ public final class HeldItemOutlineRenderer {
     private static int itemSubmissionDepth;
     private static int externalSubmissionDepth;
     private static TextureTarget sceneDepth;
+    private static TextureTarget irisMainHandMask;
+    private static TextureTarget irisOffHandMask;
     private static TextureTarget bloomFirst;
     private static TextureTarget bloomSecond;
     private static TextureTarget previewBloomFirst;
@@ -390,6 +392,55 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+    /** Captures the Iris hand passes while Iris' hand shader routing is still active. */
+    public static void captureIrisHandMasks(Minecraft minecraft) {
+        if (!shouldRender(minecraft) || (!MAIN_HAND.captured && !OFF_HAND.captured)) {
+            return;
+        }
+
+        RenderTarget mainTarget = minecraft.getMainRenderTarget();
+        ensureTarget(mainTarget);
+        clear(armOccluder);
+        renderCapture(minecraft, ARM_OCCLUDER, armOccluder);
+        if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
+            captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
+        }
+        captureIrisMask(minecraft, mainTarget, MAIN_HAND, irisMainHandMask);
+        captureIrisMask(minecraft, mainTarget, OFF_HAND, irisOffHandMask);
+    }
+
+    /** Mirrors the reference implementation's frame-end composite timing. */
+    public static void compositeIrisHandMasks(Minecraft minecraft) {
+        if (!shouldRender(minecraft)) {
+            return;
+        }
+
+        RenderTarget mainTarget = minecraft.getMainRenderTarget();
+        try {
+            compositeIrisMask(minecraft, mainTarget, MAIN_HAND, irisMainHandMask, "main");
+            compositeIrisMask(minecraft, mainTarget, OFF_HAND, irisOffHandMask, "off");
+        } finally {
+            MAIN_HAND.reset();
+            OFF_HAND.reset();
+        }
+    }
+
+    private static void captureIrisMask(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, TextureTarget mask) {
+        if (!state.captured) return;
+        clear(mask);
+        mask.copyDepthFrom(mainTarget);
+        renderCapture(minecraft, state, mask);
+        state.irisMaskCaptured = true;
+    }
+
+    private static void compositeIrisMask(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, TextureTarget mask, String hand) {
+        if (!state.irisMaskCaptured) return;
+        ItemGlintRelightConfig config = state.config == null ? ItemGlintRelightConfigManager.get() : state.config;
+        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(state, config), hand,
+                resolveCompositeScissor(mainTarget, state), mask);
+    }
+
     private static void compositeCapture(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, String hand) {
         if (!state.captured) {
             return;
@@ -412,12 +463,17 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette, String hand, ScissorRect scissor) {
+        submitComposite(minecraft, mainTarget, config, palette, hand, scissor, sceneDepth);
+    }
+
+    private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette,
+                                        String hand, ScissorRect scissor, TextureTarget maskTarget) {
         GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
-            GpuTextureView bloom = renderBloom(mainTarget, config, scissor, maskSampler);
-            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, hand);
+            GpuTextureView bloom = renderBloom(mainTarget, config, scissor, maskSampler, maskTarget.getColorTextureView());
+            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, hand, maskTarget.getColorTextureView());
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
@@ -426,8 +482,8 @@ public final class HeldItemOutlineRenderer {
             }
             pass.setPipeline(HeldItemOutlinePipelines.outline());
             pass.setUniform("OutlineInfo", info);
-            pass.bindTexture("MaskSampler", sceneDepth.getColorTextureView(), maskSampler);
-            pass.bindTexture("ItemDepthSampler", sceneDepth.getDepthTextureView(), depthSampler);
+            pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), maskSampler);
+            pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", mainTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("ArmOccluderSampler", armOccluder.getColorTextureView(), maskSampler);
             pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
@@ -553,23 +609,28 @@ public final class HeldItemOutlineRenderer {
     private static void ensureTarget(RenderTarget mainTarget) {
         if (sceneDepth == null) {
             sceneDepth = new TextureTarget("itemglintrelight_hand_mask", mainTarget.width, mainTarget.height, true);
+            irisMainHandMask = new TextureTarget("itemglintrelight_iris_main_hand_mask", mainTarget.width, mainTarget.height, true);
+            irisOffHandMask = new TextureTarget("itemglintrelight_iris_off_hand_mask", mainTarget.width, mainTarget.height, true);
             bloomFirst = new TextureTarget("itemglintrelight_hand_bloom_first", mainTarget.width, mainTarget.height, false);
             bloomSecond = new TextureTarget("itemglintrelight_hand_bloom_second", mainTarget.width, mainTarget.height, false);
             armOccluder = new TextureTarget("itemglintrelight_hand_arm_occluder", mainTarget.width, mainTarget.height, true);
         } else if (sceneDepth.width != mainTarget.width || sceneDepth.height != mainTarget.height) {
             sceneDepth.resize(mainTarget.width, mainTarget.height);
+            irisMainHandMask.resize(mainTarget.width, mainTarget.height);
+            irisOffHandMask.resize(mainTarget.width, mainTarget.height);
             bloomFirst.resize(mainTarget.width, mainTarget.height);
             bloomSecond.resize(mainTarget.width, mainTarget.height);
             armOccluder.resize(mainTarget.width, mainTarget.height);
         }
     }
 
-    private static GpuTextureView renderBloom(RenderTarget target, ItemGlintRelightConfig config, ScissorRect scissor, GpuSampler sampler) {
+    private static GpuTextureView renderBloom(RenderTarget target, ItemGlintRelightConfig config, ScissorRect scissor, GpuSampler sampler,
+                                             GpuTextureView mask) {
         clearColor(bloomFirst);
         clearColor(bloomSecond);
         int passes = config.outlineBloomBlurPasses();
         float radius = resolveBloomRadius(target, config) / (float) Math.sqrt(passes);
-        GpuTextureView source = sceneDepth.getColorTextureView();
+        GpuTextureView source = mask;
         for (int pass = 0; pass < passes; pass++) {
             renderBloomBlur(target, bloomFirst, source, radius, 1.0F, 0.0F, config.outlineBloomQuality(), scissor, sampler, "horizontal");
             renderBloomBlur(target, bloomSecond, bloomFirst.getColorTextureView(), radius, 0.0F, 1.0F, config.outlineBloomQuality(), scissor, sampler, "vertical");
@@ -595,7 +656,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitBloomComposite(RenderTarget mainTarget, GpuTextureView bloom, GpuBufferSlice info, ScissorRect scissor,
-                                             GpuSampler sampler, String hand) {
+                                             GpuSampler sampler, String hand, GpuTextureView mask) {
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_bloom_composite_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
             if (scissor != null) {
@@ -604,7 +665,7 @@ public final class HeldItemOutlineRenderer {
             pass.setPipeline(HeldItemOutlinePipelines.bloomComposite());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("BloomSampler", bloom, sampler);
-            pass.bindTexture("MaskSampler", sceneDepth.getColorTextureView(), sampler);
+            pass.bindTexture("MaskSampler", mask, sampler);
             pass.draw(0, 3);
         }
     }
@@ -663,8 +724,7 @@ public final class HeldItemOutlineRenderer {
         putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
         putColor(buffer, config.outlineSecondaryColor(), config.outlineOpacity());
         put(buffer, target.width, target.height, resolveOutlineRadius(target, config), config.outlineAlphaThreshold());
-        float time = minecraft.level == null ? 0.0F
-                : (minecraft.level.getGameTime() + minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(false)) * 0.05F;
+        float time = (System.nanoTime() % 3_600_000_000_000L) / 1_000_000_000.0F;
         put(buffer, colorMode(config.outlineColorMode()), time, config.outlineColorScrollSpeed() * 9.0F, config.outlineSoftness());
         put(buffer, sampleCount(config.outlineQuality()), config.outlineGlowIntensity(), materialPalette.length, config.outlineBloomIntensity());
         float directionRadians = (float) Math.toRadians(config.outlineColorScrollDirection());
@@ -1096,6 +1156,7 @@ public final class HeldItemOutlineRenderer {
         private boolean captured;
         private boolean requested;
         private boolean replayed;
+        private boolean irisMaskCaptured;
         private int submittedItems;
         private final Map<Integer, Integer> materialColors = new LinkedHashMap<>();
         private float[][] materialPalette;
@@ -1114,6 +1175,7 @@ public final class HeldItemOutlineRenderer {
             captured = false;
             requested = false;
             replayed = false;
+            irisMaskCaptured = false;
             submittedItems = 0;
             materialColors.clear();
             materialPalette = null;

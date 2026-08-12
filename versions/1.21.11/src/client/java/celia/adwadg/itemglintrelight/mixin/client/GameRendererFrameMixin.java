@@ -1,6 +1,7 @@
 package celia.adwadg.itemglintrelight.mixin.client;
 
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
+import celia.adwadg.itemglintrelight.client.render.IrisOutlineBridge;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
@@ -18,12 +19,21 @@ public abstract class GameRendererFrameMixin {
 
     @Inject(method = "renderItemInHand", at = @At("HEAD"))
     private void itemglintrelight$beginHandPass(float partialTick, boolean renderLevel, Matrix4f projectionMatrix, CallbackInfo ci) {
-        HeldItemOutlineRenderer.beginHandPass(projectionMatrix);
+        if (!IrisOutlineBridge.isShaderPackActive()) HeldItemOutlineRenderer.beginHandPass(projectionMatrix);
     }
 
     @Inject(method = "renderItemInHand", at = @At("RETURN"))
     private void itemglintrelight$compositeHandOutline(float partialTick, boolean renderLevel, Matrix4f projectionMatrix, CallbackInfo ci) {
-        HeldItemOutlineRenderer.composite(net.minecraft.client.Minecraft.getInstance());
-        HeldItemOutlineRenderer.endHandPass();
+        if (!IrisOutlineBridge.isShaderPackActive()) {
+            HeldItemOutlineRenderer.composite(net.minecraft.client.Minecraft.getInstance());
+            HeldItemOutlineRenderer.endHandPass();
+        }
+    }
+
+    @Inject(method = "render", at = @At("RETURN"))
+    private void itemglintrelight$compositeIrisAtFrameEnd(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+        if (IrisOutlineBridge.isShaderPackActive()) {
+            HeldItemOutlineRenderer.compositeIrisHandMasks(net.minecraft.client.Minecraft.getInstance());
+        }
     }
 }
