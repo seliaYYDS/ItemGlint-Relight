@@ -78,8 +78,8 @@ public final class HeldItemOutlineRenderer {
     private static TextureTarget previewBloomSecond;
     private static TextureTarget armOccluder;
     private static boolean capturingArmOccluder;
-    private static UniformRing uniforms = new UniformRing("itemglintrelight_outline", OUTLINE_UNIFORM_BYTES, 8);
-    private static UniformRing blurUniforms = new UniformRing("itemglintrelight_bloom_blur", OUTLINE_UNIFORM_BYTES, 16);
+    private static UniformRing uniforms = new UniformRing("itemglintrelight_outline", OUTLINE_UNIFORM_BYTES, 1024);
+    private static UniformRing blurUniforms = new UniformRing("itemglintrelight_bloom_blur", OUTLINE_UNIFORM_BYTES, 1024);
     private static long frameNumber;
     private static long nextDiagnosticMillis;
     private static long nextPreviewDiagnosticMillis;
@@ -163,16 +163,29 @@ public final class HeldItemOutlineRenderer {
     public static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
                                                  GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
                                                  float outlineScale) {
+        compositePreviewToTexture(minecraft, config, mask, colorTarget, depthTarget, materialPalette, outlineScale, 1.0F);
+    }
+
+    public static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
+                                                 GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
+                                                 float outlineScale, float colorScrollScale) {
+        compositePreviewToTexture(minecraft, config, mask, colorTarget, depthTarget, materialPalette, outlineScale, colorScrollScale, outlineScale);
+    }
+
+    public static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
+                                                 GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
+                                                 float outlineScale, float colorScrollScale, float bloomScale) {
         if (minecraft == null || config == null || mask == null || colorTarget == null || depthTarget == null || !config.outlineEnabled()) {
             return;
         }
         int width = colorTarget.getWidth(0);
         int height = colorTarget.getHeight(0);
-        GpuBufferSlice info = uniforms.write(buffer -> writePreviewUniforms(buffer, width, height, config, materialPalette, outlineScale));
+        GpuBufferSlice info = uniforms.write(buffer -> writePreviewUniforms(buffer, width, height, config, materialPalette,
+                outlineScale, colorScrollScale));
         GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
-            GpuTextureView bloom = renderPreviewBloom(width, height, mask.getColorTextureView(), config, linear, outlineScale);
+            GpuTextureView bloom = renderPreviewBloom(width, height, mask.getColorTextureView(), config, linear, bloomScale);
             submitPreviewBloomComposite(colorTarget, bloom, mask.getColorTextureView(), info, linear);
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
@@ -705,7 +718,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void writePreviewUniforms(ByteBuffer buffer, int width, int height, ItemGlintRelightConfig config, float[][] materialPalette,
-                                             float outlineScale) {
+                                             float outlineScale, float colorScrollScale) {
         putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
         putColor(buffer, config.outlineSecondaryColor(), config.outlineOpacity());
         float radius = config.outlineWidth() * 0.4F * height / REFERENCE_RENDER_HEIGHT * Math.max(0.01F, outlineScale)
@@ -721,7 +734,7 @@ public final class HeldItemOutlineRenderer {
         float halfWidth = Math.max(1.0F, width * 0.25F);
         float halfHeight = Math.max(1.0F, height * 0.25F);
         put(buffer, scrollMode(config.outlineColorScrollMode()), width * 0.5F, height * 0.5F, Math.max(ellipsePathRadius(halfWidth, halfHeight), 1.0F));
-        put(buffer, halfWidth, halfHeight, 1.0F, 0.0F);
+        put(buffer, halfWidth, halfHeight, 1.0F, Math.max(1.0F, colorScrollScale));
         for (int index = 0; index < 8; index++) {
             float[] color = config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE
                     ? palette[index % palette.length]
@@ -737,6 +750,19 @@ public final class HeldItemOutlineRenderer {
         CaptureState capture = new CaptureState();
         capturePreviewTextureColors(capture, renderState, config);
         return resolveMaterialPalette(capture, config);
+    }
+
+    /** Resolves GUI sampling from a private state, never from GuiRenderer's reusable tracking state. */
+    public static float[][] resolveGuiMaterialPalette(Minecraft minecraft, ItemStack stack, ItemGlintRelightConfig config) {
+        if (config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
+            return resolvePreviewMaterialPalette(new ItemStackRenderState(), config);
+        }
+        if (minecraft == null || stack == null || stack.isEmpty()) {
+            return new float[][]{rgb(config.outlinePrimaryColor())};
+        }
+        ItemStackRenderState state = new ItemStackRenderState();
+        minecraft.getItemModelResolver().updateForTopItem(state, stack, ItemDisplayContext.GUI, minecraft.level, null, 0);
+        return resolvePreviewMaterialPalette(state, config);
     }
 
     private static float[] rgb(int color) {

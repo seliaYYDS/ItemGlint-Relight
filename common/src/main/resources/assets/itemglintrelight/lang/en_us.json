@@ -36,6 +36,7 @@
   "ui.itemglintrelight.render.outline_opacity": "Outline opacity",
   "ui.itemglintrelight.render.render_mode": "Outline render mode",
   "ui.itemglintrelight.render.outline_quality": "Outline quality",
+  "ui.itemglintrelight.render.gui_outline_quality": "UI item outline quality",
   "ui.itemglintrelight.render.glow_intensity": "Glow intensity",
   "ui.itemglintrelight.render.bloom_enabled": "Enable outline bloom",
   "ui.itemglintrelight.render.bloom_quality": "Bloom quality",

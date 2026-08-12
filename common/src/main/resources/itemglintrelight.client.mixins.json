@@ -6,10 +6,12 @@
   "client": [
     "FeatureRenderDispatcherAccessor",
     "GuiGraphicsAccessor",
+    "GuiGraphicsItemOutlineMixin",
     "SpriteContentsAccessor",
     "ItemStackRenderStateAccessor",
     "ItemStackLayerRenderStateAccessor",
     "GuiRendererPreviewMixin",
+    "GuiRendererItemOutlineMixin",
     "GameRendererFrameMixin",
     "ItemInHandRendererMixin"
   ],

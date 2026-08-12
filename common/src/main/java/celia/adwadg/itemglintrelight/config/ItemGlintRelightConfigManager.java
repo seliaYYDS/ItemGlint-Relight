@@ -49,6 +49,7 @@ public final class ItemGlintRelightConfigManager {
         values.setProperty("outlineAlphaThreshold", Float.toString(CONFIG.outlineAlphaThreshold()));
         values.setProperty("outlineOpacity", Float.toString(CONFIG.outlineOpacity()));
         values.setProperty("outlineQuality", CONFIG.outlineQuality().name());
+        values.setProperty("guiOutlineQuality", CONFIG.guiOutlineQuality().name());
         values.setProperty("outlineGlowIntensity", Float.toString(CONFIG.outlineGlowIntensity()));
         values.setProperty("outlineBloomEnabled", Boolean.toString(CONFIG.outlineBloomEnabled()));
         values.setProperty("outlineBloomQuality", CONFIG.outlineBloomQuality().name());
@@ -104,6 +105,7 @@ public final class ItemGlintRelightConfigManager {
             CONFIG.setOutlineAlphaThreshold(floatValue(values, "outlineAlphaThreshold", ItemGlintRelightConfig.DEFAULT_OUTLINE_ALPHA_THRESHOLD));
             CONFIG.setOutlineOpacity(floatValue(values, "outlineOpacity", ItemGlintRelightConfig.DEFAULT_OUTLINE_OPACITY));
             CONFIG.setOutlineQuality(enumValue(values, "outlineQuality", ItemGlintRelightConfig.DEFAULT_OUTLINE_QUALITY));
+            CONFIG.setGuiOutlineQuality(enumValue(values, "guiOutlineQuality", ItemGlintRelightConfig.DEFAULT_GUI_OUTLINE_QUALITY));
             CONFIG.setOutlineGlowIntensity(floatValue(values, "outlineGlowIntensity", ItemGlintRelightConfig.DEFAULT_OUTLINE_GLOW_INTENSITY));
             CONFIG.setOutlineBloomEnabled(booleanValue(values, "outlineBloomEnabled", ItemGlintRelightConfig.DEFAULT_OUTLINE_BLOOM_ENABLED));
             CONFIG.setOutlineBloomQuality(enumValue(values, "outlineBloomQuality", ItemGlintRelightConfig.DEFAULT_OUTLINE_BLOOM_QUALITY));

@@ -1,6 +1,7 @@
 package celia.adwadg.itemglintrelight.mixin.client;
 
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
+import celia.adwadg.itemglintrelight.client.render.GuiItemOutlineManager;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
@@ -14,6 +15,7 @@ public abstract class GameRendererFrameMixin {
     @Inject(method = "render", at = @At("HEAD"))
     private void itemglintrelight$beginFrame(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         HeldItemOutlineRenderer.beginFrame();
+        GuiItemOutlineManager.beginFrame();
     }
 
     @Inject(method = "renderItemInHand", at = @At("HEAD"))

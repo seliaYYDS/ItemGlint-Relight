@@ -78,6 +78,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private UiSlider outlineOpacitySlider;
     private UiDropdown outlineRenderModeDropdown;
     private UiDropdown outlineQualityDropdown;
+    private UiDropdown guiOutlineQualityDropdown;
     private UiSlider outlineGlowIntensitySlider;
     private UiToggle outlineBloomToggle;
     private UiDropdown outlineBloomQualityDropdown;
@@ -250,6 +251,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         List<String> qualityOptions = List.of(tr("ui.itemglintrelight.quality.low"), tr("ui.itemglintrelight.quality.medium"), tr("ui.itemglintrelight.quality.high"));
         outlineQualityDropdown = new UiDropdown(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.outline_quality"), qualityOptions,
                 model.draft().outlineQuality().ordinal(), value -> model.draft().setOutlineQuality(RenderQuality.values()[value]));
+        guiOutlineQualityDropdown = new UiDropdown(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.gui_outline_quality"), qualityOptions,
+                model.draft().guiOutlineQuality().ordinal(), value -> model.draft().setGuiOutlineQuality(RenderQuality.values()[value]));
         outlineGlowIntensitySlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.glow_intensity"), 0.0D, 2.0D, 0.01D,
                 () -> model.draft().outlineGlowIntensity(), value -> model.draft().setOutlineGlowIntensity(value.floatValue()));
         outlineBloomToggle = new UiToggle(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.bloom_enabled"),
@@ -431,6 +434,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (outlineRenderModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (outlineQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (model.draft().outlineGuiItems() && guiOutlineQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesColorAnimation() && outlineColorScrollModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (model.draft().outlineBloomEnabled() && outlineBloomQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseClicked(mouseX, mouseY, event.button())) return true;
@@ -715,6 +719,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                     outlineSampleColorCountSlider.render(graphics, font, mouseX, mouseY);
                 }
                 outlineQualityDropdown.render(graphics, font, mouseX, mouseY);
+                if (model.draft().outlineGuiItems()) guiOutlineQualityDropdown.render(graphics, font, mouseX, mouseY);
                 outlineGlowIntensitySlider.render(graphics, font, mouseX, mouseY);
                 outlineBloomToggle.render(graphics, font, mouseX, mouseY);
                 if (model.draft().outlineBloomEnabled()) {
@@ -977,6 +982,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, button)) return true;
         if (outlineRenderModeDropdown.mouseClicked(mouseX, mouseY, button)) return true;
         if (outlineQualityDropdown.mouseClicked(mouseX, mouseY, button)) return true;
+        if (model.draft().outlineGuiItems() && guiOutlineQualityDropdown.mouseClicked(mouseX, mouseY, button)) return true;
         if (usesColorAnimation() && outlineColorScrollModeDropdown.mouseClicked(mouseX, mouseY, button)) return true;
         if (model.draft().outlineBloomEnabled() && outlineBloomQualityDropdown.mouseClicked(mouseX, mouseY, button)) return true;
         if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseClicked(mouseX, mouseY, button)) return true;
@@ -2334,6 +2340,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             outlineSampleColorCountSlider.setPosition(contentX, y); y += 42;
         }
         outlineQualityDropdown.setPosition(contentX, y); y += 46 + outlineQualityDropdown.expandedHeight();
+        if (model.draft().outlineGuiItems()) {
+            guiOutlineQualityDropdown.setPosition(contentX, y); y += 46 + guiOutlineQualityDropdown.expandedHeight();
+        }
         outlineGlowIntensitySlider.setPosition(contentX, y); y += 42;
         outlineBloomToggle.setPosition(contentX, y); y += 38;
         if (model.draft().outlineBloomEnabled()) {

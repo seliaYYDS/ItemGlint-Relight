@@ -37,11 +37,11 @@ float scrollPosition() {
     float segmentPixels = mix(72.0, 384.0, normalizedInterval);
     float timeOffset = animation.y * animation.z * 0.12;
     if (scrollMode.x < 0.5) {
-        return dot(texCoord * geometry.xy, colorScroll.xy) / segmentPixels - timeOffset;
+        return dot(texCoord * geometry.xy * max(scrollBounds.w, 1.0), colorScroll.xy) / segmentPixels - timeOffset;
     }
     vec2 relative = (texCoord * geometry.xy - scrollMode.yz) / max(scrollBounds.xy, vec2(1.0));
     float angle = atan(relative.y, relative.x) - atan(colorScroll.y, colorScroll.x);
-    float perimeter = TAU * max(scrollMode.w, 1.0);
+    float perimeter = TAU * max(scrollMode.w, 1.0) * max(scrollBounds.w, 1.0);
     float cycles = max(1.0, round(perimeter / (segmentPixels * 2.0)));
     return (angle / TAU + 0.5) * cycles * 2.0 - timeOffset;
 }
