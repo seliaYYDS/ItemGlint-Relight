@@ -106,12 +106,33 @@ public final class HeldItemOutlineRenderer {
     }
 
     public static void beginHandPass(Matrix4f projection) {
+        // Iris renders the real hands earlier from LevelRenderer, then invokes this vanilla
+        // wrapper after restoring its hand matrices. Preserve the captured hand pose and stack.
+        if (MAIN_HAND.captured || OFF_HAND.captured) {
+            return;
+        }
         handProjectionMatrix = projection == null ? null : new Matrix4f(projection);
         Minecraft minecraft = Minecraft.getInstance();
         if (shouldRender(minecraft) && minecraft.player != null) {
             prepareHand(InteractionHand.MAIN_HAND, minecraft.player.getMainHandItem());
             prepareHand(InteractionHand.OFF_HAND, minecraft.player.getOffhandItem());
         }
+    }
+
+    /**
+     * Establishes the main-world-pass boundary used by shader-pack renderers.
+     * Captures from pre-passes, including shadow rendering, must not reach the hand composite.
+     */
+    public static void beginMainWorldPass() {
+        recordingHand = null;
+        submittingHand = null;
+        itemSubmissionDepth = 0;
+        externalSubmissionDepth = 0;
+        storageWrapped = false;
+        MAIN_HAND.reset();
+        OFF_HAND.reset();
+        ARM_OCCLUDER.reset();
+        capturingArmOccluder = false;
     }
 
     public static void endHandPass() {
