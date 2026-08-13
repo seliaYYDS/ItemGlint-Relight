@@ -40,6 +40,8 @@ public final class HeldItemOutlinePipelines {
             .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/held_item_bloom_composite"))
             .withSampler("BloomSampler")
             .withSampler("MaskSampler")
+            .withSampler("ItemDepthSampler")
+            .withSampler("SceneDepthSampler")
             .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
             .withBlend(BlendFunction.TRANSLUCENT)
             .withDepthWrite(false)

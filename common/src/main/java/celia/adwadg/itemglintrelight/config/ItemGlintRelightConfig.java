@@ -19,6 +19,7 @@ public final class ItemGlintRelightConfig {
     public static final float DEFAULT_OUTLINE_OPACITY = 1.0F;
     public static final RenderQuality DEFAULT_OUTLINE_QUALITY = RenderQuality.MEDIUM;
     public static final RenderQuality DEFAULT_GUI_OUTLINE_QUALITY = RenderQuality.MEDIUM;
+    public static final RenderQuality DEFAULT_THIRD_PERSON_OUTLINE_QUALITY = RenderQuality.HIGH;
     public static final float DEFAULT_OUTLINE_GLOW_INTENSITY = 1.0F;
     public static final boolean DEFAULT_OUTLINE_BLOOM_ENABLED = true;
     public static final RenderQuality DEFAULT_OUTLINE_BLOOM_QUALITY = RenderQuality.MEDIUM;
@@ -53,6 +54,7 @@ public final class ItemGlintRelightConfig {
     private float outlineOpacity = DEFAULT_OUTLINE_OPACITY;
     private RenderQuality outlineQuality = DEFAULT_OUTLINE_QUALITY;
     private RenderQuality guiOutlineQuality = DEFAULT_GUI_OUTLINE_QUALITY;
+    private RenderQuality thirdPersonOutlineQuality = DEFAULT_THIRD_PERSON_OUTLINE_QUALITY;
     private float outlineGlowIntensity = DEFAULT_OUTLINE_GLOW_INTENSITY;
     private boolean outlineBloomEnabled = DEFAULT_OUTLINE_BLOOM_ENABLED;
     private RenderQuality outlineBloomQuality = DEFAULT_OUTLINE_BLOOM_QUALITY;
@@ -89,6 +91,7 @@ public final class ItemGlintRelightConfig {
         copy.outlineOpacity = outlineOpacity;
         copy.outlineQuality = outlineQuality;
         copy.guiOutlineQuality = guiOutlineQuality;
+        copy.thirdPersonOutlineQuality = thirdPersonOutlineQuality;
         copy.outlineGlowIntensity = outlineGlowIntensity;
         copy.outlineBloomEnabled = outlineBloomEnabled;
         copy.outlineBloomQuality = outlineBloomQuality;
@@ -126,6 +129,7 @@ public final class ItemGlintRelightConfig {
         outlineOpacity = source.outlineOpacity;
         outlineQuality = source.outlineQuality;
         guiOutlineQuality = source.guiOutlineQuality;
+        thirdPersonOutlineQuality = source.thirdPersonOutlineQuality;
         outlineGlowIntensity = source.outlineGlowIntensity;
         outlineBloomEnabled = source.outlineBloomEnabled;
         outlineBloomQuality = source.outlineBloomQuality;
@@ -178,6 +182,8 @@ public final class ItemGlintRelightConfig {
     public void setOutlineQuality(RenderQuality outlineQuality) { this.outlineQuality = outlineQuality == null ? DEFAULT_OUTLINE_QUALITY : outlineQuality; }
     public RenderQuality guiOutlineQuality() { return guiOutlineQuality; }
     public void setGuiOutlineQuality(RenderQuality quality) { guiOutlineQuality = quality == null ? DEFAULT_GUI_OUTLINE_QUALITY : quality; }
+    public RenderQuality thirdPersonOutlineQuality() { return thirdPersonOutlineQuality; }
+    public void setThirdPersonOutlineQuality(RenderQuality quality) { thirdPersonOutlineQuality = quality == null ? DEFAULT_THIRD_PERSON_OUTLINE_QUALITY : quality; }
     public float outlineGlowIntensity() { return outlineGlowIntensity; }
     public void setOutlineGlowIntensity(float outlineGlowIntensity) { this.outlineGlowIntensity = clamp(outlineGlowIntensity, 0.0F, 2.0F); }
     public boolean outlineBloomEnabled() { return outlineBloomEnabled; }

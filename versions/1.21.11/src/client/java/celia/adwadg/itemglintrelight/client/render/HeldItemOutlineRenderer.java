@@ -1,6 +1,7 @@
 package celia.adwadg.itemglintrelight.client.render;
 
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
+import celia.adwadg.itemglintrelight.mixin.client.GameRendererAccessor;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfigManager;
 import celia.adwadg.itemglintrelight.config.DisplayRuleManager;
@@ -47,11 +48,15 @@ import org.joml.Vector4f;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalInt;
+import java.util.Set;
 
 public final class HeldItemOutlineRenderer {
     private static final int OUTLINE_UNIFORM_BYTES = 256;
@@ -60,6 +65,9 @@ public final class HeldItemOutlineRenderer {
     private static final CaptureState OFF_HAND = new CaptureState();
     private static final CaptureState ARM_OCCLUDER = new CaptureState();
     private static final CaptureState PREVIEW = new CaptureState();
+    private static final CaptureState THIRD_PERSON_MAIN_HAND = new CaptureState();
+    private static final CaptureState THIRD_PERSON_OFF_HAND = new CaptureState();
+    private static final Deque<CaptureState> THIRD_PERSON_CAPTURES = new ArrayDeque<>();
     private static PreviewRequest queuedPreview;
     private static final Map<String, float[][]> MATERIAL_PALETTE_CACHE = new LinkedHashMap<>(128, 0.75F, true) {
         @Override
@@ -69,6 +77,7 @@ public final class HeldItemOutlineRenderer {
     };
     private static InteractionHand recordingHand;
     private static InteractionHand submittingHand;
+    private static CaptureState recordingThirdPerson;
     private static int itemSubmissionDepth;
     private static int externalSubmissionDepth;
     private static TextureTarget sceneDepth;
@@ -86,6 +95,8 @@ public final class HeldItemOutlineRenderer {
     private static long frameNumber;
     private static long nextDiagnosticMillis;
     private static long nextPreviewDiagnosticMillis;
+    private static long nextThirdPersonDepthDiagnosticMillis;
+    private static long thirdPersonCompositeSequence;
     private static boolean storageWrapped;
     private static int handPasses;
     private static Matrix4f handProjectionMatrix;
@@ -103,6 +114,10 @@ public final class HeldItemOutlineRenderer {
         MAIN_HAND.reset();
         OFF_HAND.reset();
         ARM_OCCLUDER.reset();
+        THIRD_PERSON_MAIN_HAND.reset();
+        THIRD_PERSON_OFF_HAND.reset();
+        recordingThirdPerson = null;
+        THIRD_PERSON_CAPTURES.clear();
         capturingArmOccluder = false;
         uniforms.beginFrame();
         blurUniforms.beginFrame();
@@ -204,7 +219,7 @@ public final class HeldItemOutlineRenderer {
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
             GpuTextureView bloom = renderPreviewBloom(width, height, mask.getColorTextureView(), config, linear, bloomScale);
-            submitPreviewBloomComposite(colorTarget, bloom, mask.getColorTextureView(), info, linear);
+            submitPreviewBloomComposite(colorTarget, bloom, mask, depthTarget, info, linear);
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_preview_outline", colorTarget, OptionalInt.empty())) {
@@ -253,14 +268,16 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
-    private static void submitPreviewBloomComposite(GpuTextureView colorTarget, GpuTextureView bloom, GpuTextureView mask,
-                                                    GpuBufferSlice info, GpuSampler sampler) {
+    private static void submitPreviewBloomComposite(GpuTextureView colorTarget, GpuTextureView bloom, TextureTarget mask,
+                                                    GpuTextureView sceneDepth, GpuBufferSlice info, GpuSampler sampler) {
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_preview_bloom_composite", colorTarget, OptionalInt.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.bloomComposite());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("BloomSampler", bloom, sampler);
-            pass.bindTexture("MaskSampler", mask, sampler);
+            pass.bindTexture("MaskSampler", mask.getColorTextureView(), sampler);
+            pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+            pass.bindTexture("SceneDepthSampler", sceneDepth, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.draw(0, 3);
         }
     }
@@ -383,6 +400,147 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+    public static void beginThirdPersonItem(ItemStack stack, ItemDisplayContext context, PoseStack pose) {
+        if (!isThirdPersonContext(context) || recordingThirdPerson != null) return;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.level == null || stack == null || stack.isEmpty()) return;
+
+        ItemGlintRelightConfig baseConfig = ItemGlintRelightConfigManager.get();
+        if (!baseConfig.outlineEnabled() || !baseConfig.renderThirdPerson() || !baseConfig.outlineThirdPerson()) {
+            return;
+        }
+        ItemGlintRelightConfig config = DisplayRuleManager.resolve(stack, baseConfig);
+        if (!config.outlineEnabled() || !config.renderThirdPerson() || !config.outlineThirdPerson()) {
+            return;
+        }
+
+        CaptureState capture = thirdPersonStateFor(context);
+        capture.reset();
+        capture.item = stack.copy();
+        capture.stack = stack.toString();
+        capture.config = config;
+        capture.itemContext = context;
+        capture.requested = true;
+        capture.externalSubmission = true;
+        if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            capture.materialPaletteKey = materialPaletteKey(stack);
+            capture.materialPalette = MATERIAL_PALETTE_CACHE.get(capture.materialPaletteKey);
+        }
+        ensureDispatcher(minecraft, capture);
+        capture.storage.clear();
+        snapshotRenderContext(capture);
+        if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
+        recordingThirdPerson = capture;
+    }
+
+    public static void endThirdPersonItem(ItemDisplayContext context) {
+        if (!isThirdPersonContext(context) || recordingThirdPerson == null) return;
+        CaptureState capture = recordingThirdPerson;
+        recordingThirdPerson = null;
+        if (capture.captured) {
+            THIRD_PERSON_CAPTURES.addLast(capture);
+        } else {
+            capture.reset();
+        }
+    }
+
+    public static void captureThirdPersonItemDirect(Minecraft minecraft, InteractionHand hand, ItemStack stack,
+                                                    ItemStackRenderState itemState, PoseStack pose, int light,
+                                                    int overlay, int color) {
+        if (minecraft == null || minecraft.level == null || stack == null || stack.isEmpty()
+                || itemState == null || itemState.isEmpty() || !shouldRenderThirdPerson(minecraft)) {
+            return;
+        }
+        ItemGlintRelightConfig base = ItemGlintRelightConfigManager.get();
+        ItemGlintRelightConfig config = DisplayRuleManager.resolve(stack, base);
+        if (!config.outlineEnabled() || !config.renderThirdPerson() || !config.outlineThirdPerson()) return;
+        CaptureState capture = hand == InteractionHand.MAIN_HAND ? THIRD_PERSON_MAIN_HAND : THIRD_PERSON_OFF_HAND;
+        capture.reset();
+        capture.item = stack.copy();
+        capture.stack = stack.toString();
+        capture.config = config;
+        capture.itemContext = ItemDisplayContext.THIRD_PERSON_RIGHT_HAND;
+        capture.requested = true;
+        capture.externalSubmission = true;
+        if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            capture.materialPaletteKey = materialPaletteKey(stack);
+            capture.materialPalette = MATERIAL_PALETTE_CACHE.get(capture.materialPaletteKey);
+        }
+        ensureDispatcher(minecraft, capture);
+        snapshotRenderContext(capture);
+        if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
+        itemState.submit(pose, capture.storage, light, overlay, color);
+        capture.captured = true;
+        capture.submittedItems++;
+        THIRD_PERSON_CAPTURES.addLast(capture);
+    }
+
+    private static boolean shouldRenderThirdPerson(Minecraft minecraft) {
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        return minecraft != null && minecraft.player != null && minecraft.level != null
+                && !minecraft.options.getCameraType().isFirstPerson()
+                && minecraft.screen == null
+                && config.outlineEnabled() && config.renderThirdPerson() && config.outlineThirdPerson();
+    }
+
+    public static SubmitNodeCollector wrapThirdPersonCollector(Minecraft minecraft, SubmitNodeCollector original) {
+        if (!shouldRenderThirdPerson(minecraft) || original instanceof MirroringCollector || original instanceof MirroringStorage) {
+            return original;
+        }
+        return original instanceof SubmitNodeStorage storage ? new MirroringStorage(storage) : new MirroringCollector(original);
+    }
+
+    /**
+     * Runs after entity batches flush. World and opaque entity depth therefore hide the outline;
+     * later block entities and particles keep their native order and can still cover it.
+     */
+    public static void compositeThirdPerson(Minecraft minecraft) {
+        if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty()) return;
+        RenderTarget mainTarget = minecraft.getMainRenderTarget();
+        ensureTarget(mainTarget);
+        clear(armOccluder);
+        while (!THIRD_PERSON_CAPTURES.isEmpty()) {
+            CaptureState capture = THIRD_PERSON_CAPTURES.removeFirst();
+            try {
+                clearColor(sceneDepth);
+                sceneDepth.copyDepthFrom(mainTarget);
+                thirdPersonCompositeSequence++;
+                thirdPersonDepthDiagnostic("preload", mainTarget, capture);
+                renderCapture(minecraft, capture);
+                thirdPersonDepthDiagnostic("replay", mainTarget, capture);
+                ItemGlintRelightConfig config = capture.config.copy();
+                config.setOutlineQuality(config.thirdPersonOutlineQuality());
+                config.setOutlineWidth(config.outlineWidth() * 0.5F);
+                config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F);
+                if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && capture.materialPalette == null
+                        && capture.item != null && !capture.item.isEmpty()) {
+                    captureFallbackTextureColors(minecraft, capture, null);
+                }
+                submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(capture, config), "third_person", null);
+                thirdPersonDepthDiagnostic("composite", mainTarget, capture);
+            } finally {
+                capture.reset();
+            }
+        }
+    }
+
+    /**
+     * Entity layers submit their nodes during {@code renderLevel}; they are only available once
+     * the game's primary BufferSource is flushed.  Compositing earlier observes the previous
+     * frame's capture and cannot use the current world depth.
+     */
+    public static void compositeThirdPersonAfterMainBatch(Minecraft minecraft, Object bufferSource) {
+        if (minecraft == null || minecraft.gameRenderer == null || bufferSource == null
+                || THIRD_PERSON_CAPTURES.isEmpty() || !shouldRenderThirdPerson(minecraft)) {
+            return;
+        }
+        RenderBuffers renderBuffers = ((GameRendererAccessor) minecraft.gameRenderer).itemglintrelight$getRenderBuffers();
+        if (renderBuffers == null || bufferSource != renderBuffers.bufferSource()) {
+            return;
+        }
+        compositeThirdPerson(minecraft);
+    }
+
     public static SubmitNodeStorage wrapStorage(Minecraft minecraft, SubmitNodeStorage original) {
         if (!shouldRender(minecraft) || original instanceof MirroringStorage) {
             return original;
@@ -460,17 +618,13 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette, String hand, ScissorRect scissor) {
-        submitComposite(minecraft, mainTarget, config, palette, hand, scissor, sceneDepth);
-    }
-
-    private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette,
-                                        String hand, ScissorRect scissor, TextureTarget maskTarget) {
+        TextureTarget maskTarget = sceneDepth;
         GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
             GpuTextureView bloom = renderBloom(mainTarget, config, scissor, maskSampler, maskTarget.getColorTextureView());
-            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, hand, maskTarget.getColorTextureView());
+            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, hand, maskTarget);
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
@@ -541,6 +695,14 @@ public final class HeldItemOutlineRenderer {
         return context == ItemDisplayContext.FIRST_PERSON_LEFT_HAND || context == ItemDisplayContext.FIRST_PERSON_RIGHT_HAND;
     }
 
+    private static boolean isThirdPersonContext(ItemDisplayContext context) {
+        return context == ItemDisplayContext.THIRD_PERSON_LEFT_HAND || context == ItemDisplayContext.THIRD_PERSON_RIGHT_HAND;
+    }
+
+    private static CaptureState thirdPersonStateFor(ItemDisplayContext context) {
+        return context == ItemDisplayContext.THIRD_PERSON_LEFT_HAND ? THIRD_PERSON_OFF_HAND : THIRD_PERSON_MAIN_HAND;
+    }
+
     private static InteractionHand handForContext(ItemDisplayContext context) {
         boolean mainHandOnRight = Minecraft.getInstance().player == null
                 || Minecraft.getInstance().player.getMainArm() == HumanoidArm.RIGHT;
@@ -569,6 +731,11 @@ public final class HeldItemOutlineRenderer {
             if (ARM_OCCLUDER.storage == null) return null;
             ARM_OCCLUDER.captured = true;
             return ARM_OCCLUDER.storage.order(order);
+        }
+        if (recordingThirdPerson != null && recordingThirdPerson.requested && recordingThirdPerson.storage != null) {
+            recordingThirdPerson.captured = true;
+            recordingThirdPerson.submittedItems++;
+            return recordingThirdPerson.storage.order(order);
         }
         InteractionHand hand = submittingHand != null ? submittingHand : recordingHand;
         if (hand == null) hand = directHand;
@@ -616,6 +783,7 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+
     private static GpuTextureView renderBloom(RenderTarget target, ItemGlintRelightConfig config, ScissorRect scissor, GpuSampler sampler,
                                              GpuTextureView mask) {
         clearColor(bloomFirst);
@@ -648,7 +816,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitBloomComposite(RenderTarget mainTarget, GpuTextureView bloom, GpuBufferSlice info, ScissorRect scissor,
-                                             GpuSampler sampler, String hand, GpuTextureView mask) {
+                                             GpuSampler sampler, String hand, TextureTarget maskTarget) {
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_bloom_composite_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
             if (scissor != null) {
@@ -657,7 +825,9 @@ public final class HeldItemOutlineRenderer {
             pass.setPipeline(HeldItemOutlinePipelines.bloomComposite());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("BloomSampler", bloom, sampler);
-            pass.bindTexture("MaskSampler", mask, sampler);
+            pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), sampler);
+            pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), sampler);
+            pass.bindTexture("SceneDepthSampler", mainTarget.getDepthTextureView(), sampler);
             pass.draw(0, 3);
         }
     }
@@ -875,7 +1045,8 @@ public final class HeldItemOutlineRenderer {
         }
 
         ItemStackRenderState renderState = new ItemStackRenderState();
-        ItemDisplayContext context = contextForHand(hand);
+        ItemDisplayContext context = hand == null ? capture.itemContext : contextForHand(hand);
+        if (context == null) return;
         if (minecraft.player != null) {
             minecraft.getItemModelResolver().updateForLiving(renderState, capture.item, context, minecraft.player);
         } else {
@@ -1145,6 +1316,42 @@ public final class HeldItemOutlineRenderer {
                 frameNumber, outcome, storageWrapped, handPasses, MAIN_HAND.describe(), OFF_HAND.describe());
     }
 
+    private static void thirdPersonDepthDiagnostic(String stage, RenderTarget mainTarget, CaptureState capture) {
+        long now = System.currentTimeMillis();
+        if (now < nextThirdPersonDepthDiagnosticMillis && !"replay".equals(stage) && !"composite".equals(stage)) {
+            return;
+        }
+        if ("preload".equals(stage)) {
+            nextThirdPersonDepthDiagnosticMillis = now + 1000L;
+        }
+        ItemGlintRelight.LOGGER.info(
+                "[ThirdPersonDepth] frame={} sequence={} stage={} main={}x{} mainColor={} mainDepth={} mask={}x{} maskColor={} maskDepth={} "
+                        + "depthTargetsSame={} copiedMainDepth=true overrideColor={} overrideDepth={} captured={} replayed={} nodes={} renderTypes={} ",
+                frameNumber,
+                thirdPersonCompositeSequence,
+                stage,
+                mainTarget.width,
+                mainTarget.height,
+                textureId(mainTarget.getColorTexture()),
+                textureId(mainTarget.getDepthTexture()),
+                sceneDepth.width,
+                sceneDepth.height,
+                textureId(sceneDepth.getColorTexture()),
+                textureId(sceneDepth.getDepthTexture()),
+                mainTarget.getDepthTexture() == sceneDepth.getDepthTexture(),
+                textureId(RenderSystem.outputColorTextureOverride),
+                textureId(RenderSystem.outputDepthTextureOverride),
+                capture.captured,
+                capture.replayed,
+                capture.submittedItems,
+                capture.renderTypes
+        );
+    }
+
+    private static String textureId(Object texture) {
+        return texture == null ? "null" : texture.getClass().getSimpleName() + "@" + Integer.toHexString(System.identityHashCode(texture));
+    }
+
     private static void previewDiagnostic(String outcome) {
         long now = System.currentTimeMillis();
         if (now < nextPreviewDiagnosticMillis) {
@@ -1154,6 +1361,7 @@ public final class HeldItemOutlineRenderer {
         ItemGlintRelight.LOGGER.info("[PreviewOutline] frame={} {}", frameNumber, outcome);
     }
 
+
     private static final class CaptureState {
         private SubmitNodeStorage storage;
         private FeatureRenderDispatcher dispatcher;
@@ -1162,11 +1370,13 @@ public final class HeldItemOutlineRenderer {
         private boolean requested;
         private boolean replayed;
         private int submittedItems;
+        private final Set<String> renderTypes = new LinkedHashSet<>();
         private final Map<Integer, Integer> materialColors = new LinkedHashMap<>();
         private float[][] materialPalette;
         private String materialPaletteKey;
         private String stack = "-";
         private ItemStack item;
+        private ItemDisplayContext itemContext;
         private ItemGlintRelightConfig config;
         private String disabledStack = "-";
         private Matrix4f modelViewMatrix;
@@ -1180,10 +1390,12 @@ public final class HeldItemOutlineRenderer {
             requested = false;
             replayed = false;
             submittedItems = 0;
+            renderTypes.clear();
             materialColors.clear();
             materialPalette = null;
             materialPaletteKey = null;
             item = null;
+            itemContext = null;
             config = null;
             stack = "-";
             disabledStack = "-";
@@ -1253,6 +1465,16 @@ public final class HeldItemOutlineRenderer {
 
     private static void mirrorDirectItem(int order, PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints,
                                          java.util.List<BakedQuad> quads, RenderType type, ItemStackRenderState.FoilType foil) {
+        if (isThirdPersonContext(context) && recordingThirdPerson != null) {
+            recordingThirdPerson.renderTypes.add(String.valueOf(type));
+            recordingThirdPerson.itemPoseMatrix = new Matrix4f(pose.last().pose());
+            if (recordingThirdPerson.config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+                captureTextureColors(recordingThirdPerson, quads, tints);
+            }
+            SubmitNodeCollection capture = captureCollection(order, null);
+            if (capture != null) capture.submitItem(pose, context, light, overlay, color, tints, quads, type, foil);
+            return;
+        }
         if (!isFirstPersonContext(context) && externalSubmissionDepth <= 0) return;
         InteractionHand hand = handForContext(context);
         if (hand == null) hand = recordingHand;

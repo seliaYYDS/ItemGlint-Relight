@@ -28,4 +28,5 @@ public abstract class GameRendererFrameMixin {
         HeldItemOutlineRenderer.composite(net.minecraft.client.Minecraft.getInstance());
         HeldItemOutlineRenderer.endHandPass();
     }
+
 }

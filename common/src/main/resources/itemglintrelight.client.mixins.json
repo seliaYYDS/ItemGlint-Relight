@@ -10,9 +10,12 @@
     "SpriteContentsAccessor",
     "ItemStackRenderStateAccessor",
     "ItemStackLayerRenderStateAccessor",
+    "GameRendererAccessor",
+    "BufferSourceMixin",
     "GuiRendererPreviewMixin",
     "GuiRendererItemOutlineMixin",
     "GameRendererFrameMixin",
+    "PlayerItemInHandLayerMixin",
     "ItemInHandRendererMixin"
   ],
   "injectors": {

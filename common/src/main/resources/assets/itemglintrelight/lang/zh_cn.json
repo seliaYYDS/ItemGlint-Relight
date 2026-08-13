@@ -37,6 +37,7 @@
   "ui.itemglintrelight.render.render_mode": "描边渲染模式",
   "ui.itemglintrelight.render.outline_quality": "描边精度",
   "ui.itemglintrelight.render.gui_outline_quality": "UI物品描边精度",
+  "ui.itemglintrelight.render.third_person_outline_quality": "第三人称描边精度",
   "ui.itemglintrelight.render.glow_intensity": "辉光强度",
   "ui.itemglintrelight.render.bloom_enabled": "启用描边泛光",
   "ui.itemglintrelight.render.bloom_quality": "泛光精度",

@@ -2,6 +2,8 @@
 
 uniform sampler2D BloomSampler;
 uniform sampler2D MaskSampler;
+uniform sampler2D ItemDepthSampler;
+uniform sampler2D SceneDepthSampler;
 
 layout(std140) uniform OutlineInfo {
     vec4 primaryColor;
@@ -73,7 +75,29 @@ vec3 resolveColor() {
 void main() {
     float blurredCoverage = max(texture(BloomSampler, texCoord).a - texture(MaskSampler, texCoord).a, 0.0);
     float bloom = pow(clamp(blurredCoverage, 0.0, 1.0), 0.45);
-    float alpha = bloom * primaryColor.a * effect.w * 0.38;
+    vec2 texel = 1.0 / max(geometry.xy, vec2(1.0));
+    float itemDepth = 1.0;
+    bool hasVisibleItem = false;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 sampleUv = clamp(texCoord + vec2(x, y) * texel, vec2(0.0), vec2(1.0));
+            float sampleItemDepth = texture(ItemDepthSampler, sampleUv).r;
+            float sampleSceneDepth = texture(SceneDepthSampler, sampleUv).r;
+            if (sampleSceneDepth + 0.00015 >= sampleItemDepth) {
+                itemDepth = min(itemDepth, sampleItemDepth);
+                hasVisibleItem = true;
+            }
+        }
+    }
+    if (!hasVisibleItem) {
+        discard;
+    }
+    float sceneDepth = texture(SceneDepthSampler, texCoord).r;
+    float visible = smoothstep(itemDepth - 0.0004, itemDepth + 0.0003, sceneDepth);
+    if (sceneDepth + 0.00015 < itemDepth) {
+        discard;
+    }
+    float alpha = bloom * primaryColor.a * effect.w * 0.38 * visible;
     if (alpha <= 0.001) discard;
     fragColor = vec4(resolveColor(), min(alpha, 1.0));
 }

@@ -28,6 +28,19 @@ float coverage(vec2 uv) {
     return texture(MaskSampler, clamp(uv, vec2(0.0), vec2(1.0))).a;
 }
 
+// Neighbor samples are potential outline sources. Do not let an item sample
+// hidden by the scene contribute to the outer shell at an occluder boundary.
+float visibleCoverage(vec2 uv) {
+    vec2 clamped = clamp(uv, vec2(0.0), vec2(1.0));
+    float sampleCoverage = texture(MaskSampler, clamped).a;
+    if (sampleCoverage <= 0.0 || scrollBounds.z >= 0.5) {
+        return sampleCoverage;
+    }
+    float itemDepth = texture(ItemDepthSampler, clamped).r;
+    float sceneDepth = texture(SceneDepthSampler, clamped).r;
+    return sceneDepth + 0.00015 < itemDepth ? 0.0 : sampleCoverage;
+}
+
 vec3 paletteColor(int index) {
     return materialPalette[clamp(index, 0, 7)].rgb;
 }
@@ -126,13 +139,14 @@ void main() {
         for (int y = -cubicRadius; y <= cubicRadius; y++) {
             for (int x = -cubicRadius; x <= cubicRadius; x++) {
                 ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), maskSize - ivec2(1));
-                float sampleCoverage = texelFetch(MaskSampler, samplePixel, 0).a;
+                vec2 sampleUv = (vec2(samplePixel) + 0.5) / vec2(maskSize);
+                float sampleCoverage = visibleCoverage(sampleUv);
                 if (sampleCoverage > geometry.w) {
                     float layer = 1.0 - float(max(abs(x), abs(y))) / float(cubicRadius + 1);
                     float weight = 0.20 + 0.80 * layer;
                     faceSum += vec2(float(-x), float(-y)) * weight;
                     lightWeight += weight;
-                    nearestDepth = min(nearestDepth, texelFetch(ItemDepthSampler, samplePixel, 0).r);
+                    nearestDepth = min(nearestDepth, texture(ItemDepthSampler, sampleUv).r);
                 }
                 outer = max(outer, sampleCoverage);
             }
@@ -150,8 +164,12 @@ void main() {
         for (int y = -sharpRadius; y <= sharpRadius; y++) {
             for (int x = -sharpRadius; x <= sharpRadius; x++) {
                 ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), maskSize - ivec2(1));
-                outer = max(outer, texelFetch(MaskSampler, samplePixel, 0).a);
-                nearestDepth = min(nearestDepth, texelFetch(ItemDepthSampler, samplePixel, 0).r);
+                vec2 sampleUv = (vec2(samplePixel) + 0.5) / vec2(maskSize);
+                float sampleCoverage = visibleCoverage(sampleUv);
+                outer = max(outer, sampleCoverage);
+                if (sampleCoverage > 0.0) {
+                    nearestDepth = min(nearestDepth, texture(ItemDepthSampler, sampleUv).r);
+                }
             }
         }
     } else {
@@ -168,8 +186,11 @@ void main() {
                 if (ring == 1 && (i & 1) != 0) break;
                 float radius = geometry.z * (ring == 0 ? 1.0 : 0.5);
                 vec2 sampleUv = texCoord + sampleDirection * texel * radius;
-                outer = max(outer, coverage(sampleUv));
-                nearestDepth = min(nearestDepth, texture(ItemDepthSampler, clamp(sampleUv, vec2(0.0), vec2(1.0))).r);
+                float sampleCoverage = visibleCoverage(sampleUv);
+                outer = max(outer, sampleCoverage);
+                if (sampleCoverage > 0.0) {
+                    nearestDepth = min(nearestDepth, texture(ItemDepthSampler, clamp(sampleUv, vec2(0.0), vec2(1.0))).r);
+                }
             }
         }
     }
@@ -181,6 +202,11 @@ void main() {
         float armCoverage = texture(ArmOccluderSampler, texCoord).a;
         float armDepth = texture(ArmOccluderDepthSampler, texCoord).r;
         visible *= mix(1.0, 1.0 - smoothstep(armDepth - 0.0003, armDepth + 0.0003, nearestDepth), armCoverage);
+        // Third-person occlusion is a binary visibility test. A soft depth
+        // transition leaves fringe pixels that bloom into a false closed edge.
+        if (sceneDepth + 0.00015 < nearestDepth) {
+            discard;
+        }
     }
     float alpha = edge * primaryColor.a * visible;
     if (alpha <= 0.001) discard;

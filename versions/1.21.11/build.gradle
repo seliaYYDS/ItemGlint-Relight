@@ -20,6 +20,13 @@ repositories {
 loom {
     splitEnvironmentSourceSets()
 
+    mixin {
+        useLegacyMixinAp = true
+        defaultRefmapName = "itemglintrelight.refmap.json"
+        add sourceSets.main, "itemglintrelight.refmap.json"
+        add sourceSets.client, "itemglintrelight.refmap.json"
+    }
+
     mods {
         "${project.mod_id}" {
             sourceSet sourceSets.main

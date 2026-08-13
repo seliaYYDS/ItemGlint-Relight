@@ -4,6 +4,7 @@
   "version": "${version}",
   "name": "${mod_name}",
   "description": "${mod_description}",
+  "icon": "assets/itemglintrelight/icon.png",
   "authors": ["${mod_author}"],
   "license": "${mod_license}",
   "environment": "client",
