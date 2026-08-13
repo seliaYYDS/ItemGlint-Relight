@@ -20,6 +20,10 @@ layout(std140) uniform OutlineInfo {
 in vec2 texCoord;
 out vec4 fragColor;
 
+bool thirdPersonOcclusion() {
+    return scrollBounds.z > 1.5;
+}
+
 vec3 paletteColor(int index) {
     return materialPalette[clamp(index, 0, 7)].rgb;
 }
@@ -78,12 +82,21 @@ void main() {
     vec2 texel = 1.0 / max(geometry.xy, vec2(1.0));
     float itemDepth = 1.0;
     bool hasVisibleItem = false;
+    bool thirdPerson = thirdPersonOcclusion();
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
             vec2 sampleUv = clamp(texCoord + vec2(x, y) * texel, vec2(0.0), vec2(1.0));
+            // Iris third-person replay uses a blank depth attachment. Empty mask pixels must
+            // not become fake item-depth sources, while the other paths keep the legacy bloom
+            // sampling behavior unchanged.
+            if (thirdPerson && texture(MaskSampler, sampleUv).a <= 0.01) {
+                continue;
+            }
             float sampleItemDepth = texture(ItemDepthSampler, sampleUv).r;
-            float sampleSceneDepth = texture(SceneDepthSampler, sampleUv).r;
-            if (sampleSceneDepth + 0.00015 >= sampleItemDepth) {
+            // depthtex2 is the authoritative Iris scene depth, but it is generated in a
+            // different pass from the replay target. Use it only for the final pixel clip:
+            // comparing it here would reject every bloom source on small depth differences.
+            if (thirdPerson || texture(SceneDepthSampler, sampleUv).r + 0.00015 >= sampleItemDepth) {
                 itemDepth = min(itemDepth, sampleItemDepth);
                 hasVisibleItem = true;
             }
@@ -93,7 +106,9 @@ void main() {
         discard;
     }
     float sceneDepth = texture(SceneDepthSampler, texCoord).r;
-    float visible = smoothstep(itemDepth - 0.0004, itemDepth + 0.0003, sceneDepth);
+    float visible = thirdPerson
+        ? (sceneDepth + 0.00015 < itemDepth ? 0.0 : 1.0)
+        : smoothstep(itemDepth - 0.0004, itemDepth + 0.0003, sceneDepth);
     if (sceneDepth + 0.00015 < itemDepth) {
         discard;
     }

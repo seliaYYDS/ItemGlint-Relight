@@ -28,12 +28,20 @@ float coverage(vec2 uv) {
     return texture(MaskSampler, clamp(uv, vec2(0.0), vec2(1.0))).a;
 }
 
+bool sceneOcclusionEnabled() {
+    return scrollBounds.z < 0.5 || scrollBounds.z > 1.5;
+}
+
+bool thirdPersonOcclusion() {
+    return scrollBounds.z > 1.5;
+}
+
 // Neighbor samples are potential outline sources. Do not let an item sample
 // hidden by the scene contribute to the outer shell at an occluder boundary.
 float visibleCoverage(vec2 uv) {
     vec2 clamped = clamp(uv, vec2(0.0), vec2(1.0));
     float sampleCoverage = texture(MaskSampler, clamped).a;
-    if (sampleCoverage <= 0.0 || scrollBounds.z >= 0.5) {
+    if (sampleCoverage <= 0.0 || !sceneOcclusionEnabled()) {
         return sampleCoverage;
     }
     float itemDepth = texture(ItemDepthSampler, clamped).r;
@@ -196,9 +204,11 @@ void main() {
     }
     float edge = smoothstep(geometry.w, 1.0, outer) * (1.0 - center);
     float visible = 1.0;
-    if (scrollBounds.z < 0.5) {
+    if (sceneOcclusionEnabled()) {
         float sceneDepth = texture(SceneDepthSampler, texCoord).r;
-        visible = smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);
+        visible = thirdPersonOcclusion()
+            ? (sceneDepth + 0.00015 < nearestDepth ? 0.0 : 1.0)
+            : smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);
         float armCoverage = texture(ArmOccluderSampler, texCoord).a;
         float armDepth = texture(ArmOccluderDepthSampler, texCoord).r;
         visible *= mix(1.0, 1.0 - smoothstep(armDepth - 0.0003, armDepth + 0.0003, nearestDepth), armCoverage);

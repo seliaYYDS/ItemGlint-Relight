@@ -2,6 +2,9 @@ package celia.adwadg.itemglintrelight.client.render;
 
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
 import celia.adwadg.itemglintrelight.mixin.client.GameRendererAccessor;
+import celia.adwadg.itemglintrelight.mixin.client.GlDeviceAccessor;
+import celia.adwadg.itemglintrelight.mixin.client.GlTextureViewAccessor;
+import celia.adwadg.itemglintrelight.mixin.client.GlTextureAccessor;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfigManager;
 import celia.adwadg.itemglintrelight.config.DisplayRuleManager;
@@ -20,6 +23,8 @@ import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
+import com.mojang.blaze3d.opengl.GlDevice;
+import com.mojang.blaze3d.opengl.GlTextureView;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.FilterMode;
@@ -45,8 +50,12 @@ import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
+import org.lwjgl.opengl.GL11C;
+import org.lwjgl.opengl.GL30C;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -81,6 +90,7 @@ public final class HeldItemOutlineRenderer {
     private static int itemSubmissionDepth;
     private static int externalSubmissionDepth;
     private static TextureTarget sceneDepth;
+    private static TextureTarget thirdPersonSceneDepth;
     private static TextureTarget bloomFirst;
     private static TextureTarget bloomSecond;
     private static TextureTarget previewBloomFirst;
@@ -96,7 +106,13 @@ public final class HeldItemOutlineRenderer {
     private static long nextDiagnosticMillis;
     private static long nextPreviewDiagnosticMillis;
     private static long nextThirdPersonDepthDiagnosticMillis;
+    private static long nextIrisDepthProbeMillis;
     private static long thirdPersonCompositeSequence;
+    private static String framebufferLookupFailure = "none";
+    private static Object irisNoHandDepthTexture;
+    private static int irisNoHandDepthFbo;
+    private static boolean irisNoHandDepthReady;
+    private static String irisNoHandDepthStatus = "not_attempted";
     private static boolean storageWrapped;
     private static int handPasses;
     private static Matrix4f handProjectionMatrix;
@@ -494,20 +510,46 @@ public final class HeldItemOutlineRenderer {
      * Runs after entity batches flush. World and opaque entity depth therefore hide the outline;
      * later block entities and particles keep their native order and can still cover it.
      */
-    public static void compositeThirdPerson(Minecraft minecraft) {
+    private static void compositeThirdPerson(Minecraft minecraft, String source) {
         if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty()) return;
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         ensureTarget(mainTarget);
         clear(armOccluder);
         while (!THIRD_PERSON_CAPTURES.isEmpty()) {
             CaptureState capture = THIRD_PERSON_CAPTURES.removeFirst();
+            if (!capture.captured || capture.config == null || capture.dispatcher == null || capture.buffers == null) {
+                capture.reset();
+                continue;
+            }
             try {
-                clearColor(sceneDepth);
-                sceneDepth.copyDepthFrom(mainTarget);
+                // Preserve the completed world depth for the screen-space pass, then seed the
+                // replay target with the same depth.  The replay is now hardware depth-tested
+                // before its mask can reach the outline shader.  This is essential with Iris:
+                // its final pass owns the main target depth, whereas a blank replay target lets
+                // hidden item fragments create a silhouette unconditionally.
+                boolean irisDepthReady = copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget);
+                if (!irisDepthReady && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+                    thirdPersonDepthDiagnostic(source, "iris_depth_unavailable", mainTarget, capture);
+                    continue;
+                }
+                if (!irisDepthReady) {
+                    thirdPersonSceneDepth.copyDepthFrom(mainTarget);
+                }
+                if (irisDepthReady) {
+                    // depthtex2 already contains the original third-person item. Replaying into
+                    // that depth makes the item compete with itself and produces frame-to-frame
+                    // z-fighting. Capture a complete private mask instead; the outline and bloom
+                    // shaders below perform the authoritative per-pixel depthtex2 rejection.
+                    clear(sceneDepth);
+                } else {
+                    sceneDepth.copyDepthFrom(thirdPersonSceneDepth);
+                    clearColor(sceneDepth);
+                }
                 thirdPersonCompositeSequence++;
-                thirdPersonDepthDiagnostic("preload", mainTarget, capture);
-                renderCapture(minecraft, capture);
-                thirdPersonDepthDiagnostic("replay", mainTarget, capture);
+                thirdPersonDepthDiagnostic(source, "preload", mainTarget, capture);
+                renderCapture(minecraft, capture, sceneDepth);
+                irisDepthProbe(mainTarget);
+                thirdPersonDepthDiagnostic(source, "replay", mainTarget, capture);
                 ItemGlintRelightConfig config = capture.config.copy();
                 config.setOutlineQuality(config.thirdPersonOutlineQuality());
                 config.setOutlineWidth(config.outlineWidth() * 0.5F);
@@ -516,8 +558,9 @@ public final class HeldItemOutlineRenderer {
                         && capture.item != null && !capture.item.isEmpty()) {
                     captureFallbackTextureColors(minecraft, capture, null);
                 }
-                submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(capture, config), "third_person", null);
-                thirdPersonDepthDiagnostic("composite", mainTarget, capture);
+                submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(capture, config), "third_person", null,
+                        thirdPersonSceneDepth.getDepthTextureView());
+                thirdPersonDepthDiagnostic(source, "composite", mainTarget, capture);
             } finally {
                 capture.reset();
             }
@@ -534,11 +577,24 @@ public final class HeldItemOutlineRenderer {
                 || THIRD_PERSON_CAPTURES.isEmpty() || !shouldRenderThirdPerson(minecraft)) {
             return;
         }
+        HeldItemOutlineCompat.logDiagnosticStateOnce();
+        if (HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            return;
+        }
         RenderBuffers renderBuffers = ((GameRendererAccessor) minecraft.gameRenderer).itemglintrelight$getRenderBuffers();
         if (renderBuffers == null || bufferSource != renderBuffers.bufferSource()) {
             return;
         }
-        compositeThirdPerson(minecraft);
+        compositeThirdPerson(minecraft, "main_batch");
+    }
+
+    public static void compositeThirdPersonAfterIrisFrame(Minecraft minecraft) {
+        if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty()
+                || !shouldRenderThirdPerson(minecraft) || !HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            return;
+        }
+        HeldItemOutlineCompat.logDiagnosticStateOnce();
+        compositeThirdPerson(minecraft, "iris_render_tail");
     }
 
     public static SubmitNodeStorage wrapStorage(Minecraft minecraft, SubmitNodeStorage original) {
@@ -618,13 +674,19 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette, String hand, ScissorRect scissor) {
+        submitComposite(minecraft, mainTarget, config, palette, hand, scissor, mainTarget.getDepthTextureView());
+    }
+
+    private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette,
+                                        String hand, ScissorRect scissor, GpuTextureView sceneDepthView) {
         TextureTarget maskTarget = sceneDepth;
-        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor));
+        boolean thirdPerson = "third_person".equals(hand);
+        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor, thirdPerson));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
             GpuTextureView bloom = renderBloom(mainTarget, config, scissor, maskSampler, maskTarget.getColorTextureView());
-            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, hand, maskTarget);
+            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, depthSampler, hand, maskTarget, sceneDepthView);
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
@@ -635,7 +697,7 @@ public final class HeldItemOutlineRenderer {
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), maskSampler);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
-            pass.bindTexture("SceneDepthSampler", mainTarget.getDepthTextureView(), depthSampler);
+            pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
             pass.bindTexture("ArmOccluderSampler", armOccluder.getColorTextureView(), maskSampler);
             pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
@@ -775,11 +837,13 @@ public final class HeldItemOutlineRenderer {
             bloomFirst = new TextureTarget("itemglintrelight_hand_bloom_first", mainTarget.width, mainTarget.height, false);
             bloomSecond = new TextureTarget("itemglintrelight_hand_bloom_second", mainTarget.width, mainTarget.height, false);
             armOccluder = new TextureTarget("itemglintrelight_hand_arm_occluder", mainTarget.width, mainTarget.height, true);
+            thirdPersonSceneDepth = new TextureTarget("itemglintrelight_third_person_scene_depth", mainTarget.width, mainTarget.height, true);
         } else if (sceneDepth.width != mainTarget.width || sceneDepth.height != mainTarget.height) {
             sceneDepth.resize(mainTarget.width, mainTarget.height);
             bloomFirst.resize(mainTarget.width, mainTarget.height);
             bloomSecond.resize(mainTarget.width, mainTarget.height);
             armOccluder.resize(mainTarget.width, mainTarget.height);
+            thirdPersonSceneDepth.resize(mainTarget.width, mainTarget.height);
         }
     }
 
@@ -816,7 +880,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitBloomComposite(RenderTarget mainTarget, GpuTextureView bloom, GpuBufferSlice info, ScissorRect scissor,
-                                             GpuSampler sampler, String hand, TextureTarget maskTarget) {
+                                             GpuSampler sampler, GpuSampler depthSampler, String hand, TextureTarget maskTarget, GpuTextureView sceneDepthView) {
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_bloom_composite_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
             if (scissor != null) {
@@ -826,8 +890,8 @@ public final class HeldItemOutlineRenderer {
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("BloomSampler", bloom, sampler);
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), sampler);
-            pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), sampler);
-            pass.bindTexture("SceneDepthSampler", mainTarget.getDepthTextureView(), sampler);
+            pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
+            pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
             pass.draw(0, 3);
         }
     }
@@ -882,7 +946,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void writeUniforms(ByteBuffer buffer, RenderTarget target, ItemGlintRelightConfig config, Minecraft minecraft, float[][] materialPalette,
-                                      ScissorRect scissor) {
+                                      ScissorRect scissor, boolean thirdPerson) {
         putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
         putColor(buffer, config.outlineSecondaryColor(), config.outlineOpacity());
         put(buffer, target.width, target.height, resolveOutlineRadius(target, config), config.outlineAlphaThreshold());
@@ -898,7 +962,9 @@ public final class HeldItemOutlineRenderer {
         float halfHeight = scissor == null ? target.height * 0.25F : Math.max(1.0F, scissor.height * 0.5F - padding);
         float pathRadius = ellipsePathRadius(halfWidth, halfHeight);
         put(buffer, scrollMode(config.outlineColorScrollMode()), centerX, centerY, Math.max(pathRadius, 1.0F));
-        put(buffer, halfWidth, halfHeight, 0.0F, 0.0F);
+        // z=2 marks the third-person path. It retains scene occlusion but uses hard visibility
+        // in the composite shaders, avoiding sub-pixel depth-transition flicker with Iris.
+        put(buffer, halfWidth, halfHeight, thirdPerson ? 2.0F : 0.0F, 0.0F);
         for (int index = 0; index < 8; index++) {
             float[] color = index < materialPalette.length ? materialPalette[index] : materialPalette[0];
             put(buffer, color[0], color[1], color[2], 1.0F);
@@ -1316,19 +1382,20 @@ public final class HeldItemOutlineRenderer {
                 frameNumber, outcome, storageWrapped, handPasses, MAIN_HAND.describe(), OFF_HAND.describe());
     }
 
-    private static void thirdPersonDepthDiagnostic(String stage, RenderTarget mainTarget, CaptureState capture) {
+    private static void thirdPersonDepthDiagnostic(String source, String stage, RenderTarget mainTarget, CaptureState capture) {
         long now = System.currentTimeMillis();
-        if (now < nextThirdPersonDepthDiagnosticMillis && !"replay".equals(stage) && !"composite".equals(stage)) {
+        if (now < nextThirdPersonDepthDiagnosticMillis) {
             return;
         }
         if ("preload".equals(stage)) {
             nextThirdPersonDepthDiagnosticMillis = now + 1000L;
         }
         ItemGlintRelight.LOGGER.info(
-                "[ThirdPersonDepth] frame={} sequence={} stage={} main={}x{} mainColor={} mainDepth={} mask={}x{} maskColor={} maskDepth={} "
+                "[ThirdPersonDepth] frame={} sequence={} source={} stage={} main={}x{} mainColor={} mainDepth={} mask={}x{} maskColor={} maskDepth={} "
                         + "depthTargetsSame={} copiedMainDepth=true overrideColor={} overrideDepth={} captured={} replayed={} nodes={} renderTypes={} ",
                 frameNumber,
                 thirdPersonCompositeSequence,
+                source,
                 stage,
                 mainTarget.width,
                 mainTarget.height,
@@ -1346,6 +1413,224 @@ public final class HeldItemOutlineRenderer {
                 capture.submittedItems,
                 capture.renderTypes
         );
+    }
+
+    /**
+     * Iris replaces the world render pipeline but still exposes the final scene depth through
+     * the main target. Read all three depth surfaces after the replay once per second.
+     * The resulting counts distinguish a bad depth copy, a replay that ignores its depth
+     * attachment, and a later screen-space comparison error without changing render state.
+     */
+    private static void irisDepthProbe(RenderTarget mainTarget) {
+        if (!HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now < nextIrisDepthProbeMillis) {
+            return;
+        }
+        nextIrisDepthProbeMillis = now + 1000L;
+
+        final float epsilon = 0.00015F;
+        int previousFramebuffer = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
+        try {
+            GL11C.glGetError(); // Clear an error left by unrelated render work before this probe.
+            float[] mainDepth = readDepth(mainTarget);
+            float[] snapshotDepth = readDepth(thirdPersonSceneDepth);
+            float[] replayDepth = readDepth(sceneDepth);
+            float[] replayMask = readAlpha(sceneDepth);
+            if (mainDepth == null || snapshotDepth == null || replayDepth == null || replayMask == null) {
+                ItemGlintRelight.LOGGER.warn(
+                        "[IrisThirdPersonDepthProbe] frame={} seq={} readbackFailed main={} snapshot={} replayDepth={} replayMask={} irisNoHand={} irisNoHandStatus={} fboLookup={} glError=0x{}",
+                        frameNumber, thirdPersonCompositeSequence, mainDepth != null, snapshotDepth != null,
+                        replayDepth != null, replayMask != null, irisNoHandDepthReady, irisNoHandDepthStatus,
+                        framebufferLookupFailure, Integer.toHexString(GL11C.glGetError()));
+                return;
+            }
+
+            int sampled = mainDepth.length;
+            int snapshotMismatch = 0;
+            int maskPixels = 0;
+            int visibleMaskPixels = 0;
+            int occludedMaskPixels = 0;
+            int replayDepthMismatch = 0;
+            float maxSnapshotDelta = 0.0F;
+            float maxReplayDelta = 0.0F;
+            float nearestVisibleItemDepth = 1.0F;
+            float nearestOccludedItemDepth = 1.0F;
+            for (int index = 0; index < sampled; index++) {
+                float main = mainDepth[index];
+                float snapshot = snapshotDepth[index];
+                float replay = replayDepth[index];
+                float mask = replayMask[index];
+                float snapshotDelta = Math.abs(main - snapshot);
+                maxSnapshotDelta = Math.max(maxSnapshotDelta, snapshotDelta);
+                if (snapshotDelta > epsilon) {
+                    snapshotMismatch++;
+                }
+                if (mask <= 0.01F) {
+                    continue;
+                }
+                maskPixels++;
+                float replayDelta = Math.abs(main - replay);
+                maxReplayDelta = Math.max(maxReplayDelta, replayDelta);
+                if (replayDelta > epsilon) {
+                    replayDepthMismatch++;
+                }
+                if (main + epsilon < replay) {
+                    occludedMaskPixels++;
+                    nearestOccludedItemDepth = Math.min(nearestOccludedItemDepth, replay);
+                } else {
+                    visibleMaskPixels++;
+                    nearestVisibleItemDepth = Math.min(nearestVisibleItemDepth, replay);
+                }
+            }
+
+            ItemGlintRelight.LOGGER.info(
+                    "[IrisThirdPersonDepthProbe] frame={} seq={} target={}x{} samples={} copyMismatch={}/{} copyMaxDelta={} "
+                            + "mask={} visibleMask={} occludedMask={} replayVsSceneMismatch={} replayMaxDelta={} "
+                            + "nearestVisibleItem={} nearestOccludedItem={} boundBefore={} fb(main/snapshot/replay)={}/{}/{} "
+                            + "status(main/snapshot/replay)=0x{}/0x{}/0x{} depth(main/snapshot/replay)={}/{}/{} glError=0x{}",
+                    frameNumber, thirdPersonCompositeSequence, mainTarget.width, mainTarget.height, sampled,
+                    snapshotMismatch, sampled, maxSnapshotDelta,
+                    maskPixels, visibleMaskPixels, occludedMaskPixels, replayDepthMismatch, maxReplayDelta,
+                    nearestVisibleItemDepth, nearestOccludedItemDepth,
+                    previousFramebuffer,
+                    framebufferId(mainTarget), framebufferId(thirdPersonSceneDepth), framebufferId(sceneDepth),
+                    framebufferStatus(mainTarget), framebufferStatus(thirdPersonSceneDepth), framebufferStatus(sceneDepth),
+                    depthDescription(mainTarget), depthDescription(thirdPersonSceneDepth), depthDescription(sceneDepth),
+                    Integer.toHexString(GL11C.glGetError()));
+        } catch (RuntimeException exception) {
+            ItemGlintRelight.LOGGER.warn("[IrisThirdPersonDepthProbe] frame={} seq={} probeFailed", frameNumber,
+                    thirdPersonCompositeSequence, exception);
+        } finally {
+            GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
+        }
+    }
+
+    private static float[] readDepth(RenderTarget target) {
+        int framebuffer = framebufferId(target);
+        if (framebuffer <= 0) {
+            return null;
+        }
+        GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+        int pixels = target.width * target.height;
+        FloatBuffer data = MemoryUtil.memAllocFloat(pixels);
+        try {
+            GL11C.glReadPixels(0, 0, target.width, target.height, GL11C.GL_DEPTH_COMPONENT, GL11C.GL_FLOAT, data);
+            float[] result = new float[pixels];
+            data.get(result);
+            return result;
+        } finally {
+            MemoryUtil.memFree(data);
+        }
+    }
+
+    private static float[] readAlpha(TextureTarget target) {
+        int framebuffer = framebufferId(target);
+        if (framebuffer <= 0) {
+            return null;
+        }
+        GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+        int pixels = target.width * target.height;
+        FloatBuffer data = MemoryUtil.memAllocFloat(pixels * 4);
+        try {
+            GL11C.glReadPixels(0, 0, target.width, target.height, GL11C.GL_RGBA, GL11C.GL_FLOAT, data);
+            float[] result = new float[pixels];
+            for (int index = 0; index < result.length; index++) {
+                result[index] = data.get(index * 4 + 3);
+            }
+            return result;
+        } finally {
+            MemoryUtil.memFree(data);
+        }
+    }
+
+    private static int framebufferStatus(RenderTarget target) {
+        int framebuffer = framebufferId(target);
+        if (framebuffer <= 0) {
+            return 0;
+        }
+        GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+        return GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
+    }
+
+    private static int framebufferId(RenderTarget target) {
+        if (target == null) {
+            return 0;
+        }
+        try {
+            // 1.21.11's OpenGL backend moved FBO lookup behind DirectStateAccess:
+            // GlTextureView#getFbo(DirectStateAccess, GpuTexture). The old boolean-based
+            // signature is absent. Use remapped mixin invokers rather than reflection: method
+            // names become obfuscated in the production game JAR.
+            if (RenderSystem.getDevice() instanceof GlDevice device
+                    && target.getColorTextureView() instanceof GlTextureView colorView) {
+                return ((GlTextureViewAccessor) (Object) colorView).itemglintrelight$getFbo(
+                        ((GlDeviceAccessor) (Object) device).itemglintrelight$getDirectStateAccess(),
+                        target.getDepthTexture());
+            }
+            framebufferLookupFailure = "unsupported backend=" + RenderSystem.getDevice().getClass().getName()
+                    + " colorView=" + target.getColorTextureView().getClass().getName();
+        } catch (RuntimeException exception) {
+            framebufferLookupFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
+        }
+        return 0;
+    }
+
+    private static boolean copyIrisNoHandDepth(TextureTarget destination, RenderTarget mainTarget) {
+        Object texture = HeldItemOutlineCompat.getIrisNoHandDepthTexture();
+        if (!(texture instanceof com.mojang.blaze3d.textures.GpuTexture gpuTexture)
+                || !(gpuTexture instanceof com.mojang.blaze3d.opengl.GlTexture glTexture)) {
+            irisNoHandDepthReady = false;
+            irisNoHandDepthStatus = texture == null ? "texture_unavailable" : "unsupported_texture=" + texture.getClass().getName();
+            return false;
+        }
+        try {
+            int sourceTextureId = ((GlTextureAccessor) (Object) glTexture).itemglintrelight$getGlId();
+            if (sourceTextureId <= 0) {
+                irisNoHandDepthReady = false;
+                irisNoHandDepthStatus = "invalid_texture_id=" + sourceTextureId;
+                return false;
+            }
+            if (texture != irisNoHandDepthTexture || irisNoHandDepthFbo <= 0) {
+                if (irisNoHandDepthFbo <= 0) irisNoHandDepthFbo = GL30C.glGenFramebuffers();
+                irisNoHandDepthTexture = texture;
+            }
+            int destinationFbo = framebufferId(destination);
+            if (destinationFbo <= 0) {
+                irisNoHandDepthReady = false;
+                irisNoHandDepthStatus = "destination_fbo_unavailable";
+                return false;
+            }
+            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, irisNoHandDepthFbo);
+            GL30C.glFramebufferTexture2D(GL30C.GL_READ_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT,
+                    GL11C.GL_TEXTURE_2D, sourceTextureId, 0);
+            GL30C.glReadBuffer(GL11C.GL_NONE);
+            GL30C.glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, destinationFbo);
+            GL30C.glBlitFramebuffer(0, 0, mainTarget.width, mainTarget.height,
+                    0, 0, destination.width, destination.height, GL30C.GL_DEPTH_BUFFER_BIT, GL11C.GL_NEAREST);
+            GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, 0);
+            int error = GL11C.glGetError();
+            irisNoHandDepthReady = error == GL11C.GL_NO_ERROR;
+            irisNoHandDepthStatus = irisNoHandDepthReady
+                    ? "copied texture=" + sourceTextureId + " fbo=" + irisNoHandDepthFbo
+                    : "gl_error=0x" + Integer.toHexString(error);
+            return irisNoHandDepthReady;
+        } catch (RuntimeException exception) {
+            framebufferLookupFailure = "irisNoHandCopy=" + exception.getClass().getSimpleName() + ":" + exception.getMessage();
+            irisNoHandDepthReady = false;
+            irisNoHandDepthStatus = framebufferLookupFailure;
+            return false;
+        }
+    }
+
+    private static String depthDescription(RenderTarget target) {
+        if (target == null || target.getDepthTexture() == null) {
+            return "null";
+        }
+        return target.getDepthTexture().getLabel() + ":" + target.getDepthTexture().getFormat()
+                + ":usage=" + target.getDepthTexture().usage();
     }
 
     private static String textureId(Object texture) {
