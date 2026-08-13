@@ -22,7 +22,7 @@ import java.util.List;
 public abstract class GuiGraphicsItemOutlineMixin {
     @Inject(method = "setTooltipForNextFrame(Lnet/minecraft/network/chat/Component;II)V", at = @At("HEAD"))
     private void itemglintrelight$tooltipScheduled(Component component, int x, int y, CallbackInfo ci) {
-        GuiItemOutlineManager.tooltipScheduled();
+        GuiItemOutlineManager.tooltipScheduled(x, y);
     }
 
     @Inject(

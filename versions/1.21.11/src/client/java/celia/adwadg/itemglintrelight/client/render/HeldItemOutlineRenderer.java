@@ -79,6 +79,9 @@ public final class HeldItemOutlineRenderer {
     private static TextureTarget armOccluder;
     private static boolean capturingArmOccluder;
     private static UniformRing uniforms = new UniformRing("itemglintrelight_outline", OUTLINE_UNIFORM_BYTES, 1024);
+    // GUI blits are consumed after the current render build. Unlike the hand pass, their
+    // per-item material palettes must remain valid across several rendered frames.
+    private static UniformRing guiUniforms = new UniformRing("itemglintrelight_gui_outline", OUTLINE_UNIFORM_BYTES, 32768);
     private static UniformRing blurUniforms = new UniformRing("itemglintrelight_bloom_blur", OUTLINE_UNIFORM_BYTES, 1024);
     private static long frameNumber;
     private static long nextDiagnosticMillis;
@@ -175,12 +178,27 @@ public final class HeldItemOutlineRenderer {
     public static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
                                                  GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
                                                  float outlineScale, float colorScrollScale, float bloomScale) {
+        compositePreviewToTexture(minecraft, config, mask, colorTarget, depthTarget, materialPalette,
+                outlineScale, colorScrollScale, bloomScale, uniforms);
+    }
+
+    /** GUI items use a non-resetting uniform ring so in-flight GUI blits keep their palette. */
+    public static void compositeGuiItemToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
+                                                 GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
+                                                 float outlineScale, float colorScrollScale, float bloomScale) {
+        compositePreviewToTexture(minecraft, config, mask, colorTarget, depthTarget, materialPalette,
+                outlineScale, colorScrollScale, bloomScale, guiUniforms);
+    }
+
+    private static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
+                                                  GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
+                                                  float outlineScale, float colorScrollScale, float bloomScale, UniformRing uniformRing) {
         if (minecraft == null || config == null || mask == null || colorTarget == null || depthTarget == null || !config.outlineEnabled()) {
             return;
         }
         int width = colorTarget.getWidth(0);
         int height = colorTarget.getHeight(0);
-        GpuBufferSlice info = uniforms.write(buffer -> writePreviewUniforms(buffer, width, height, config, materialPalette,
+        GpuBufferSlice info = uniformRing.write(buffer -> writePreviewUniforms(buffer, width, height, config, materialPalette,
                 outlineScale, colorScrollScale));
         GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);

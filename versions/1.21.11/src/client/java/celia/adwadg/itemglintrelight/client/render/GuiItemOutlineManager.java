@@ -44,10 +44,11 @@ public final class GuiItemOutlineManager {
     private static final int MASK_CACHE_LIMIT = 128;
     private static final int OUTPUT_TARGET_LIMIT = 256;
     private static final long OUTPUT_TARGET_IDLE_FRAMES = 600L;
-    // GuiRenderState may sample a submitted texture after later item renders have run.
-    // Keep a small, preallocated history per GUI slot instead of rewriting one texture.
-    private static final int OUTPUT_TARGET_HISTORY = 4;
+    // GUI submission can remain in flight for more than four high-FPS frames. Keep an
+    // eight-texture preallocated history per slot; this changes no per-frame allocation.
+    private static final int OUTPUT_TARGET_HISTORY = 8;
     private static final IdentityHashMap<TrackingItemStackRenderState, Capture> CAPTURES = new IdentityHashMap<>();
+    private static final Map<ScreenSlot, SubmissionTrace> FRAME_SUBMISSIONS = new LinkedHashMap<>();
     private static final Map<PaletteKey, float[][]> MATERIAL_PALETTES = new LinkedHashMap<>(128, 0.75F, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<PaletteKey, float[][]> eldest) {
@@ -66,11 +67,18 @@ public final class GuiItemOutlineManager {
         @Override
         protected boolean removeEldestEntry(Map.Entry<OutputKey, CachedOutput> eldest) {
             if (size() <= OUTPUT_TARGET_LIMIT) return false;
-            eldest.getValue().destroy();
+            CachedOutput evicted = eldest.getValue();
+            if (frameIndex - evicted.lastUsedFrame() <= OUTPUT_TARGET_HISTORY) {
+                trace("OUTPUT_EVICT_DEFERRED", "frame={} lastUsed={} age={} key={} targets={} keeping textures until queued GUI blits are safe",
+                        frameIndex, evicted.lastUsedFrame(), frameIndex - evicted.lastUsedFrame(),
+                        eldest.getKey().describe(), OUTPUT_TARGETS.size());
+                return false;
+            }
+            evicted.destroy();
             return true;
         }
     };
-    private static final IdentityHashMap<TextureTarget, TargetDebug> TARGET_DEBUG = new IdentityHashMap<>();
+    private static final IdentityHashMap<TextureTarget, SubmissionTrace> TARGET_TRACES = new IdentityHashMap<>();
     private static final CachedOrthoProjectionMatrixBuffer GUI_PROJECTION =
             new CachedOrthoProjectionMatrixBuffer("itemglintrelight_gui_outline", -1000.0F, 1000.0F, true);
     private static SubmitNodeStorage storage;
@@ -79,18 +87,17 @@ public final class GuiItemOutlineManager {
     private static TextureTarget maskScratch;
     private static int tooltipRenderDepth;
     private static long frameIndex;
-    private static long nextDebugMillis;
-    private static int debugLinesThisWindow;
-    private static int captureDebugLinesThisFrame;
 
     private GuiItemOutlineManager() { }
 
     public static void beginFrame() {
         frameIndex++;
         pruneOutputTargets();
-        debug("frame={} captures={} outputs={} masks={} tooltipDepth={}", frameIndex, CAPTURES.size(), OUTPUT_TARGETS.size(), MASK_CACHE.size(), tooltipRenderDepth);
+        if (!CAPTURES.isEmpty()) {
+            trace("UNCONSUMED_CAPTURE", "frame={} count={} captures were not submitted in their frame", frameIndex, CAPTURES.size());
+        }
         CAPTURES.clear();
-        captureDebugLinesThisFrame = 0;
+        FRAME_SUBMISSIONS.clear();
     }
 
     public static void capture(ItemStack stack, TrackingItemStackRenderState state) {
@@ -101,26 +108,28 @@ public final class GuiItemOutlineManager {
         if (config == null || !config.outlineEnabled()) return;
         // TrackingItemStackRenderState is mutable while GuiRenderer prepares later items and tooltips.
         // Resolve sampling here, while it still belongs to this exact GUI item.
-        float[][] palette = materialPalette(stack, config);
-        CAPTURES.put(state, new Capture(stack.copy(), config.copy(), palette));
-        if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && captureDebugLinesThisFrame++ < 3) {
-            debug("capture frame={} state={} item={} palette={} tooltipDepth={}", frameIndex,
-                    System.identityHashCode(state), stack.getItem(), paletteHash(palette), tooltipRenderDepth);
+        // Keep the exact sampled result with this capture. The palette cache intentionally
+        // shares entries, but a GUI capture must never observe a later cache replacement.
+        float[][] palette = copyPalette(materialPalette(stack, config));
+        Capture previous = CAPTURES.put(state, new Capture(stack.copy(), config.copy(), palette));
+        if (previous != null && config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            trace("CAPTURE_REPLACED", "frame={} state={} oldItem={} oldPalette={} newItem={} newPalette={} tooltipDepth={}",
+                    frameIndex, System.identityHashCode(state), previous.stack().getItem(), paletteHash(previous.materialPalette()),
+                    stack.getItem(), paletteHash(palette), tooltipRenderDepth);
         }
     }
 
     public static void beginTooltipRender() {
         tooltipRenderDepth++;
-        debug("tooltip-enter frame={} depth={}", frameIndex, tooltipRenderDepth);
     }
 
-    public static void tooltipScheduled() {
-        debug("tooltip-scheduled frame={} depth={}", frameIndex, tooltipRenderDepth);
+    public static void tooltipScheduled(int x, int y) {
+        // This callback is also used by container integrations with synthetic coordinates.
+        // It cannot identify a rendered slot, so it must not label the entire frame as hover work.
     }
 
     public static void endTooltipRender() {
         if (tooltipRenderDepth > 0) tooltipRenderDepth--;
-        debug("tooltip-exit frame={} depth={}", frameIndex, tooltipRenderDepth);
     }
 
     public static void submit(GuiItemRenderState itemState, GuiRenderState guiRenderState) {
@@ -143,9 +152,23 @@ public final class GuiItemOutlineManager {
                 ? new TextureTarget("itemglintrelight_gui_item_mask_cached", maskWidth, maskHeight, true)
                 : cachedMask == null ? mask(maskWidth, maskHeight) : cachedMask.target();
         OutputKey outputKey = new OutputKey(capture.stack().toString(), itemState.x(), itemState.y(),
-                outputRect.width() * precision, outputRect.height() * precision);
+                outputRect.width() * precision, outputRect.height() * precision,
+                textureSampleIdentity(capture));
         TextureTarget output = output(outputKey);
-        TargetDebug previousOwner = TARGET_DEBUG.get(output);
+        SubmissionTrace currentTrace = new SubmissionTrace(frameIndex, System.identityHashCode(trackingState),
+                capture.stack().getItem().toString(), paletteHash(capture.materialPalette()), itemState.x(), itemState.y());
+        SubmissionTrace previousSlot = FRAME_SUBMISSIONS.put(
+                new ScreenSlot(itemState.x(), itemState.y(), outputRect.width(), outputRect.height()), currentTrace);
+        SubmissionTrace previousTexture = TARGET_TRACES.get(output);
+        if (capture.config().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && previousSlot != null
+                && !previousSlot.sameVisualIdentity(currentTrace)) {
+            trace("SLOT_REPLACED", "frame={} old=[{}] new=[{}]", frameIndex, previousSlot.describe(), currentTrace.describe());
+        }
+        if (capture.config().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && previousTexture != null
+                && frameIndex - previousTexture.frame() < OUTPUT_TARGET_HISTORY) {
+            trace("TEXTURE_REUSED_EARLY", "frame={} target={} old=[{}] new=[{}]", frameIndex,
+                    System.identityHashCode(output), previousTexture.describe(), currentTrace.describe());
+        }
         try {
             clear(output);
             if (cachedMask == null) clear(mask);
@@ -156,18 +179,13 @@ public final class GuiItemOutlineManager {
             if (cacheableMask && cachedMask == null) {
                 MASK_CACHE.put(maskKey, new CachedMask(mask, frameIndex));
             }
-            HeldItemOutlineRenderer.compositePreviewToTexture(minecraft, capture.config(), mask,
+            HeldItemOutlineRenderer.compositeGuiItemToTexture(minecraft, capture.config(), mask,
                     output.getColorTextureView(), output.getDepthTextureView(),
                     capture.materialPalette(),
                     GUI_OUTLINE_SCALE, GUI_COLOR_SCROLL_SCALE / precision, GUI_OUTLINE_SCALE * 0.12F);
             OUTPUT_TARGETS.get(outputKey).markUsed(frameIndex);
             if (capture.config().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
-                int paletteHash = paletteHash(capture.materialPalette());
-                debug("submit frame={} state={} item={} palette={} target={} previous={} rect={}x{} outputs={}",
-                        frameIndex, System.identityHashCode(trackingState), capture.stack().getItem(), paletteHash,
-                        System.identityHashCode(output), previousOwner == null ? "new" : previousOwner.describe(),
-                        output.width, output.height, OUTPUT_TARGETS.size());
-                TARGET_DEBUG.put(output, new TargetDebug(frameIndex, capture.stack().getItem().toString(), paletteHash));
+                TARGET_TRACES.put(output, currentTrace);
             }
             submitBlit(itemState, guiRenderState, outputRect, output);
         } catch (RuntimeException exception) {
@@ -296,15 +314,37 @@ public final class GuiItemOutlineManager {
         return hash;
     }
 
-    private static void debug(String format, Object... arguments) {
-        long now = System.currentTimeMillis();
-        if (now >= nextDebugMillis) {
-            nextDebugMillis = now + 2000L;
-            debugLinesThisWindow = 0;
+    /**
+     * Mirrors the reference GUI cache rule: sampled colors are part of the texture identity.
+     * This is deliberately empty for every other color mode, preserving their existing cache
+     * behavior and allocation profile.
+     */
+    private static String textureSampleIdentity(Capture capture) {
+        ItemGlintRelightConfig config = capture.config();
+        if (config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) return "";
+        StringBuilder identity = new StringBuilder(96);
+        identity.append(config.outlineSampleSize()).append('|').append(config.outlineSampleColorCount());
+        for (float[] color : capture.materialPalette()) {
+            if (color == null) continue;
+            for (float channel : color) identity.append('|').append(Float.floatToIntBits(channel));
         }
-        if (debugLinesThisWindow++ < 4) {
-            ItemGlintRelight.LOGGER.info("[GuiOutlineDebug] " + format, arguments);
+        return identity.toString();
+    }
+
+    private static float[][] copyPalette(float[][] palette) {
+        if (palette == null || palette.length == 0) return new float[][]{{1.0F, 1.0F, 1.0F}};
+        float[][] copy = new float[palette.length][];
+        for (int index = 0; index < palette.length; index++) {
+            copy[index] = palette[index] == null ? null : palette[index].clone();
         }
+        return copy;
+    }
+
+    private static void trace(String event, String format, Object... arguments) {
+        Object[] values = new Object[arguments.length + 1];
+        values[0] = event;
+        System.arraycopy(arguments, 0, values, 1, arguments.length);
+        ItemGlintRelight.LOGGER.warn("[GuiOutlineTrace:{}] " + format, values);
     }
 
     private static float[][] materialPalette(ItemStack stack, ItemGlintRelightConfig config) {
@@ -323,7 +363,11 @@ public final class GuiItemOutlineManager {
     private record Capture(ItemStack stack, ItemGlintRelightConfig config, float[][] materialPalette) { }
     private record PaletteKey(String stackSignature, int sampleSize, int colorCount) { }
     private record MaskKey(String stackSignature, int width, int height, int precision) { }
-    private record OutputKey(String stackSignature, int x, int y, int width, int height) { }
+    private record OutputKey(String stackSignature, int x, int y, int width, int height, String textureSampleIdentity) {
+        private String describe() {
+            return stackSignature + "@" + x + "," + y + " size=" + width + "x" + height;
+        }
+    }
     private record CachedMask(TextureTarget target, long builtFrame) { }
     private static final class CachedOutput {
         private final TextureTarget[] targets = new TextureTarget[OUTPUT_TARGET_HISTORY];
@@ -353,14 +397,19 @@ public final class GuiItemOutlineManager {
 
         private void destroy() {
             for (TextureTarget target : targets) {
-                TARGET_DEBUG.remove(target);
+                TARGET_TRACES.remove(target);
                 target.destroyBuffers();
             }
         }
     }
-    private record TargetDebug(long frame, String item, int paletteHash) {
+    private record ScreenSlot(int x, int y, int width, int height) { }
+    private record SubmissionTrace(long frame, int stateId, String item, int paletteHash, int x, int y) {
+        private boolean sameVisualIdentity(SubmissionTrace other) {
+            return item.equals(other.item) && paletteHash == other.paletteHash;
+        }
+
         private String describe() {
-            return "frame=" + frame + ",item=" + item + ",palette=" + paletteHash;
+            return "frame=" + frame + ",state=" + stateId + ",item=" + item + ",palette=" + paletteHash + ",at=" + x + "," + y;
         }
     }
 }
