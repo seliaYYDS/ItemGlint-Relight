@@ -48,6 +48,36 @@ public final class HeldItemOutlinePipelines {
             .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
             .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
             .build());
+    private static final RenderPipeline THIRD_PERSON_BLOOM_SEED = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_seed"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/third_person_bloom_seed"))
+            .withSampler("MaskSampler")
+            .withSampler("ItemDepthSampler")
+            .withSampler("SceneDepthSampler")
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    private static final RenderPipeline THIRD_PERSON_BLOOM_BLUR = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_blur"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/third_person_bloom_blur"))
+            .withSampler("InputSampler")
+            .withUniform("BlurInfo", UniformType.UNIFORM_BUFFER)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    private static final RenderPipeline THIRD_PERSON_BLOOM_COMPOSITE = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_composite"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/third_person_bloom_composite"))
+            .withSampler("BloomSampler")
+            .withSampler("SeedSampler")
+            .withSampler("SceneDepthSampler")
+            .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
+            .withBlend(BlendFunction.TRANSLUCENT)
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
 
     private HeldItemOutlinePipelines() { }
 
@@ -61,5 +91,17 @@ public final class HeldItemOutlinePipelines {
 
     public static RenderPipeline bloomComposite() {
         return BLOOM_COMPOSITE;
+    }
+
+    public static RenderPipeline thirdPersonBloomSeed() {
+        return THIRD_PERSON_BLOOM_SEED;
+    }
+
+    public static RenderPipeline thirdPersonBloomBlur() {
+        return THIRD_PERSON_BLOOM_BLUR;
+    }
+
+    public static RenderPipeline thirdPersonBloomComposite() {
+        return THIRD_PERSON_BLOOM_COMPOSITE;
     }
 }

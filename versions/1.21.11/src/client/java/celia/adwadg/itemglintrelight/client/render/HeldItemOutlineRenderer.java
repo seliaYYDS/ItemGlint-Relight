@@ -70,6 +70,7 @@ import java.util.Set;
 public final class HeldItemOutlineRenderer {
     private static final int OUTLINE_UNIFORM_BYTES = 256;
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
+    private static final float THIRD_PERSON_BLOOM_REFERENCE_DISTANCE = 4.0F;
     private static final CaptureState MAIN_HAND = new CaptureState();
     private static final CaptureState OFF_HAND = new CaptureState();
     private static final CaptureState ARM_OCCLUDER = new CaptureState();
@@ -93,6 +94,9 @@ public final class HeldItemOutlineRenderer {
     private static TextureTarget thirdPersonSceneDepth;
     private static TextureTarget bloomFirst;
     private static TextureTarget bloomSecond;
+    private static TextureTarget thirdPersonBloomSeed;
+    private static TextureTarget thirdPersonBloomFirst;
+    private static TextureTarget thirdPersonBloomSecond;
     private static TextureTarget previewBloomFirst;
     private static TextureTarget previewBloomSecond;
     private static TextureTarget armOccluder;
@@ -553,7 +557,7 @@ public final class HeldItemOutlineRenderer {
                 ItemGlintRelightConfig config = capture.config.copy();
                 config.setOutlineQuality(config.thirdPersonOutlineQuality());
                 config.setOutlineWidth(config.outlineWidth() * 0.5F);
-                config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F);
+                config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * thirdPersonBloomDistanceScale(capture));
                 if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && capture.materialPalette == null
                         && capture.item != null && !capture.item.isEmpty()) {
                     captureFallbackTextureColors(minecraft, capture, null);
@@ -685,8 +689,12 @@ public final class HeldItemOutlineRenderer {
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
-            GpuTextureView bloom = renderBloom(mainTarget, config, scissor, maskSampler, maskTarget.getColorTextureView());
-            submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, depthSampler, hand, maskTarget, sceneDepthView);
+            if (thirdPerson) {
+                submitThirdPersonBloomComposite(mainTarget, config, info, scissor, maskTarget, sceneDepthView);
+            } else {
+                GpuTextureView bloom = renderBloom(mainTarget, config, scissor, maskSampler, maskTarget.getColorTextureView());
+                submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, depthSampler, hand, maskTarget, sceneDepthView);
+            }
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
@@ -836,12 +844,18 @@ public final class HeldItemOutlineRenderer {
             sceneDepth = new TextureTarget("itemglintrelight_hand_mask", mainTarget.width, mainTarget.height, true);
             bloomFirst = new TextureTarget("itemglintrelight_hand_bloom_first", mainTarget.width, mainTarget.height, false);
             bloomSecond = new TextureTarget("itemglintrelight_hand_bloom_second", mainTarget.width, mainTarget.height, false);
+            thirdPersonBloomSeed = new TextureTarget("itemglintrelight_third_person_bloom_seed", mainTarget.width, mainTarget.height, false);
+            thirdPersonBloomFirst = new TextureTarget("itemglintrelight_third_person_bloom_first", mainTarget.width, mainTarget.height, false);
+            thirdPersonBloomSecond = new TextureTarget("itemglintrelight_third_person_bloom_second", mainTarget.width, mainTarget.height, false);
             armOccluder = new TextureTarget("itemglintrelight_hand_arm_occluder", mainTarget.width, mainTarget.height, true);
             thirdPersonSceneDepth = new TextureTarget("itemglintrelight_third_person_scene_depth", mainTarget.width, mainTarget.height, true);
         } else if (sceneDepth.width != mainTarget.width || sceneDepth.height != mainTarget.height) {
             sceneDepth.resize(mainTarget.width, mainTarget.height);
             bloomFirst.resize(mainTarget.width, mainTarget.height);
             bloomSecond.resize(mainTarget.width, mainTarget.height);
+            thirdPersonBloomSeed.resize(mainTarget.width, mainTarget.height);
+            thirdPersonBloomFirst.resize(mainTarget.width, mainTarget.height);
+            thirdPersonBloomSecond.resize(mainTarget.width, mainTarget.height);
             armOccluder.resize(mainTarget.width, mainTarget.height);
             thirdPersonSceneDepth.resize(mainTarget.width, mainTarget.height);
         }
@@ -892,6 +906,68 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), sampler);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
+            pass.draw(0, 3);
+        }
+    }
+
+    /**
+     * Third-person bloom carries the nearest visible item depth through every blur pass. This
+     * keeps a wide halo visible while applying the same final scene-depth rejection as the
+     * third-person outline, including Iris' depthtex2 compatibility route.
+     */
+    private static void submitThirdPersonBloomComposite(RenderTarget mainTarget, ItemGlintRelightConfig config, GpuBufferSlice info,
+                                                        ScissorRect scissor, TextureTarget maskTarget, GpuTextureView sceneDepthView) {
+        clearColor(thirdPersonBloomSeed);
+        clearColor(thirdPersonBloomFirst);
+        clearColor(thirdPersonBloomSecond);
+        GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_third_person_bloom_seed", thirdPersonBloomSeed.getColorTextureView(), OptionalInt.empty())) {
+            if (scissor != null) pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
+            pass.setPipeline(HeldItemOutlinePipelines.thirdPersonBloomSeed());
+            pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), linear);
+            pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), nearest);
+            pass.bindTexture("SceneDepthSampler", sceneDepthView, nearest);
+            pass.draw(0, 3);
+        }
+
+        int passes = config.outlineBloomBlurPasses();
+        // The held item is perspective-scaled with the camera distance. Keep the halo in the
+        // same projected proportion by applying the inverse distance scale only to this path.
+        float radius = resolveBloomRadius(mainTarget, config) / (float) Math.sqrt(passes);
+        GpuTextureView source = thirdPersonBloomSeed.getColorTextureView();
+        for (int pass = 0; pass < passes; pass++) {
+            renderThirdPersonBloomBlur(mainTarget, thirdPersonBloomFirst, source, radius, 1.0F, 0.0F,
+                    config.outlineBloomQuality(), scissor, nearest, "horizontal");
+            renderThirdPersonBloomBlur(mainTarget, thirdPersonBloomSecond, thirdPersonBloomFirst.getColorTextureView(), radius, 0.0F, 1.0F,
+                    config.outlineBloomQuality(), scissor, nearest, "vertical");
+            source = thirdPersonBloomSecond.getColorTextureView();
+        }
+
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_third_person_bloom_composite", mainTarget.getColorTextureView(), OptionalInt.empty())) {
+            if (scissor != null) pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
+            pass.setPipeline(HeldItemOutlinePipelines.thirdPersonBloomComposite());
+            pass.setUniform("OutlineInfo", info);
+            pass.bindTexture("BloomSampler", source, nearest);
+            pass.bindTexture("SeedSampler", thirdPersonBloomSeed.getColorTextureView(), nearest);
+            pass.bindTexture("SceneDepthSampler", sceneDepthView, nearest);
+            pass.draw(0, 3);
+        }
+    }
+
+    private static void renderThirdPersonBloomBlur(RenderTarget mainTarget, TextureTarget destination, GpuTextureView source, float radius,
+                                                   float directionX, float directionY, RenderQuality quality, ScissorRect scissor,
+                                                   GpuSampler sampler, String direction) {
+        GpuBufferSlice blurInfo = blurUniforms.write(buffer -> put(buffer, directionX / mainTarget.width, directionY / mainTarget.height,
+                radius, bloomSamples(quality)));
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_third_person_bloom_blur_" + direction, destination.getColorTextureView(), OptionalInt.empty())) {
+            if (scissor != null) pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
+            pass.setPipeline(HeldItemOutlinePipelines.thirdPersonBloomBlur());
+            pass.setUniform("BlurInfo", blurInfo);
+            pass.bindTexture("InputSampler", source, sampler);
             pass.draw(0, 3);
         }
     }
@@ -1331,6 +1407,18 @@ public final class HeldItemOutlineRenderer {
 
     private static float resolveBloomRadius(RenderTarget target, ItemGlintRelightConfig config) {
         return config.outlineBloomRadius() * 3.0F * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
+    }
+
+    private static float thirdPersonBloomDistanceScale(CaptureState capture) {
+        if (capture == null || capture.modelViewMatrix == null || capture.itemPoseMatrix == null) {
+            return 1.0F;
+        }
+        Matrix4f itemViewTransform = new Matrix4f(capture.modelViewMatrix).mul(capture.itemPoseMatrix);
+        float distance = Math.abs(itemViewTransform.m32());
+        if (!Float.isFinite(distance) || distance <= 0.001F) {
+            return 1.0F;
+        }
+        return Math.max(0.35F, Math.min(3.0F, THIRD_PERSON_BLOOM_REFERENCE_DISTANCE / distance));
     }
 
     private record ScissorRect(int x, int y, int width, int height) {
