@@ -43,6 +43,7 @@
   "ui.itemglintrelight.render.bloom_quality": "Bloom quality",
   "ui.itemglintrelight.render.bloom_radius": "Bloom radius",
   "ui.itemglintrelight.render.bloom_intensity": "Bloom intensity",
+  "ui.itemglintrelight.render.bloom_softness": "Bloom softness",
   "ui.itemglintrelight.render.bloom_blur_passes": "Bloom blur passes",
   "ui.itemglintrelight.render.color_mode": "Outline colour mode",
   "ui.itemglintrelight.render.primary_color": "Primary colour",

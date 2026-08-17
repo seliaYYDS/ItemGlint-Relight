@@ -15,6 +15,7 @@ layout(std140) uniform OutlineInfo {
     vec4 scrollMode;
     vec4 scrollBounds;
     vec4 materialPalette[8];
+    vec4 bloomParameters;
 };
 
 in vec2 texCoord;
@@ -76,9 +77,21 @@ vec3 resolveColor() {
     return paletteBlend(paletteColor(first), paletteColor(second), smoothRamp(fract(position)));
 }
 
+float bloomAlpha(float coverage) {
+    float softness = clamp(bloomParameters.x, 0.0, 1.0);
+    float hardCoverage = coverage > 0.001 ? 1.0 : 0.0;
+    if (softness <= 0.001) return hardCoverage;
+    // A blur kernel's raw coverage peaks well below 1 outside the item, so normalize it before
+    // shaping alpha. The exponent then creates a visible transparency gradient over the whole
+    // halo, instead of merely making the last few edge pixels blurrier.
+    float normalizedCoverage = clamp(coverage / 0.30, 0.0, 1.0);
+    float alphaExponent = 0.25 + 1.35 * softness;
+    return pow(normalizedCoverage, alphaExponent);
+}
+
 void main() {
     float blurredCoverage = max(texture(BloomSampler, texCoord).a - texture(MaskSampler, texCoord).a, 0.0);
-    float bloom = pow(clamp(blurredCoverage, 0.0, 1.0), 0.45);
+    float bloom = bloomAlpha(blurredCoverage);
     vec2 texel = 1.0 / max(geometry.xy, vec2(1.0));
     float itemDepth = 1.0;
     bool hasVisibleItem = false;
@@ -112,7 +125,9 @@ void main() {
     if (sceneDepth + 0.00015 < itemDepth) {
         discard;
     }
-    float alpha = bloom * primaryColor.a * effect.w * 0.38 * visible;
+    // Bloom intensity owns bloom alpha independently of outline opacity: intensity 1 is fully
+    // opaque wherever the softness curve has not reduced it.
+    float alpha = bloom * effect.w * visible;
     if (alpha <= 0.001) discard;
     fragColor = vec4(resolveColor(), min(alpha, 1.0));
 }

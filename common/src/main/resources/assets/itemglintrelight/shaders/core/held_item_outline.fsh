@@ -16,6 +16,7 @@ layout(std140) uniform OutlineInfo {
     vec4 scrollMode;
     vec4 scrollBounds;
     vec4 materialPalette[8];
+    vec4 bloomParameters;
 };
 
 in vec2 texCoord;

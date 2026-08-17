@@ -68,7 +68,9 @@ import java.util.OptionalInt;
 import java.util.Set;
 
 public final class HeldItemOutlineRenderer {
-    private static final int OUTLINE_UNIFORM_BYTES = 256;
+    // OutlineInfo occupies 272 bytes after bloom softness was added. Uniform-buffer offsets must
+    // stay aligned to 256 bytes, so each ring slot uses the next valid 512-byte stride.
+    private static final int OUTLINE_UNIFORM_BYTES = 512;
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
     private static final float THIRD_PERSON_BLOOM_REFERENCE_DISTANCE = 4.0F;
     private static final CaptureState MAIN_HAND = new CaptureState();
@@ -1045,6 +1047,7 @@ public final class HeldItemOutlineRenderer {
             float[] color = index < materialPalette.length ? materialPalette[index] : materialPalette[0];
             put(buffer, color[0], color[1], color[2], 1.0F);
         }
+        put(buffer, config.outlineBloomSoftness(), 0.0F, 0.0F, 0.0F);
     }
 
     private static void writePreviewUniforms(ByteBuffer buffer, int width, int height, ItemGlintRelightConfig config, float[][] materialPalette,
@@ -1071,6 +1074,7 @@ public final class HeldItemOutlineRenderer {
                     : ((index & 1) == 0 ? rgb(config.outlinePrimaryColor()) : rgb(config.outlineSecondaryColor()));
             put(buffer, color[0], color[1], color[2], 1.0F);
         }
+        put(buffer, config.outlineBloomSoftness(), 0.0F, 0.0F, 0.0F);
     }
 
     public static float[][] resolvePreviewMaterialPalette(ItemStackRenderState renderState, ItemGlintRelightConfig config) {

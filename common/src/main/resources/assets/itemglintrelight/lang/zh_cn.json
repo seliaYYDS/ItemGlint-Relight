@@ -43,6 +43,7 @@
   "ui.itemglintrelight.render.bloom_quality": "泛光精度",
   "ui.itemglintrelight.render.bloom_radius": "泛光半径",
   "ui.itemglintrelight.render.bloom_intensity": "泛光强度",
+  "ui.itemglintrelight.render.bloom_softness": "泛光柔化",
   "ui.itemglintrelight.render.bloom_blur_passes": "泛光模糊次数",
   "ui.itemglintrelight.render.color_mode": "描边颜色模式",
   "ui.itemglintrelight.render.primary_color": "主色",

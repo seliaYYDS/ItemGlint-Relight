@@ -25,6 +25,7 @@ public final class ItemGlintRelightConfig {
     public static final RenderQuality DEFAULT_OUTLINE_BLOOM_QUALITY = RenderQuality.MEDIUM;
     public static final float DEFAULT_OUTLINE_BLOOM_RADIUS = 2.0F;
     public static final float DEFAULT_OUTLINE_BLOOM_INTENSITY = 1.0F;
+    public static final float DEFAULT_OUTLINE_BLOOM_SOFTNESS = 0.5F;
     public static final int DEFAULT_OUTLINE_BLOOM_BLUR_PASSES = 2;
     public static final OutlineRenderMode DEFAULT_OUTLINE_RENDER_MODE = OutlineRenderMode.FLAT;
     public static final OutlineColorMode DEFAULT_OUTLINE_COLOR_MODE = OutlineColorMode.SINGLE;
@@ -60,6 +61,7 @@ public final class ItemGlintRelightConfig {
     private RenderQuality outlineBloomQuality = DEFAULT_OUTLINE_BLOOM_QUALITY;
     private float outlineBloomRadius = DEFAULT_OUTLINE_BLOOM_RADIUS;
     private float outlineBloomIntensity = DEFAULT_OUTLINE_BLOOM_INTENSITY;
+    private float outlineBloomSoftness = DEFAULT_OUTLINE_BLOOM_SOFTNESS;
     private int outlineBloomBlurPasses = DEFAULT_OUTLINE_BLOOM_BLUR_PASSES;
     private OutlineRenderMode outlineRenderMode = DEFAULT_OUTLINE_RENDER_MODE;
     private OutlineColorMode outlineColorMode = DEFAULT_OUTLINE_COLOR_MODE;
@@ -97,6 +99,7 @@ public final class ItemGlintRelightConfig {
         copy.outlineBloomQuality = outlineBloomQuality;
         copy.outlineBloomRadius = outlineBloomRadius;
         copy.outlineBloomIntensity = outlineBloomIntensity;
+        copy.outlineBloomSoftness = outlineBloomSoftness;
         copy.outlineBloomBlurPasses = outlineBloomBlurPasses;
         copy.outlineRenderMode = outlineRenderMode;
         copy.outlineColorMode = outlineColorMode;
@@ -135,6 +138,7 @@ public final class ItemGlintRelightConfig {
         outlineBloomQuality = source.outlineBloomQuality;
         outlineBloomRadius = source.outlineBloomRadius;
         outlineBloomIntensity = source.outlineBloomIntensity;
+        outlineBloomSoftness = source.outlineBloomSoftness;
         outlineBloomBlurPasses = source.outlineBloomBlurPasses;
         outlineRenderMode = source.outlineRenderMode;
         outlineColorMode = source.outlineColorMode;
@@ -193,7 +197,9 @@ public final class ItemGlintRelightConfig {
     public float outlineBloomRadius() { return outlineBloomRadius; }
     public void setOutlineBloomRadius(float outlineBloomRadius) { this.outlineBloomRadius = clamp(outlineBloomRadius, 0.25F, 10.0F); }
     public float outlineBloomIntensity() { return outlineBloomIntensity; }
-    public void setOutlineBloomIntensity(float outlineBloomIntensity) { this.outlineBloomIntensity = clamp(outlineBloomIntensity, 0.25F, 8.0F); }
+    public void setOutlineBloomIntensity(float outlineBloomIntensity) { this.outlineBloomIntensity = clamp(outlineBloomIntensity, 0.0F, 1.5F); }
+    public float outlineBloomSoftness() { return outlineBloomSoftness; }
+    public void setOutlineBloomSoftness(float outlineBloomSoftness) { this.outlineBloomSoftness = clamp(outlineBloomSoftness, 0.0F, 1.0F); }
     public int outlineBloomBlurPasses() { return outlineBloomBlurPasses; }
     public void setOutlineBloomBlurPasses(int outlineBloomBlurPasses) { this.outlineBloomBlurPasses = Math.max(1, Math.min(6, outlineBloomBlurPasses)); }
     public OutlineRenderMode outlineRenderMode() { return outlineRenderMode; }

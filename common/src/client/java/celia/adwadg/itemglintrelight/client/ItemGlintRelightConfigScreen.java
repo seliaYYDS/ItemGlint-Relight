@@ -85,6 +85,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private UiDropdown outlineBloomQualityDropdown;
     private UiSlider outlineBloomRadiusSlider;
     private UiSlider outlineBloomIntensitySlider;
+    private UiSlider outlineBloomSoftnessSlider;
     private UiSlider outlineBloomBlurPassesSlider;
     private UiDropdown outlineColorModeDropdown;
     private UiColorPicker outlinePrimaryColorPicker;
@@ -264,8 +265,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 model.draft().outlineBloomQuality().ordinal(), value -> model.draft().setOutlineBloomQuality(RenderQuality.values()[value]));
         outlineBloomRadiusSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.bloom_radius"), 0.25D, 10.0D, 0.05D,
                 () -> model.draft().outlineBloomRadius(), value -> model.draft().setOutlineBloomRadius(value.floatValue()));
-        outlineBloomIntensitySlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.bloom_intensity"), 0.25D, 8.0D, 0.05D,
+        outlineBloomIntensitySlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.bloom_intensity"), 0.0D, 1.5D, 0.01D,
                 () -> model.draft().outlineBloomIntensity(), value -> model.draft().setOutlineBloomIntensity(value.floatValue()));
+        outlineBloomSoftnessSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.bloom_softness"), 0.0D, 1.0D, 0.01D,
+                () -> model.draft().outlineBloomSoftness(), value -> model.draft().setOutlineBloomSoftness(value.floatValue()));
         outlineBloomBlurPassesSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.bloom_blur_passes"), 1.0D, 6.0D, 1.0D,
                 () -> model.draft().outlineBloomBlurPasses(), value -> model.draft().setOutlineBloomBlurPasses(value.intValue()));
         List<String> colorModeOptions = List.of(tr("ui.itemglintrelight.color_mode.single"), tr("ui.itemglintrelight.color_mode.dual"),
@@ -457,6 +460,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (model.draft().outlineBloomEnabled()) {
                 if (outlineBloomRadiusSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
                 if (outlineBloomIntensitySlider.mouseClicked(mouseX, mouseY, event.button())) return true;
+                if (outlineBloomSoftnessSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
                 if (outlineBloomBlurPassesSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
             }
         }
@@ -482,6 +486,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineGlowIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomRadiusSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
+            if (outlineBloomSoftnessSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
         }
         if (draggingQuickPreview && event.button() == 0) {
@@ -508,6 +513,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineGlowIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomRadiusSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
+            if (outlineBloomSoftnessSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
         }
         if (page == Page.PREVIEW) {
@@ -548,6 +554,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         outlineGlowIntensitySlider.stopDragging();
         outlineBloomRadiusSlider.stopDragging();
         outlineBloomIntensitySlider.stopDragging();
+        outlineBloomSoftnessSlider.stopDragging();
         outlineBloomBlurPassesSlider.stopDragging();
         outlinePrimaryColorPicker.stopDragging();
         outlineSecondaryColorPicker.stopDragging();
@@ -731,6 +738,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                     outlineBloomQualityDropdown.render(graphics, font, mouseX, mouseY);
                     outlineBloomRadiusSlider.render(graphics, font, mouseX, mouseY);
                     outlineBloomIntensitySlider.render(graphics, font, mouseX, mouseY);
+                    outlineBloomSoftnessSlider.render(graphics, font, mouseX, mouseY);
                     outlineBloomBlurPassesSlider.render(graphics, font, mouseX, mouseY);
                 }
             } else if (page == Page.PREVIEW) {
@@ -956,6 +964,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             outlineBloomQualityDropdown.render(graphics, font, mouseX, mouseY);
             outlineBloomRadiusSlider.render(graphics, font, mouseX, mouseY);
             outlineBloomIntensitySlider.render(graphics, font, mouseX, mouseY);
+            outlineBloomSoftnessSlider.render(graphics, font, mouseX, mouseY);
             outlineBloomBlurPassesSlider.render(graphics, font, mouseX, mouseY);
         }
         graphics.disableScissor();
@@ -1006,6 +1015,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (model.draft().outlineBloomEnabled()) {
             if (outlineBloomRadiusSlider.mouseClicked(mouseX, mouseY, button)) return true;
             if (outlineBloomIntensitySlider.mouseClicked(mouseX, mouseY, button)) return true;
+            if (outlineBloomSoftnessSlider.mouseClicked(mouseX, mouseY, button)) return true;
             if (outlineBloomBlurPassesSlider.mouseClicked(mouseX, mouseY, button)) return true;
         }
         return true;
@@ -2357,6 +2367,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             outlineBloomQualityDropdown.setPosition(contentX, y); y += 46 + outlineBloomQualityDropdown.expandedHeight();
             outlineBloomRadiusSlider.setPosition(contentX, y); y += 42;
             outlineBloomIntensitySlider.setPosition(contentX, y); y += 42;
+            outlineBloomSoftnessSlider.setPosition(contentX, y); y += 42;
             outlineBloomBlurPassesSlider.setPosition(contentX, y); y += 42;
         }
         y += 40;

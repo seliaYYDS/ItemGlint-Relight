@@ -14,6 +14,7 @@ layout(std140) uniform OutlineInfo {
     vec4 scrollMode;
     vec4 scrollBounds;
     vec4 materialPalette[8];
+    vec4 bloomParameters;
 };
 
 in vec2 texCoord;
@@ -68,6 +69,15 @@ vec3 resolveColor() {
             smoothRamp(fract(position)));
 }
 
+float bloomAlpha(float coverage) {
+    float softness = clamp(bloomParameters.x, 0.0, 1.0);
+    float hardCoverage = coverage > 0.001 ? 1.0 : 0.0;
+    if (softness <= 0.001) return hardCoverage;
+    float normalizedCoverage = clamp(coverage / 0.30, 0.0, 1.0);
+    float alphaExponent = 0.25 + 1.35 * softness;
+    return pow(normalizedCoverage, alphaExponent);
+}
+
 void main() {
     vec4 bloomSample = texture(BloomSampler, texCoord);
     float blurredCoverage = max(bloomSample.a - texture(SeedSampler, texCoord).a, 0.0);
@@ -76,7 +86,7 @@ void main() {
     // is in front, exactly like the third-person outline's Iris-aware depth comparison.
     float sceneDepth = texture(SceneDepthSampler, texCoord).r;
     if (sceneDepth + 0.00015 < bloomSample.r) discard;
-    float alpha = pow(clamp(blurredCoverage, 0.0, 1.0), 0.45) * primaryColor.a * effect.w * 0.38;
+    float alpha = bloomAlpha(blurredCoverage) * effect.w;
     if (alpha <= 0.001) discard;
     fragColor = vec4(resolveColor(), min(alpha, 1.0));
 }

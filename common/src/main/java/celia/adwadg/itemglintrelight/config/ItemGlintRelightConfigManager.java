@@ -56,6 +56,7 @@ public final class ItemGlintRelightConfigManager {
         values.setProperty("outlineBloomQuality", CONFIG.outlineBloomQuality().name());
         values.setProperty("outlineBloomRadius", Float.toString(CONFIG.outlineBloomRadius()));
         values.setProperty("outlineBloomIntensity", Float.toString(CONFIG.outlineBloomIntensity()));
+        values.setProperty("outlineBloomSoftness", Float.toString(CONFIG.outlineBloomSoftness()));
         values.setProperty("outlineBloomBlurPasses", Integer.toString(CONFIG.outlineBloomBlurPasses()));
         values.setProperty("outlineRenderMode", CONFIG.outlineRenderMode().name());
         values.setProperty("outlineColorMode", CONFIG.outlineColorMode().name());
@@ -113,6 +114,7 @@ public final class ItemGlintRelightConfigManager {
             CONFIG.setOutlineBloomQuality(enumValue(values, "outlineBloomQuality", ItemGlintRelightConfig.DEFAULT_OUTLINE_BLOOM_QUALITY));
             CONFIG.setOutlineBloomRadius(floatValue(values, "outlineBloomRadius", ItemGlintRelightConfig.DEFAULT_OUTLINE_BLOOM_RADIUS));
             CONFIG.setOutlineBloomIntensity(floatValue(values, "outlineBloomIntensity", ItemGlintRelightConfig.DEFAULT_OUTLINE_BLOOM_INTENSITY));
+            CONFIG.setOutlineBloomSoftness(floatValue(values, "outlineBloomSoftness", ItemGlintRelightConfig.DEFAULT_OUTLINE_BLOOM_SOFTNESS));
             CONFIG.setOutlineBloomBlurPasses(intValue(values, "outlineBloomBlurPasses", ItemGlintRelightConfig.DEFAULT_OUTLINE_BLOOM_BLUR_PASSES));
             CONFIG.setOutlineRenderMode(enumValue(values, "outlineRenderMode", ItemGlintRelightConfig.DEFAULT_OUTLINE_RENDER_MODE));
             CONFIG.setOutlineColorMode(enumValue(values, "outlineColorMode", ItemGlintRelightConfig.DEFAULT_OUTLINE_COLOR_MODE));
