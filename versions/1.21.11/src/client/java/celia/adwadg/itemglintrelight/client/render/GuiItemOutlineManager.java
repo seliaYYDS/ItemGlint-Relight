@@ -41,6 +41,7 @@ import java.util.Map;
 public final class GuiItemOutlineManager {
     private static final float GUI_OUTLINE_SCALE = 8.0F;
     private static final float GUI_COLOR_SCROLL_SCALE = 10.0F;
+    private static final float GUI_OUTLINE_MAX_WIDTH = 3.5F;
     private static final int MASK_CACHE_LIMIT = 128;
     private static final int OUTPUT_TARGET_LIMIT = 256;
     private static final long OUTPUT_TARGET_IDLE_FRAMES = 600L;
@@ -139,8 +140,9 @@ public final class GuiItemOutlineManager {
 
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null) return;
-        int precision = precision(capture.config().guiOutlineQuality());
-        int padding = padding(capture.config());
+        ItemGlintRelightConfig config = guiConfig(capture.config());
+        int precision = precision(config.guiOutlineQuality());
+        int padding = padding(config);
         ScreenRectangle outputRect = new ScreenRectangle(itemState.x() - padding, itemState.y() - padding,
                 16 + padding * 2, 16 + padding * 2);
         int maskWidth = outputRect.width() * precision;
@@ -179,7 +181,7 @@ public final class GuiItemOutlineManager {
             if (cacheableMask && cachedMask == null) {
                 MASK_CACHE.put(maskKey, new CachedMask(mask, frameIndex));
             }
-            HeldItemOutlineRenderer.compositeGuiItemToTexture(minecraft, capture.config(), mask,
+            HeldItemOutlineRenderer.compositeGuiItemToTexture(minecraft, config, mask,
                     output.getColorTextureView(), output.getDepthTextureView(),
                     capture.materialPalette(),
                     GUI_OUTLINE_SCALE, GUI_COLOR_SCROLL_SCALE / precision, GUI_OUTLINE_SCALE * 0.12F);
@@ -284,6 +286,13 @@ public final class GuiItemOutlineManager {
         int padding = 3 + (int) Math.ceil(config.outlineWidth() * 4.5F + config.outlineSoftness() * 2.0F);
         if (config.outlineBloomEnabled()) padding += (int) Math.ceil(config.outlineBloomRadius() * 2.0F);
         return padding;
+    }
+
+    /** GUI item masks become visually unstable beyond this width; other render paths keep it unchanged. */
+    private static ItemGlintRelightConfig guiConfig(ItemGlintRelightConfig source) {
+        ItemGlintRelightConfig config = source.copy();
+        config.setOutlineWidth(Math.min(config.outlineWidth(), GUI_OUTLINE_MAX_WIDTH));
+        return config;
     }
 
     private static int precision(RenderQuality quality) {

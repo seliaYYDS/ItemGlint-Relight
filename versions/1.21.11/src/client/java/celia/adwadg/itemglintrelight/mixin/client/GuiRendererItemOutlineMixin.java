@@ -17,7 +17,9 @@ public abstract class GuiRendererItemOutlineMixin {
 
     @Inject(
             method = "submitBlitFromItemAtlas(Lnet/minecraft/client/gui/render/state/GuiItemRenderState;FFII)V",
-            at = @At("TAIL")
+            // Submit into the atlas blit's existing layer before the item itself. This preserves
+            // vanilla GUI ordering instead of moving intersecting elements into a new stratum.
+            at = @At("HEAD")
     )
     private void itemglintrelight$submitGuiItemOutline(GuiItemRenderState itemState, float u, float v, int itemSize,
                                                         int atlasSize, CallbackInfo ci) {
