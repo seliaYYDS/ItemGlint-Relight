@@ -59,8 +59,9 @@ public final class UiDropdown implements UiComponent {
         int fieldY = y + 13;
         boolean hovered = UiMath.contains(x, fieldY, width, 22, mouseX, mouseY);
         fieldHover = UiMath.approach(fieldHover, hovered ? 1.0F : 0.0F, delta, 10.0F);
-        graphics.fill(x, fieldY, x + width, fieldY + 22, color(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, fieldHover)));
-        graphics.fill(x + 1, fieldY + 1, x + width - 1, fieldY + 21, color(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, fieldHover)));
+        UiShapes.roundedOutline(graphics, x, fieldY, x + width, fieldY + 22, 5,
+                color(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, fieldHover)),
+                color(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, fieldHover)));
         String selectedText = options.get(selected);
         SmoothTextRenderer.draw(graphics, font, selectedText, x + 8,
                 fieldY + (22 - SmoothTextRenderer.height(selectedText, 0.82F, UiPalette.TEXT)) / 2.0F, 0.82F, color(UiPalette.TEXT), renderOpacity);
@@ -69,8 +70,8 @@ public final class UiDropdown implements UiComponent {
                 fieldY + (22 - SmoothTextRenderer.height(expandSymbol, 0.82F, UiPalette.BRIGHT_BLUE)) / 2.0F, 0.82F, color(UiPalette.BRIGHT_BLUE), renderOpacity);
         int visibleHeight = Math.round(options.size() * 22.0F * expansion);
         if (visibleHeight > 0) {
-            graphics.fill(x, fieldY + 23, x + width, fieldY + 23 + visibleHeight, color(UiPalette.BRIGHT_BLUE));
-            graphics.fill(x + 1, fieldY + 24, x + width - 1, fieldY + 22 + visibleHeight, color(UiPalette.DEEP_BLUE_FADE));
+            UiShapes.roundedOutline(graphics, x, fieldY + 23, x + width, fieldY + 23 + visibleHeight, 5,
+                    color(UiPalette.BRIGHT_BLUE), color(UiPalette.DEEP_BLUE_FADE));
             if (!expanded) {
                 return;
             }
@@ -82,8 +83,9 @@ public final class UiDropdown implements UiComponent {
                 }
                 boolean optionHovered = UiMath.contains(x, optionY, width, 22, mouseX, mouseY);
                 optionHovers[index] = UiMath.approach(optionHovers[index], optionHovered ? 1.0F : 0.0F, delta, 10.0F);
-                graphics.fill(x + 1, optionY, x + width - 1, optionY + 22, color(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, optionHovers[index])));
-                graphics.fill(x + 2, optionY + 1, x + width - 2, optionY + 21, color(UiMath.mix(UiPalette.DEEP_BLUE_FADE, UiPalette.SURFACE_HOVER, optionHovers[index])));
+                UiShapes.roundedOutline(graphics, x + 1, optionY, x + width - 1, optionY + 22, 4,
+                        color(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, optionHovers[index])),
+                        color(UiMath.mix(UiPalette.DEEP_BLUE_FADE, UiPalette.SURFACE_HOVER, optionHovers[index])));
                 String option = options.get(index);
                 float reveal = Math.min(1.0F, (visibleBottom - optionY) / 22.0F);
                 if (reveal >= 0.2F) {

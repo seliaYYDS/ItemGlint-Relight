@@ -11,7 +11,7 @@ public final class ConfigUiBackground {
 
     public static void renderPanel(GuiGraphics graphics, int left, int top, int right, int bottom, int sidebarRight) {
         renderAnimatedBorder(graphics, left - 1, top - 1, right + 1, bottom + 1);
-        graphics.fill(left, top, right, bottom, UiPalette.DEEP_BLUE);
+        UiShapes.roundedRect(graphics, left, top, right, bottom, 3, UiPalette.DEEP_BLUE);
         graphics.fill(sidebarRight, top + 18, sidebarRight + 1, bottom - 18, UiPalette.DIVIDER);
         graphics.fill(sidebarRight + 12, top + 28, right - 12, top + 29, UiPalette.DIVIDER);
         graphics.fill(sidebarRight + 12, bottom - 50, right - 12, bottom - 49, UiPalette.DIVIDER);
@@ -23,23 +23,26 @@ public final class ConfigUiBackground {
 
     public static void renderCompanionPanel(GuiGraphics graphics, int left, int top, int right, int bottom, float opacity) {
         renderAnimatedBorder(graphics, left - 1, top - 1, right + 1, bottom + 1, opacity);
-        graphics.fill(left, top, right, bottom, withOpacity(UiPalette.DEEP_BLUE, opacity));
+        UiShapes.roundedRect(graphics, left, top, right, bottom, 3, withOpacity(UiPalette.DEEP_BLUE, opacity));
     }
 
     private static void renderAnimatedBorder(GuiGraphics graphics, int left, int top, int right, int bottom, float opacity) {
         float phase = (System.nanoTime() % 2_400_000_000L) / 2_400_000_000.0F;
         int width = right - left;
         int height = bottom - top;
-        for (int offset = 0; offset < width; offset += 3) {
+        int corner = 3;
+        for (int offset = corner; offset < width - corner; offset += 3) {
             int length = Math.min(3, width - offset);
             graphics.fill(left + offset, top, left + offset + length, top + 1, withOpacity(gradient(phase + offset / (float) width), opacity));
             graphics.fill(right - offset - length, bottom - 1, right - offset, bottom, withOpacity(gradient(phase + 0.5F + offset / (float) width), opacity));
         }
-        for (int offset = 1; offset < height - 1; offset += 3) {
+        for (int offset = corner; offset < height - corner; offset += 3) {
             int length = Math.min(3, height - 1 - offset);
             graphics.fill(left, top + offset, left + 1, top + offset + length, withOpacity(gradient(phase + 0.25F + offset / (float) height), opacity));
             graphics.fill(right - 1, bottom - offset - length, right, bottom - offset, withOpacity(gradient(phase + 0.75F + offset / (float) height), opacity));
         }
+        UiShapes.roundedOutline(graphics, left, top, right, bottom, corner,
+                withOpacity(gradient(phase), opacity), 0x00000000);
     }
 
     private static int withOpacity(int color, float opacity) {

@@ -86,10 +86,12 @@ public final class UiCyclingSelector {
         previousArrowHover = UiMath.approach(previousArrowHover, UiMath.contains(x, fieldY, 24, 22, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
         nextArrowHover = UiMath.approach(nextArrowHover, UiMath.contains(x + width - 24, fieldY, 24, 22, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
         centerHover = UiMath.approach(centerHover, UiMath.contains(x + 24, fieldY, width - 48, 22, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
-        fill(graphics, x, fieldY, x + width, fieldY + 22, UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, fieldHover), opacity);
-        fill(graphics, x + 1, fieldY + 1, x + width - 1, fieldY + 21, UiPalette.SURFACE, opacity);
-        fill(graphics, x + 1, fieldY + 1, x + 23, fieldY + 21, UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, previousArrowHover), opacity);
-        fill(graphics, x + width - 23, fieldY + 1, x + width - 1, fieldY + 21, UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nextArrowHover), opacity);
+        UiShapes.roundedOutline(graphics, x, fieldY, x + width, fieldY + 22, 5,
+                color(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, fieldHover), opacity), color(UiPalette.SURFACE, opacity));
+        UiShapes.roundedRect(graphics, x + 1, fieldY + 1, x + 23, fieldY + 21, 4,
+                color(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, previousArrowHover), opacity));
+        UiShapes.roundedRect(graphics, x + width - 23, fieldY + 1, x + width - 1, fieldY + 21, 4,
+                color(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nextArrowHover), opacity));
         fill(graphics, x + 24, fieldY + 1, x + width - 24, fieldY + 21, UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, centerHover), opacity);
         drawCentered(graphics, font, "<", x + 12.0F, fieldY, UiMath.mix(UiPalette.PALE_BLUE, UiPalette.LIGHT_GREEN, previousArrowHover), opacity);
         drawCentered(graphics, font, ">", x + width - 12.0F, fieldY, UiMath.mix(UiPalette.PALE_BLUE, UiPalette.LIGHT_GREEN, nextArrowHover), opacity);
@@ -98,14 +100,14 @@ public final class UiCyclingSelector {
         int optionHeight = expandedHeight();
         if (optionHeight <= 0) return;
         int optionsY = fieldY + 23;
-        fill(graphics, x, optionsY, x + width, optionsY + optionHeight, UiPalette.BRIGHT_BLUE, opacity);
-        fill(graphics, x + 1, optionsY + 1, x + width - 1, optionsY + optionHeight - 1, UiPalette.DEEP_BLUE_FADE, opacity);
-        fill(graphics, x, optionsY + optionHeight - 1, x + width, optionsY + optionHeight, UiPalette.BRIGHT_BLUE, opacity);
+        UiShapes.roundedOutline(graphics, x, optionsY, x + width, optionsY + optionHeight, 5,
+                color(UiPalette.BRIGHT_BLUE, opacity), color(UiPalette.DEEP_BLUE_FADE, opacity));
         for (int index = 0; index < options.size(); index++) {
             int optionY = optionsY + index * 22;
             if (optionY >= optionsY + optionHeight) break;
             optionHovers[index] = UiMath.approach(optionHovers[index], UiMath.contains(x, optionY, width, 22, mouseX, mouseY) ? 1.0F : 0.0F, delta, 12.0F);
-            fill(graphics, x + 1, optionY, x + width - 1, optionY + 22, UiMath.mix(UiPalette.DEEP_BLUE_FADE, UiPalette.SURFACE_HOVER, optionHovers[index]), opacity);
+            UiShapes.roundedRect(graphics, x + 1, optionY, x + width - 1, optionY + 22, 4,
+                    color(UiMath.mix(UiPalette.DEEP_BLUE_FADE, UiPalette.SURFACE_HOVER, optionHovers[index]), opacity));
             drawCentered(graphics, font, options.get(index), x + width * 0.5F, optionY, index == selected ? UiPalette.LIGHT_GREEN : UiPalette.TEXT, opacity);
         }
     }
@@ -124,4 +126,5 @@ public final class UiCyclingSelector {
     private float deltaSeconds() { long now = System.nanoTime(); float delta = Math.min(0.05F, (now - lastFrame) / 1_000_000_000.0F); lastFrame = now; return delta; }
     private void drawCentered(GuiGraphics graphics, Font font, String text, float centerX, int y, int color, float opacity) { SmoothTextRenderer.drawCentered(graphics, font, text, centerX, y + (22 - SmoothTextRenderer.height(text, 0.68F, color)) * 0.5F, 0.68F, color, opacity); }
     private void fill(GuiGraphics graphics, int left, int top, int right, int bottom, int color, float opacity) { int alpha = Math.round((color >>> 24) * opacity); graphics.fill(left, top, right, bottom, alpha << 24 | color & 0x00FFFFFF); }
+    private int color(int color, float opacity) { int alpha = Math.round((color >>> 24) * opacity); return alpha << 24 | color & 0x00FFFFFF; }
 }

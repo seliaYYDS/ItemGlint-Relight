@@ -41,10 +41,11 @@ public final class UiToggle implements UiComponent {
         int trackX = x + width - 42;
         int trackY = y;
         int trackColor = UiMath.mix(UiPalette.INK_GREEN, UiPalette.BRIGHT_BLUE, position);
-        graphics.fill(trackX, trackY, trackX + 42, trackY + 18, UiMath.mix(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hoverAmount), UiPalette.LIGHT_GREEN, position));
-        graphics.fill(trackX + 1, trackY + 1, trackX + 41, trackY + 17, UiMath.mix(trackColor, UiPalette.SURFACE_HOVER, hoverAmount * 0.35F));
+        UiShapes.roundedOutline(graphics, trackX, trackY, trackX + 42, trackY + 18, 9,
+                UiMath.mix(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hoverAmount), UiPalette.LIGHT_GREEN, position),
+                UiMath.mix(trackColor, UiPalette.SURFACE_HOVER, hoverAmount * 0.35F));
         int knobX = Math.round(trackX + 3 + position * 20.0F);
-        graphics.fill(knobX, trackY + 3, knobX + 16, trackY + 15, UiPalette.TEXT);
+        UiShapes.roundedRect(graphics, knobX, trackY + 3, knobX + 16, trackY + 15, 6, UiPalette.TEXT);
     }
 
     @Override

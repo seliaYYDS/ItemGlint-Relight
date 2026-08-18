@@ -51,8 +51,8 @@ public final class UiSlider implements UiComponent {
                 y + (12 - SmoothTextRenderer.height(displayValue, 0.66F, UiPalette.MUTED_TEXT)) / 2.0F, 0.66F, UiPalette.MUTED_TEXT);
         int trackY = y + 17;
         int trackHeight = 10;
-        graphics.fill(x, trackY, x + width, trackY + trackHeight, UiMath.mix(UiPalette.DIVIDER, UiPalette.PALE_BLUE, hoverAmount));
-        graphics.fill(x + 1, trackY + 1, x + width - 1, trackY + trackHeight - 1, UiPalette.SURFACE);
+        UiShapes.roundedOutline(graphics, x, trackY, x + width, trackY + trackHeight, 5,
+                UiMath.mix(UiPalette.DIVIDER, UiPalette.PALE_BLUE, hoverAmount), UiPalette.SURFACE);
         int filled = Math.round((width - 2) * displayedValue);
         float phase = (System.nanoTime() % 1_600_000_000L) / 1_600_000_000.0F;
         for (int offset = 0; offset < filled; offset += 2) {
@@ -61,7 +61,8 @@ public final class UiSlider implements UiComponent {
                     gradientColor(offset / (float) Math.max(1, width - 2) + phase));
         }
         int markerX = x + 1 + filled;
-        graphics.fill(markerX, trackY - 2, markerX + 1, trackY + trackHeight + 2, UiMath.mix(UiPalette.PALE_BLUE, UiPalette.LIGHT_GREEN, hoverAmount));
+        UiShapes.roundedRect(graphics, markerX - 2, trackY - 3, markerX + 3, trackY + trackHeight + 3, 3,
+                UiMath.mix(UiPalette.PALE_BLUE, UiPalette.LIGHT_GREEN, hoverAmount));
     }
 
     @Override

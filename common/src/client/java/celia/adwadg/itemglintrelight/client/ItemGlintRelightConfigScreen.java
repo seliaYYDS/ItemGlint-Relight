@@ -11,6 +11,7 @@ import celia.adwadg.itemglintrelight.client.ui.UiMath;
 import celia.adwadg.itemglintrelight.client.ui.UiMouseGlow;
 import celia.adwadg.itemglintrelight.client.ui.UiPalette;
 import celia.adwadg.itemglintrelight.client.ui.UiSlider;
+import celia.adwadg.itemglintrelight.client.ui.UiShapes;
 import celia.adwadg.itemglintrelight.client.ui.UiTrailStarParticles;
 import celia.adwadg.itemglintrelight.client.ui.UiToggle;
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
@@ -691,7 +692,14 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (outlineColorScrollControl != null) {
             outlineColorScrollControl.close();
         }
+        if (outlinePrimaryColorPicker != null) {
+            outlinePrimaryColorPicker.close();
+        }
+        if (outlineSecondaryColorPicker != null) {
+            outlineSecondaryColorPicker.close();
+        }
         SmoothTextRenderer.clear();
+        UiShapes.clear();
         this.minecraft.setScreen(parent);
     }
 
@@ -774,8 +782,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int presetX = sidebarRight + 24;
         int presetY = top + 40;
         String presetLabel = tr("ui.itemglintrelight.rules.presets");
-        graphics.fill(presetX, presetY, presetX + 58, presetY + 24, UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, presetHover));
-        graphics.fill(presetX + 1, presetY + 1, presetX + 57, presetY + 23, UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, presetHover));
+        UiShapes.roundedOutline(graphics, presetX, presetY, presetX + 58, presetY + 24, 5,
+                UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, presetHover), UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, presetHover));
         SmoothTextRenderer.drawCentered(graphics, font, presetLabel, presetX + 29.0F,
                 presetY + (24 - SmoothTextRenderer.height(presetLabel, 0.62F, UiPalette.TEXT)) * 0.5F, 0.62F,
                 UiMath.mix(UiPalette.MUTED_TEXT, UiPalette.TEXT, presetHover));
@@ -783,8 +791,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int buttonWidth = Math.round(24.0F + addRuleHover * 66.0F);
         int buttonX = buttonRight - buttonWidth;
         int buttonY = top + 40;
-        graphics.fill(buttonX, buttonY, buttonRight, buttonY + 24, UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, addRuleHover));
-        graphics.fill(buttonX + 1, buttonY + 1, buttonRight - 1, buttonY + 23, UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, addRuleHover));
+        UiShapes.roundedOutline(graphics, buttonX, buttonY, buttonRight, buttonY + 24, 5,
+                UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, addRuleHover), UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, addRuleHover));
         String plus = "+";
         SmoothTextRenderer.drawCentered(graphics, font, plus, buttonRight - 12.0F,
                 buttonY + (24 - SmoothTextRenderer.height(plus, 1.05F, UiPalette.PALE_BLUE)) / 2.0F, 1.05F, UiPalette.PALE_BLUE);
@@ -807,18 +815,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int y = viewportTop - Math.round(ruleListScroll);
         graphics.enableScissor(x, viewportTop, x + width, viewportBottom);
         for (DisplayRule rule : rules) {
-            graphics.fill(x, y, x + width, y + 38, UiPalette.DIVIDER);
-            graphics.fill(x + 1, y + 1, x + width - 1, y + 37, UiPalette.SURFACE);
+            UiShapes.roundedOutline(graphics, x, y, x + width, y + 38, 6, UiPalette.DIVIDER, UiPalette.SURFACE);
             String primary = rule.name().isBlank() ? (rule.target().isBlank() ? rule.nbtPath() : rule.target()) : rule.name();
             SmoothTextRenderer.draw(graphics, font, truncate(primary, width - 72, 0.70F), x + 10, y + 7, 0.70F, UiPalette.TEXT);
             String secondary = tr("ui.itemglintrelight.rules.mode." + rule.mode().name().toLowerCase(Locale.ROOT))
                     + "  P" + rule.priority() + "  " + rule.id().substring(0, 8);
             SmoothTextRenderer.draw(graphics, font, truncate(secondary, width - 72, 0.52F), x + 10, y + 21, 0.52F, UiPalette.MUTED_TEXT);
-            graphics.fill(x + width - 52, y + 8, x + width - 30, y + 30, UiPalette.DIVIDER);
-            graphics.fill(x + width - 51, y + 9, x + width - 31, y + 29, UiPalette.SURFACE);
+            UiShapes.roundedOutline(graphics, x + width - 52, y + 8, x + width - 30, y + 30, 5, UiPalette.DIVIDER, UiPalette.SURFACE);
             SmoothTextRenderer.draw(graphics, font, "E", x + width - 45, y + 14, 0.58F, UiPalette.PALE_BLUE);
-            graphics.fill(x + width - 26, y + 8, x + width - 4, y + 30, UiPalette.DIVIDER);
-            graphics.fill(x + width - 25, y + 9, x + width - 5, y + 29, UiPalette.SURFACE);
+            UiShapes.roundedOutline(graphics, x + width - 26, y + 8, x + width - 4, y + 30, 5, UiPalette.DIVIDER, UiPalette.SURFACE);
             SmoothTextRenderer.draw(graphics, font, "x", x + width - 19, y + 14, 0.58F, UiPalette.MUTED_TEXT);
             y += 44;
         }
@@ -844,7 +849,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int thumbY = viewportTop + Math.round((viewportHeight - thumbHeight) * ruleListScroll / maximum);
         int trackX = x + width + 4;
         graphics.fill(trackX, viewportTop, trackX + 1, viewportBottom, UiPalette.DIVIDER);
-        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, UiPalette.PALE_BLUE);
+        UiShapes.roundedRect(graphics, trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, 2, UiPalette.PALE_BLUE);
     }
 
     private void renderRuleDialog(GuiGraphics graphics, int mouseX, int mouseY) {
@@ -865,11 +870,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         graphics.pose().translate(centerX, centerY);
         graphics.pose().scale(scale, scale);
         graphics.pose().translate(-centerX, -centerY);
-        graphics.fill(x, y, x + width, y + height, ruleDialogColor(0xEE07111F));
-        graphics.fill(x, y, x + width, y + 1, ruleDialogColor(UiPalette.DIVIDER));
-        graphics.fill(x, y + height - 1, x + width, y + height, ruleDialogColor(UiPalette.DIVIDER));
-        graphics.fill(x, y, x + 1, y + height, ruleDialogColor(UiPalette.DIVIDER));
-        graphics.fill(x + width - 1, y, x + width, y + height, ruleDialogColor(UiPalette.DIVIDER));
+        UiShapes.roundedOutline(graphics, x, y, x + width, y + height, 8, ruleDialogColor(UiPalette.DIVIDER), ruleDialogColor(0xEE07111F));
         drawRuleDialogText(graphics, "x", x + width - 22, y + 13, 0.82F, UiPalette.MUTED_TEXT);
         graphics.enableScissor(x + 1, y + 1, x + width - 1, y + height - 1);
         int contentRowsHeight = 122 + (ruleMatchMode == RuleMatchMode.NBT_MATCH
@@ -934,11 +935,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int y = 20;
         int width = RULE_DIALOG_WIDTH;
         int height = 300;
-        graphics.fill(x, y, x + width, y + height, 0xF207111F);
-        graphics.fill(x, y, x + width, y + 1, UiPalette.DIVIDER);
-        graphics.fill(x, y + height - 1, x + width, y + height, UiPalette.DIVIDER);
-        graphics.fill(x, y, x + 1, y + height, UiPalette.DIVIDER);
-        graphics.fill(x + width - 1, y, x + width, y + height, UiPalette.DIVIDER);
+        UiShapes.roundedOutline(graphics, x, y, x + width, y + height, 8, UiPalette.DIVIDER, 0xF207111F);
         graphics.enableScissor(x + 1, y + 12, x + width - 1, y + height - 42);
         layoutRenderControls();
         outlineWidthSlider.render(graphics, font, mouseX, mouseY);
@@ -972,8 +969,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int buttonY = y + height - 32;
         boolean hovered = UiMath.contains(buttonX, buttonY, 88, 24, mouseX, mouseY);
         float hover = ruleHover("rule-outline-confirm", hovered);
-        graphics.fill(buttonX, buttonY, buttonX + 88, buttonY + 24, UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, hover));
-        graphics.fill(buttonX + 1, buttonY + 1, buttonX + 87, buttonY + 23, UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover));
+        UiShapes.roundedOutline(graphics, buttonX, buttonY, buttonX + 88, buttonY + 24, 5,
+                UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, hover), UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover));
         String label = tr("ui.itemglintrelight.rules.confirm");
         SmoothTextRenderer.drawCentered(graphics, font, label, buttonX + 44.0F,
                 buttonY + (24 - SmoothTextRenderer.height(label, 0.72F, UiPalette.TEXT)) * 0.5F, 0.72F, UiPalette.TEXT);
@@ -1053,8 +1050,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         boolean focused = ruleInputFocus == focus;
         boolean hovered = UiMath.contains(x, y + 12, inputWidth, 22, mouseX, mouseY);
         float hover = ruleHover("field:" + focus.name(), focused || hovered);
-        graphics.fill(x, y + 12, x + inputWidth, y + 34, ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hover)));
-        graphics.fill(x + 1, y + 13, x + inputWidth - 1, y + 33, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
+        UiShapes.roundedOutline(graphics, x, y + 12, x + inputWidth, y + 34, 5,
+                ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
         String visible = value.isEmpty() ? tr(required ? "ui.itemglintrelight.rules.required" : "ui.itemglintrelight.rules.optional") : value;
         float textY = y + 12 + (22 - SmoothTextRenderer.height(visible, 0.68F, UiPalette.TEXT)) * 0.5F;
         drawRuleDialogText(graphics, truncate(visible, inputWidth - 18, 0.68F), x + 8, textY, 0.68F, value.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT);
@@ -1066,8 +1063,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             int buttonX = x + inputWidth + 6;
             boolean buttonHovered = UiMath.contains(buttonX, y + 12, 56, 22, mouseX, mouseY);
             float buttonHover = ruleHover("field-select:" + focus.name(), buttonHovered);
-            graphics.fill(buttonX, y + 12, buttonX + 56, y + 34, ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, buttonHover)));
-            graphics.fill(buttonX + 1, y + 13, buttonX + 55, y + 33, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, buttonHover)));
+            UiShapes.roundedOutline(graphics, buttonX, y + 12, buttonX + 56, y + 34, 5,
+                    ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, buttonHover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, buttonHover)));
             drawRuleDialogText(graphics, tr("ui.itemglintrelight.rules.select"), buttonX + 11, y + 18, 0.58F, UiPalette.TEXT);
         }
     }
@@ -1085,8 +1082,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         nbtNextArrowHover = UiMath.approach(nbtNextArrowHover, UiMath.contains(x + width - 21, fieldY + 1, 20, 20, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
         nbtCenterHover = UiMath.approach(nbtCenterHover, UiMath.contains(x + 22, fieldY + 1, width - 44, 20, mouseX, mouseY) ? 1.0F : 0.0F, delta, 14.0F);
         float fieldHover = ruleHover("nbt-primary-mode", hovered);
-        graphics.fill(x, y + 12, x + width, y + 34, ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, fieldHover)));
-        graphics.fill(x + 1, y + 13, x + width - 1, y + 33, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, fieldHover)));
+        UiShapes.roundedOutline(graphics, x, y + 12, x + width, y + 34, 5,
+                ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, fieldHover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, fieldHover)));
         graphics.fill(x + 1, fieldY + 1, x + 21, fieldY + 21, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nbtPreviousArrowHover)));
         graphics.fill(x + width - 21, fieldY + 1, x + width - 1, fieldY + 21, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nbtNextArrowHover)));
         graphics.fill(x + 22, fieldY + 1, x + width - 22, fieldY + 21, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, nbtCenterHover)));
@@ -1103,9 +1100,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int optionHeight = nbtMatchModeExpandedHeight();
         if (optionHeight > 0) {
             int optionsY = fieldY + 23;
-            graphics.fill(x, optionsY, x + width, optionsY + optionHeight, ruleDialogColor(UiPalette.BRIGHT_BLUE));
-            graphics.fill(x + 1, optionsY + 1, x + width - 1, optionsY + optionHeight - 1, ruleDialogColor(UiPalette.DEEP_BLUE_FADE));
-            graphics.fill(x, optionsY + optionHeight - 1, x + width, optionsY + optionHeight, ruleDialogColor(UiPalette.BRIGHT_BLUE));
+            UiShapes.roundedOutline(graphics, x, optionsY, x + width, optionsY + optionHeight, 5,
+                    ruleDialogColor(UiPalette.BRIGHT_BLUE), ruleDialogColor(UiPalette.DEEP_BLUE_FADE));
             for (int index = 0; index < NbtMatchMode.values().length; index++) {
                 int optionY = optionsY + index * 22;
                 if (optionY >= optionsY + optionHeight) break;
@@ -1134,8 +1130,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int buttonY = y + height - 32;
         boolean hovered = UiMath.contains(buttonX, buttonY, 88, 24, mouseX, mouseY);
         float hover = ruleHover("rule-add", hovered);
-        graphics.fill(buttonX, buttonY, buttonX + 88, buttonY + 24, ruleDialogColor(UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, hover)));
-        graphics.fill(buttonX + 1, buttonY + 1, buttonX + 87, buttonY + 23, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
+        UiShapes.roundedOutline(graphics, buttonX, buttonY, buttonX + 88, buttonY + 24, 5,
+                ruleDialogColor(UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, hover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
         String label = tr("ui.itemglintrelight.rules.confirm_add");
         SmoothTextRenderer.drawCentered(graphics, font, label, buttonX + 44.0F,
                 buttonY + (24 - SmoothTextRenderer.height(label, 0.72F, UiPalette.TEXT)) * 0.5F, 0.72F, ruleDialogColor(UiPalette.TEXT), ruleDialogAnimation);
@@ -1171,8 +1167,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private void renderNbtActionButton(GuiGraphics graphics, int x, int y, String label, boolean add, int mouseX, int mouseY) {
         boolean hovered = UiMath.contains(x, y, 24, 22, mouseX, mouseY);
         float hover = ruleHover("nbt-action:" + x + ':' + y, hovered);
-        graphics.fill(x, y, x + 24, y + 22, ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, add ? UiPalette.BRIGHT_BLUE : UiPalette.PALE_BLUE, hover)));
-        graphics.fill(x + 1, y + 1, x + 23, y + 21, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
+        UiShapes.roundedOutline(graphics, x, y, x + 24, y + 22, 5,
+                ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, add ? UiPalette.BRIGHT_BLUE : UiPalette.PALE_BLUE, hover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
         SmoothTextRenderer.drawCentered(graphics, font, label, x + 12.0F,
                 y + (22 - SmoothTextRenderer.height(label, 0.68F, UiPalette.TEXT)) * 0.5F, 0.68F,
                 UiMath.mix(UiPalette.MUTED_TEXT, add ? UiPalette.LIGHT_GREEN : UiPalette.PALE_BLUE, hover), ruleDialogAnimation);
@@ -1184,8 +1180,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         boolean focused = ruleInputFocus == focus && additionalNbtConditionIndex == index;
         boolean hovered = UiMath.contains(x, y + 12, width, 22, mouseX, mouseY);
         float hover = ruleHover("additional-field:" + index + ':' + focus.name(), focused || hovered);
-        graphics.fill(x, y + 12, x + width, y + 34, ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hover)));
-        graphics.fill(x + 1, y + 13, x + width - 1, y + 33, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
+        UiShapes.roundedOutline(graphics, x, y + 12, x + width, y + 34, 5,
+                ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
         String visible = value.isEmpty() ? tr(required ? "ui.itemglintrelight.rules.required" : "ui.itemglintrelight.rules.optional") : value;
         float textY = y + 12 + (22 - SmoothTextRenderer.height(visible, 0.68F, UiPalette.TEXT)) * 0.5F;
         drawRuleDialogText(graphics, truncate(visible, width - 18, 0.68F), x + 8, textY, 0.68F, value.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT);
@@ -1224,32 +1220,25 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         graphics.pose().translate(centerX, centerY);
         graphics.pose().scale(scale, scale);
         graphics.pose().translate(-centerX, -centerY);
-        graphics.fill(x, y, x + width, y + height, presetDialogColor(0xF207111F));
-        graphics.fill(x, y, x + width, y + 1, presetDialogColor(UiPalette.DIVIDER));
-        graphics.fill(x, y + height - 1, x + width, y + height, presetDialogColor(UiPalette.DIVIDER));
-        graphics.fill(x, y, x + 1, y + height, presetDialogColor(UiPalette.DIVIDER));
-        graphics.fill(x + width - 1, y, x + width, y + height, presetDialogColor(UiPalette.DIVIDER));
+        UiShapes.roundedOutline(graphics, x, y, x + width, y + height, 8, presetDialogColor(UiPalette.DIVIDER), presetDialogColor(0xF207111F));
         boolean hovered = UiMath.contains(x + width - 32, y + 6, 24, 24, mouseX, mouseY);
         SmoothTextRenderer.draw(graphics, font, "x", x + width - 22, y + 13, 0.82F,
                 hovered ? UiPalette.PALE_BLUE : UiPalette.MUTED_TEXT, presetDialogAnimation);
         int cardY = y + 46;
         boolean cardHovered = UiMath.contains(x + 18, cardY, width - 36, 42, mouseX, mouseY);
-        graphics.fill(x + 18, cardY, x + width - 18, cardY + 42, presetDialogColor(cardHovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER));
-        graphics.fill(x + 19, cardY + 1, x + width - 19, cardY + 41, presetDialogColor(cardHovered ? UiPalette.SURFACE_HOVER : UiPalette.SURFACE));
+        UiShapes.roundedOutline(graphics, x + 18, cardY, x + width - 18, cardY + 42, 6, presetDialogColor(cardHovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER), presetDialogColor(cardHovered ? UiPalette.SURFACE_HOVER : UiPalette.SURFACE));
         String title = tr("ui.itemglintrelight.rules.preset.simple_enchantment");
         SmoothTextRenderer.draw(graphics, font, title, x + 30, cardY + 9, 0.76F, UiPalette.TEXT, presetDialogAnimation);
         SmoothTextRenderer.draw(graphics, font, "minecraft:enchantments !=", x + 30, cardY + 25, 0.56F, UiPalette.MUTED_TEXT, presetDialogAnimation);
         int toolCardY = cardY + 50;
         boolean toolCardHovered = UiMath.contains(x + 18, toolCardY, width - 36, 42, mouseX, mouseY);
-        graphics.fill(x + 18, toolCardY, x + width - 18, toolCardY + 42, presetDialogColor(toolCardHovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER));
-        graphics.fill(x + 19, toolCardY + 1, x + width - 19, toolCardY + 41, presetDialogColor(toolCardHovered ? UiPalette.SURFACE_HOVER : UiPalette.SURFACE));
+        UiShapes.roundedOutline(graphics, x + 18, toolCardY, x + width - 18, toolCardY + 42, 6, presetDialogColor(toolCardHovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER), presetDialogColor(toolCardHovered ? UiPalette.SURFACE_HOVER : UiPalette.SURFACE));
         String toolTitle = tr("ui.itemglintrelight.rules.preset.tool_outline");
         SmoothTextRenderer.draw(graphics, font, toolTitle, x + 30, toolCardY + 9, 0.76F, UiPalette.TEXT, presetDialogAnimation);
         SmoothTextRenderer.draw(graphics, font, "#c:tools", x + 30, toolCardY + 25, 0.56F, UiPalette.MUTED_TEXT, presetDialogAnimation);
         int advancedCardY = toolCardY + 50;
         boolean advancedCardHovered = UiMath.contains(x + 18, advancedCardY, width - 36, 42, mouseX, mouseY);
-        graphics.fill(x + 18, advancedCardY, x + width - 18, advancedCardY + 42, presetDialogColor(advancedCardHovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER));
-        graphics.fill(x + 19, advancedCardY + 1, x + width - 19, advancedCardY + 41, presetDialogColor(advancedCardHovered ? UiPalette.SURFACE_HOVER : UiPalette.SURFACE));
+        UiShapes.roundedOutline(graphics, x + 18, advancedCardY, x + width - 18, advancedCardY + 42, 6, presetDialogColor(advancedCardHovered ? UiPalette.BRIGHT_BLUE : UiPalette.DIVIDER), presetDialogColor(advancedCardHovered ? UiPalette.SURFACE_HOVER : UiPalette.SURFACE));
         String advancedTitle = tr("ui.itemglintrelight.rules.preset.advanced_enchantment");
         SmoothTextRenderer.draw(graphics, font, advancedTitle, x + 30, advancedCardY + 9, 0.76F, UiPalette.TEXT, presetDialogAnimation);
         SmoothTextRenderer.draw(graphics, font, "9 enchantment rules", x + 30, advancedCardY + 25, 0.56F, UiPalette.MUTED_TEXT, presetDialogAnimation);
@@ -1796,7 +1785,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int thumbHeight = Math.max(18, Math.round(height * height / (float) ruleDialogContentHeight));
         int thumbY = y + Math.round((height - thumbHeight) * ruleDialogScroll / maximum);
         graphics.fill(trackX, y, trackX + 1, y + height, ruleDialogColor(UiPalette.DIVIDER));
-        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, ruleDialogColor(UiPalette.PALE_BLUE));
+        UiShapes.roundedRect(graphics, trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, 2, ruleDialogColor(UiPalette.PALE_BLUE));
     }
 
     private void renderPreview(GuiGraphics graphics, int mouseX, int mouseY) {
@@ -1826,8 +1815,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         boolean focused = ruleInputFocus == RuleInputFocus.OUTLINE_PARAMETERS;
         boolean hovered = UiMath.contains(x, y + 12, inputWidth, 22, mouseX, mouseY);
         float hover = ruleHover("rule-outline-field", focused || hovered);
-        graphics.fill(x, y + 12, x + inputWidth, y + 34, ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hover)));
-        graphics.fill(x + 1, y + 13, x + inputWidth - 1, y + 33, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
+        UiShapes.roundedOutline(graphics, x, y + 12, x + inputWidth, y + 34, 5,
+                ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, hover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, hover)));
         String visible = ruleOutlineParameters.isEmpty() ? tr("ui.itemglintrelight.rules.outline_default") : ruleOutlineParameters;
         float textY = y + 12 + (22 - SmoothTextRenderer.height(visible, 0.68F, UiPalette.TEXT)) * 0.5F;
         drawRuleDialogText(graphics, truncate(visible, inputWidth - 18, 0.68F), x + 8, textY, 0.68F,
@@ -1840,8 +1829,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int buttonX = x + inputWidth + 6;
         boolean buttonHovered = UiMath.contains(buttonX, y + 12, 64, 22, mouseX, mouseY);
         float buttonHover = ruleHover("rule-outline-custom", buttonHovered);
-        graphics.fill(buttonX, y + 12, buttonX + 64, y + 34, ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, buttonHover)));
-        graphics.fill(buttonX + 1, y + 13, buttonX + 63, y + 33, ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, buttonHover)));
+        UiShapes.roundedOutline(graphics, buttonX, y + 12, buttonX + 64, y + 34, 5,
+                ruleDialogColor(UiMath.mix(UiPalette.DIVIDER, UiPalette.BRIGHT_BLUE, buttonHover)), ruleDialogColor(UiMath.mix(UiPalette.SURFACE, UiPalette.SURFACE_HOVER, buttonHover)));
         drawRuleDialogText(graphics, tr("ui.itemglintrelight.rules.custom"), buttonX + 12, y + 18, 0.58F, UiPalette.TEXT);
     }
 
@@ -1882,7 +1871,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int toggleLeft = panelRight - 22;
         boolean hovered = isQuickPreviewToggle(mouseX, mouseY);
         quickPreviewToggleHover = UiMath.approach(quickPreviewToggleHover, hovered ? 1.0F : 0.0F, 0.016F, 12.0F);
-        graphics.fill(toggleLeft, top + 8, panelRight - 8, top + 26,
+        UiShapes.roundedRect(graphics, toggleLeft, top + 8, panelRight - 8, top + 26, 8,
                 quickPreviewColor(UiMath.mix(UiPalette.DEEP_BLUE, UiPalette.SURFACE_HOVER, quickPreviewToggleHover)));
         SmoothTextRenderer.draw(graphics, font, quickPreviewCollapsed ? ">" : "<", toggleLeft + 6, top + 12, 0.66F,
                 quickPreviewColor(UiMath.mix(UiPalette.PALE_BLUE, UiPalette.LIGHT_GREEN, quickPreviewToggleHover)));
@@ -2016,19 +2005,14 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         graphics.pose().translate(centerX, centerY);
         graphics.pose().scale(scale, scale);
         graphics.pose().translate(-centerX, -centerY);
-        graphics.fill(x, y, rightEdge, bottomEdge, pickerColor(0xF20A1724));
-        graphics.fill(x, y, rightEdge, y + 1, pickerColor(UiPalette.DIVIDER));
-        graphics.fill(x, bottomEdge - 1, rightEdge, bottomEdge, pickerColor(UiPalette.DIVIDER));
-        graphics.fill(x, y, x + 1, bottomEdge, pickerColor(UiPalette.DIVIDER));
-        graphics.fill(rightEdge - 1, y, rightEdge, bottomEdge, pickerColor(UiPalette.DIVIDER));
+        UiShapes.roundedOutline(graphics, x, y, rightEdge, bottomEdge, 8, pickerColor(UiPalette.DIVIDER), pickerColor(0xF20A1724));
         drawPickerText(graphics, tr("ui.itemglintrelight.preview.picker.title"), x + 12, y + 10, 0.76F, UiPalette.TEXT);
         String count = tr("ui.itemglintrelight.preview.picker.count", filteredItemChoices.size());
         int countX = Math.max(x + 12, rightEdge - 12 - SmoothTextRenderer.width(count, 0.58F, UiPalette.MUTED_TEXT));
         drawPickerText(graphics, count, countX, y + 12, 0.58F, UiPalette.MUTED_TEXT);
 
         int searchY = y + 31;
-        graphics.fill(x + 12, searchY, rightEdge - 12, searchY + 22, pickerColor(UiPalette.DIVIDER));
-        graphics.fill(x + 13, searchY + 1, rightEdge - 13, searchY + 21, pickerColor(UiPalette.SURFACE));
+        UiShapes.roundedOutline(graphics, x + 12, searchY, rightEdge - 12, searchY + 22, 5, pickerColor(UiPalette.DIVIDER), pickerColor(UiPalette.SURFACE));
         String searchText = itemSearch.isEmpty() ? tr("ui.itemglintrelight.preview.picker.search") : itemSearch;
         int searchColor = itemSearch.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT;
         drawPickerText(graphics, searchText, x + 20,
@@ -2049,7 +2033,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             ItemChoice choice = filteredItemChoices.get(index);
             int rowY = rowsY + row * ITEM_PICKER_ROW_HEIGHT - rowOffset;
             boolean hovered = mouseX >= x + 6 && mouseX < rightEdge - 6 && mouseY >= rowY && mouseY < rowY + ITEM_PICKER_ROW_HEIGHT - 2;
-            graphics.fill(x + 8, rowY, rightEdge - 8, rowY + ITEM_PICKER_ROW_HEIGHT - 2,
+            UiShapes.roundedRect(graphics, x + 8, rowY, rightEdge - 8, rowY + ITEM_PICKER_ROW_HEIGHT - 2, 5,
                     pickerColor(hovered ? UiPalette.SURFACE_HOVER : UiPalette.DEEP_BLUE_FADE));
             graphics.renderItem(choice.stack(), x + 14, rowY + 7);
             int iconVeilAlpha = Math.round((1.0F - itemPickerAnimation) * 255.0F);
@@ -2125,18 +2109,14 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         graphics.pose().translate(centerX, centerY);
         graphics.pose().scale(scale, scale);
         graphics.pose().translate(-centerX, -centerY);
-        graphics.fill(x, y, rightEdge, bottomEdge, ruleTargetPickerColor(0xF20A1724));
-        graphics.fill(x, y, rightEdge, y + 1, ruleTargetPickerColor(UiPalette.DIVIDER));
-        graphics.fill(x, bottomEdge - 1, rightEdge, bottomEdge, ruleTargetPickerColor(UiPalette.DIVIDER));
-        graphics.fill(x, y, x + 1, bottomEdge, ruleTargetPickerColor(UiPalette.DIVIDER));
-        graphics.fill(rightEdge - 1, y, rightEdge, bottomEdge, ruleTargetPickerColor(UiPalette.DIVIDER));
+        UiShapes.roundedOutline(graphics, x, y, rightEdge, bottomEdge, 8, ruleTargetPickerColor(UiPalette.DIVIDER), ruleTargetPickerColor(0xF20A1724));
         drawRuleTargetPickerText(graphics, tr("ui.itemglintrelight.rules.target.title"), x + 12, y + 10, 0.76F, UiPalette.TEXT);
         String count = tr("ui.itemglintrelight.rules.target.count", filteredRuleTargetChoices.size());
         int countX = Math.max(x + 12, rightEdge - 12 - SmoothTextRenderer.width(count, 0.58F, UiPalette.MUTED_TEXT));
         drawRuleTargetPickerText(graphics, count, countX, y + 12, 0.58F, UiPalette.MUTED_TEXT);
         int searchY = y + 31;
-        graphics.fill(x + 12, searchY, rightEdge - 12, searchY + 22, ruleTargetPickerColor(UiPalette.DIVIDER));
-        graphics.fill(x + 13, searchY + 1, rightEdge - 13, searchY + 21, ruleTargetPickerColor(UiPalette.SURFACE));
+        UiShapes.roundedOutline(graphics, x + 12, searchY, rightEdge - 12, searchY + 22, 5,
+                ruleTargetPickerColor(UiPalette.DIVIDER), ruleTargetPickerColor(UiPalette.SURFACE));
         String searchText = ruleTargetSearch.isEmpty() ? tr("ui.itemglintrelight.rules.target.search") : ruleTargetSearch;
         int ruleTargetSearchColor = ruleTargetSearch.isEmpty() ? UiPalette.MUTED_TEXT : UiPalette.TEXT;
         drawRuleTargetPickerText(graphics, searchText, x + 20,
@@ -2156,7 +2136,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             RuleTargetChoice choice = filteredRuleTargetChoices.get(index);
             int rowY = rowsY + row * ITEM_PICKER_ROW_HEIGHT - rowOffset;
             boolean hovered = mouseX >= x + 6 && mouseX < rightEdge - 6 && mouseY >= rowY && mouseY < rowY + ITEM_PICKER_ROW_HEIGHT - 2;
-            graphics.fill(x + 8, rowY, rightEdge - 8, rowY + ITEM_PICKER_ROW_HEIGHT - 2,
+            UiShapes.roundedRect(graphics, x + 8, rowY, rightEdge - 8, rowY + ITEM_PICKER_ROW_HEIGHT - 2, 5,
                     ruleTargetPickerColor(hovered ? UiPalette.SURFACE_HOVER : UiPalette.DEEP_BLUE_FADE));
             if (choice.kind() == RuleTargetKind.ITEM) {
                 graphics.renderItem(choice.stack(), x + 14, rowY + 7);
@@ -2233,7 +2213,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         float maximum = Math.max(1.0F, filteredRuleTargetChoices.size() - visibleRows);
         int thumbY = rowsY + Math.round((trackHeight - thumbHeight) * ruleTargetPickerScroll / maximum);
         graphics.fill(trackX, rowsY, trackX + 1, rowsY + trackHeight, ruleTargetPickerColor(UiPalette.DIVIDER));
-        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, ruleTargetPickerColor(UiPalette.PALE_BLUE));
+        UiShapes.roundedRect(graphics, trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, 2, ruleTargetPickerColor(UiPalette.PALE_BLUE));
     }
 
     private int ruleTargetPickerColor(int color) {
@@ -2261,7 +2241,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         float maximum = Math.max(1.0F, filteredItemChoices.size() - visibleRows);
         int thumbY = rowsY + Math.round((trackHeight - thumbHeight) * itemPickerScroll / maximum);
         graphics.fill(trackX, rowsY, trackX + 1, rowsY + trackHeight, pickerColor(UiPalette.DIVIDER));
-        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, pickerColor(UiPalette.PALE_BLUE));
+        UiShapes.roundedRect(graphics, trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, 2, pickerColor(UiPalette.PALE_BLUE));
     }
 
     private int pickerColor(int color) {
@@ -2389,7 +2369,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int thumbHeight = Math.max(18, Math.round(trackHeight * viewportHeight / (float) renderContentHeight));
         int thumbY = trackY + Math.round((trackHeight - thumbHeight) * renderScroll / maximum);
         graphics.fill(trackX, trackY, trackX + 1, trackY + trackHeight, UiPalette.DIVIDER);
-        graphics.fill(trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, UiPalette.PALE_BLUE);
+        UiShapes.roundedRect(graphics, trackX - 1, thumbY, trackX + 2, thumbY + thumbHeight, 2, UiPalette.PALE_BLUE);
     }
 
     private int maxRenderScroll() {

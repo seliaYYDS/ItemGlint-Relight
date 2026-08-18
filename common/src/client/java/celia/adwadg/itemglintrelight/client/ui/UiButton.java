@@ -26,8 +26,9 @@ public final class UiButton implements UiComponent {
     public void render(GuiGraphics graphics, Font font, int mouseX, int mouseY) {
         float delta = deltaSeconds();
         hoverAmount = UiMath.approach(hoverAmount, UiMath.contains(x, y, width, height, mouseX, mouseY) ? 1.0F : 0.0F, delta, 10.0F);
-        graphics.fill(x, y, x + width, y + height, UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, hoverAmount));
-        graphics.fill(x + 1, y + 1, x + width - 1, y + height - 1, UiMath.mix(UiPalette.INK_GREEN, UiPalette.SURFACE_HOVER, hoverAmount));
+        UiShapes.roundedOutline(graphics, x, y, x + width, y + height, 5,
+                UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, hoverAmount),
+                UiMath.mix(UiPalette.INK_GREEN, UiPalette.SURFACE_HOVER, hoverAmount));
         SmoothTextRenderer.drawCentered(graphics, font, label, x + width / 2.0F,
                 y + (height - SmoothTextRenderer.height(label, 0.86F, UiPalette.TEXT)) / 2.0F, 0.86F, UiPalette.TEXT);
     }
