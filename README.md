@@ -69,26 +69,53 @@ ItemGlintRelight 是一个 Fabric 客户端模组，用于重新绘制 Minecraft
 
 ### 环境
 
-- JDK 21
+- 1.21.11：JDK 21、Gradle 9.2.1、Fabric Loader 和 Fabric API
 - Windows、Linux 或 macOS
-- 项目自带 Gradle Wrapper；不需要单独安装 Gradle
+- 每个游戏版本自带 Gradle Wrapper；不需要全局安装 Gradle
+
+不同 Minecraft 版本可能使用不同 Gradle、Loom 和 JDK。不要用根目录 `gradlew` 构建游戏版本；应使用 `versions/<版本>/` 中的独立 Wrapper，或使用下方的统一入口。当前 1.21.11 的完整工具链声明位于 `versions/1.21.11/toolchain.properties`。
 
 ### 构建与运行
+
+#### Windows：统一入口
+
+首次使用时，将对应 JDK 根目录设置为用户环境变量。重新打开终端或 IDEA 后环境变量才会生效：
+
+```powershell
+[Environment]::SetEnvironmentVariable("ITEMGLINT_JDK_21", "C:\Program Files\Java\jdk-21", "User")
+```
 
 在仓库根目录执行：
 
 ```powershell
 # 编译并打包 1.21.11 版本
-.\gradlew.bat :versions:1.21.11:build
+.\scripts\build-version.ps1 -Version 1.21.11 build
 
 # 启动开发客户端
-.\gradlew.bat :versions:1.21.11:runClient
+.\scripts\build-version.ps1 -Version 1.21.11 runClient
 ```
 
-构建后的 jar 位于 `versions/1.21.11/build/libs/`。只检查客户端源码时，可以执行：
+`build-version.ps1` 根据目标版本的 `toolchain.properties` 选择 `ITEMGLINT_JDK_<主版本>`，设置本次进程的 `JAVA_HOME` 后调用该版本自己的 `gradlew.bat`。未来添加 Java 17 版本时，配置 `ITEMGLINT_JDK_17` 即可，无需切换系统默认 Java。
+
+#### macOS/Linux：直接使用版本 Wrapper
+
+```bash
+export JAVA_HOME=/path/to/jdk-21
+cd versions/1.21.11
+./gradlew build
+./gradlew runClient
+```
+
+构建后的 jar 位于 `versions/1.21.11/build/libs/`。
+
+#### IntelliJ IDEA
+
+将 `versions/1.21.11/settings.gradle` 作为独立 **Linked Gradle Project** 附加：在 Gradle 工具窗口点击 `+`，选择该文件，设置 **Use Gradle from: gradle-wrapper.properties file**，并将 **Gradle JVM** 设为 JDK 21。刷新后会显示独立项目 `itemglintrelight-fabric-1.21.11` 及其 `build`、`runClient` 等任务。
+
+只检查客户端源码时，可以执行：
 
 ```powershell
-.\gradlew.bat :versions:1.21.11:compileClientJava
+.\scripts\build-version.ps1 -Version 1.21.11 compileClientJava
 ```
 
 ### 项目结构
@@ -98,7 +125,7 @@ common/
   src/main/       配置、规则、通用入口与资源
   src/client/     配置 UI、客户端初始化与通用 UI 组件
 versions/
-  1.21.11/        1.21.11 专属渲染、Mixin 和 Gradle 子项目
+  1.21.11/        1.21.11 专属渲染、Mixin 和独立 Gradle 构建
 gallery/          README 使用的截图
 docs/             多版本维护说明
 ```

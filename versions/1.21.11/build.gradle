@@ -4,6 +4,9 @@ plugins {
 }
 
 version = project.mod_version
+def toolchainProperties = new Properties()
+file("toolchain.properties").withInputStream { toolchainProperties.load(it) }
+def javaRelease = toolchainProperties.getProperty("java_release", "21").toInteger()
 
 base {
     archivesName = project.archives_base_name
@@ -67,18 +70,19 @@ processResources {
 }
 
 tasks.withType(JavaCompile).configureEach {
-    options.release = 21
+    options.release = javaRelease
     options.encoding = "UTF-8"
 }
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(javaRelease)
+    }
     withSourcesJar()
 }
 
 jar {
-    from(rootProject.file("LICENSE")) {
+    from(file("../../LICENSE")) {
         rename { "${it}_${project.base.archivesName.get()}" }
     }
 }
