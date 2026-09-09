@@ -30,15 +30,16 @@ public abstract class GameRendererFrameMixin {
     }
 
     /**
-     * Iris finalizes its level pipeline, including its color-space pass, from a tail callback on
-     * {@code renderLevel}. Hook the caller instead of competing for that same tail injection.
-     * At this point the main target's depth is the depth Iris used for its finished frame.
+     * Runs right after the level (so after translucent terrain, clouds and weather) and before the
+     * GUI is extracted, which is exactly where the third-person outline must be composited: it is
+     * no longer washed out by translucent geometry, yet it is not promoted above the GUI and keeps
+     * depth testing against the opaque scene snapshot.
      */
     @Inject(method = "render", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
             shift = At.Shift.AFTER))
-    private void itemglintrelight$compositeThirdPersonAfterIrisLevel(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
-        HeldItemOutlineRenderer.compositeThirdPersonAfterIrisFrame(net.minecraft.client.Minecraft.getInstance());
+    private void itemglintrelight$compositeThirdPersonAfterLevel(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
+        HeldItemOutlineRenderer.compositeThirdPersonAfterLevel(net.minecraft.client.Minecraft.getInstance());
     }
 
 }

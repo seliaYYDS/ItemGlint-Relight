@@ -128,6 +128,8 @@ public final class HeldItemOutlineRenderer {
     private static long nextPreviewDiagnosticMillis;
     private static long nextThirdPersonDepthDiagnosticMillis;
     private static long thirdPersonCompositeSequence;
+    /** Frame whose opaque scene depth is already snapshotted; Long.MIN_VALUE when none. */
+    private static long thirdPersonSceneDepthFrame = Long.MIN_VALUE;
     private static String framebufferLookupFailure = "none";
     private static Object irisNoHandDepthTexture;
     private static int irisNoHandDepthFbo;
@@ -164,6 +166,7 @@ public final class HeldItemOutlineRenderer {
         THIRD_PERSON_OFF_HAND.reset();
         recordingThirdPerson = null;
         THIRD_PERSON_CAPTURES.clear();
+        thirdPersonSceneDepthFrame = Long.MIN_VALUE;
         uniforms.beginFrame();
         blurUniforms.beginFrame();
     }
@@ -537,6 +540,15 @@ public final class HeldItemOutlineRenderer {
         THIRD_PERSON_CAPTURES.addLast(capture);
     }
 
+    /** Third-person outline settings: half width, distance-scaled bloom and the high quality. */
+    private static ItemGlintRelightConfig thirdPersonConfig(CaptureState capture) {
+        ItemGlintRelightConfig config = capture.config.copy();
+        config.setOutlineQuality(config.thirdPersonOutlineQuality());
+        config.setOutlineWidth(config.outlineWidth() * 0.5F);
+        config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * thirdPersonBloomDistanceScale(capture));
+        return config;
+    }
+
     private static boolean shouldRenderThirdPerson(Minecraft minecraft) {
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
         return minecraft != null && minecraft.player != null && minecraft.level != null
@@ -553,13 +565,17 @@ public final class HeldItemOutlineRenderer {
     }
 
     /**
-     * Runs after entity batches flush. World and opaque entity depth therefore hide the outline;
-     * later block entities and particles keep their native order and can still cover it.
+     * Phase two, hooked after the level (hence after translucent terrain, clouds and weather) but
+     * still before the GUI. Compositing here keeps those translucent layers from blending over
+     * the outline, while the occlusion test keeps using the opaque-only depth snapshot taken in
+     * {@link #compositeThirdPersonAfterMainBatch}. The outline is never promoted above the GUI and
+     * keeps full depth testing.
      */
     private static void compositeThirdPerson(Minecraft minecraft, String source) {
         if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty()) return;
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         ensureTarget(mainTarget);
+        boolean iris = HeldItemOutlineCompat.isIrisShaderPackRendering();
         while (!THIRD_PERSON_CAPTURES.isEmpty()) {
             CaptureState capture = THIRD_PERSON_CAPTURES.removeFirst();
             if (!capture.captured || capture.config == null || capture.dispatcher == null || capture.buffers == null) {
@@ -567,33 +583,29 @@ public final class HeldItemOutlineRenderer {
                 continue;
             }
             try {
-                // Preserve the completed world depth for the screen-space pass, then seed the
-                // replay target with the same depth.  The replay is now hardware depth-tested
-                // before its mask can reach the outline shader.  This is essential with Iris:
-                // its final pass owns the main target depth, whereas a blank replay target lets
-                // hidden item fragments create a silhouette unconditionally.
-                ItemGlintRelightConfig config = capture.config.copy();
-                config.setOutlineQuality(config.thirdPersonOutlineQuality());
-                config.setOutlineWidth(config.outlineWidth() * 0.5F);
-                config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * thirdPersonBloomDistanceScale(capture));
+                ItemGlintRelightConfig config = thirdPersonConfig(capture);
                 ScissorRect scissor = resolveThirdPersonScissor(mainTarget, capture, config);
-                boolean irisDepthReady = copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget, scissor);
-                if (!irisDepthReady && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
-                    thirdPersonDepthDiagnostic(source, "iris_depth_unavailable", mainTarget, capture);
-                    continue;
-                }
-                if (!irisDepthReady) {
-                    // The shaders only read scene depth inside the composite region.
-                    copyDepthRegion(thirdPersonSceneDepth, mainTarget, scissor);
-                }
-                // The mask only needs clearing and seeding where the item can rasterise; the
-                // shaders never read outside that region.
-                clearMask(sceneDepth, scissor);
-                if (!irisDepthReady) {
+                if (iris) {
+                    // Iris' depthtex2 is the no-hand scene depth of the finished frame.
+                    if (!copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget, scissor)) {
+                        thirdPersonDepthDiagnostic(source, "iris_depth_unavailable", mainTarget, capture);
+                        continue;
+                    }
                     // depthtex2 already contains the original third-person item. Replaying into
                     // that depth makes the item compete with itself and produces frame-to-frame
                     // z-fighting. Capture a complete private mask instead; the outline and bloom
                     // shaders below perform the authoritative per-pixel depthtex2 rejection.
+                    clearMask(sceneDepth, scissor);
+                } else {
+                    if (!capture.sceneDepthReady) {
+                        // This capture was submitted after the opaque snapshot (or no snapshot
+                        // happened at all): fall back to the current depth, which may already
+                        // include translucent geometry.
+                        copyDepthRegion(thirdPersonSceneDepth, mainTarget, scissor);
+                    }
+                    // The mask only needs clearing and seeding where the item can rasterise; the
+                    // shaders never read outside that region.
+                    clearMask(sceneDepth, scissor);
                     copyDepthRegion(sceneDepth, thirdPersonSceneDepth, scissor);
                 }
                 thirdPersonCompositeSequence++;
@@ -614,9 +626,9 @@ public final class HeldItemOutlineRenderer {
     }
 
     /**
-     * Entity layers submit their nodes during {@code renderLevel}; they are only available once
-     * the game's primary BufferSource is flushed.  Compositing earlier observes the previous
-     * frame's capture and cannot use the current world depth.
+     * Phase one, hooked after the main batch flush: snapshot the scene depth while it still holds
+     * opaque geometry only. Translucent terrain, clouds and weather are drawn after this point,
+     * so the snapshot lets the outline stay on top of them without ever showing through a wall.
      */
     public static void compositeThirdPersonAfterMainBatch(Minecraft minecraft, Object bufferSource) {
         if (minecraft == null || minecraft.gameRenderer == null || bufferSource == null
@@ -631,16 +643,46 @@ public final class HeldItemOutlineRenderer {
         if (renderBuffers == null || bufferSource != renderBuffers.bufferSource()) {
             return;
         }
-        compositeThirdPerson(minecraft, "main_batch");
+        snapshotThirdPersonSceneDepth(minecraft);
     }
 
-    public static void compositeThirdPersonAfterIrisFrame(Minecraft minecraft) {
-        if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty()
-                || !shouldRenderThirdPerson(minecraft) || !HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+    private static void snapshotThirdPersonSceneDepth(Minecraft minecraft) {
+        if (thirdPersonSceneDepthFrame == frameNumber) {
+            // Keep the earliest flush's depth: later flushes can already include translucent
+            // geometry, and the old in-place composite used this same earliest point.
+            return;
+        }
+        RenderTarget mainTarget = minecraft.getMainRenderTarget();
+        ensureTarget(mainTarget);
+        copyDepthRegion(thirdPersonSceneDepth, mainTarget, thirdPersonUnionScissor(mainTarget));
+        thirdPersonSceneDepthFrame = frameNumber;
+        for (CaptureState capture : THIRD_PERSON_CAPTURES) {
+            if (capture.captured && capture.config != null) {
+                capture.sceneDepthReady = true;
+            }
+        }
+    }
+
+    /** Union of every pending capture's composite region, so one snapshot serves them all. */
+    private static ScissorRect thirdPersonUnionScissor(RenderTarget target) {
+        ScissorRect union = null;
+        for (CaptureState capture : THIRD_PERSON_CAPTURES) {
+            if (!capture.captured || capture.config == null) continue;
+            union = ScissorRect.union(union, resolveThirdPersonScissor(target, capture, thirdPersonConfig(capture)));
+        }
+        return union;
+    }
+
+    /**
+     * Phase two, hooked after {@code GameRenderer.renderLevel} and before the GUI: composite the
+     * pending third-person outlines on top of translucent terrain and clouds.
+     */
+    public static void compositeThirdPersonAfterLevel(Minecraft minecraft) {
+        if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty() || !shouldRenderThirdPerson(minecraft)) {
             return;
         }
         HeldItemOutlineCompat.logDiagnosticStateOnce();
-        compositeThirdPerson(minecraft, "iris_render_tail");
+        compositeThirdPerson(minecraft, HeldItemOutlineCompat.isIrisShaderPackRendering() ? "iris_render_tail" : "level_tail");
     }
 
     public static SubmitNodeStorage wrapStorage(Minecraft minecraft, SubmitNodeStorage original) {
@@ -1896,6 +1938,8 @@ public final class HeldItemOutlineRenderer {
         private Matrix4f itemPoseMatrix;
         /** View-space model bounds of the submitted item: minX, minY, minZ, maxX, maxY, maxZ. */
         private float[] itemBounds;
+        /** True when the opaque scene depth snapshot already covers this capture's region. */
+        private boolean sceneDepthReady;
         private GpuBufferSlice projectionMatrix;
         private ProjectionType projectionType;
         /** Projection active for this capture's pass; turns the view-space bounds into clip space. */
@@ -1919,6 +1963,7 @@ public final class HeldItemOutlineRenderer {
             modelViewMatrix = null;
             itemPoseMatrix = null;
             itemBounds = null;
+            sceneDepthReady = false;
             projectionMatrix = null;
             projectionType = null;
             projectionMatrix4f = null;
