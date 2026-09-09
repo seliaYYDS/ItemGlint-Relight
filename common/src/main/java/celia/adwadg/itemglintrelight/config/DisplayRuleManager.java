@@ -26,6 +26,9 @@ public final class DisplayRuleManager {
     private static final List<DisplayRule> RULES = new ArrayList<>();
     private static Path rulesFile;
     private static long nextMatchDiagnosticMillis;
+    private static List<DisplayRule> orderedRuleCache;
+    private static int orderedRuleCacheVersion = -1;
+    private static int rulesVersion;
 
     private DisplayRuleManager() {
     }
@@ -42,17 +45,28 @@ public final class DisplayRuleManager {
         return List.copyOf(RULES);
     }
 
+    /**
+     * The ordered list only changes when the rule set changes. Caching it removes a stream sort
+     * and two list allocations from every item resolution, which runs once per GUI slot per frame.
+     */
     public static synchronized List<DisplayRule> rulesByPriority() {
         ensureRegistered();
-        return RULES.stream().sorted(Comparator.comparingInt(DisplayRule::priority).reversed()
-                .thenComparing(Comparator.comparingInt((DisplayRule rule) -> rule.mode() == DisplayRule.Mode.BLACKLIST ? 1 : 0).reversed())).toList();
+        if (orderedRuleCache == null || orderedRuleCacheVersion != rulesVersion) {
+            orderedRuleCache = RULES.stream().sorted(Comparator.comparingInt(DisplayRule::priority).reversed()
+                    .thenComparing(Comparator.comparingInt((DisplayRule rule) -> rule.mode() == DisplayRule.Mode.BLACKLIST ? 1 : 0).reversed())).toList();
+            orderedRuleCacheVersion = rulesVersion;
+        }
+        return orderedRuleCache;
     }
 
     public static synchronized ItemGlintRelightConfig resolve(ItemStack stack, ItemGlintRelightConfig fallback) {
         ensureRegistered();
         List<DisplayRule> orderedRules = rulesByPriority();
+        if (orderedRules.isEmpty()) return fallback;
+        // Resolved once per call rather than once per rule; getKey(...).toString() allocates.
+        String itemId = stack == null || stack.isEmpty() ? null : BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
         for (DisplayRule rule : orderedRules) {
-            if (!matches(rule, stack)) continue;
+            if (!matches(rule, stack, itemId)) continue;
             logMatch(stack, rule);
             if (rule.mode() == DisplayRule.Mode.BLACKLIST) {
                 ItemGlintRelightConfig disabled = fallback.copy();
@@ -61,7 +75,6 @@ public final class DisplayRuleManager {
             }
             return rule.outlineConfig() == null ? fallback : rule.outlineConfig().copy();
         }
-        if (orderedRules.isEmpty()) return fallback;
         DisplayRule highestPriorityRule = orderedRules.get(0);
         if (highestPriorityRule.mode() == DisplayRule.Mode.BLACKLIST) {
             return highestPriorityRule.outlineConfig() == null ? fallback : highestPriorityRule.outlineConfig().copy();
@@ -74,12 +87,12 @@ public final class DisplayRuleManager {
         return fallback;
     }
 
-    private static boolean matches(DisplayRule rule, ItemStack stack) {
+    private static boolean matches(DisplayRule rule, ItemStack stack, String itemId) {
         if (stack == null || stack.isEmpty()) return false;
         if (rule.mode() == DisplayRule.Mode.NBT_MATCH) {
             return rule.nbtConditions().stream().allMatch(condition -> matchesNbtCondition(stack, condition));
         }
-        String itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+        if (itemId == null) return false;
         if (rule.target().startsWith("@")) return itemId.startsWith(rule.target().substring(1) + ":");
         if (rule.target().startsWith("#")) {
             try {
@@ -154,6 +167,7 @@ public final class DisplayRuleManager {
     public static synchronized void add(DisplayRule rule) {
         ensureRegistered();
         RULES.add(Objects.requireNonNull(rule, "rule"));
+        rulesVersion++;
         save();
     }
 
@@ -162,6 +176,7 @@ public final class DisplayRuleManager {
         for (int index = 0; index < RULES.size(); index++) {
             if (RULES.get(index).id().equals(rule.id())) {
                 RULES.set(index, Objects.requireNonNull(rule, "rule"));
+                rulesVersion++;
                 save();
                 return;
             }
@@ -171,7 +186,10 @@ public final class DisplayRuleManager {
 
     public static synchronized void remove(String id) {
         ensureRegistered();
-        if (RULES.removeIf(rule -> rule.id().equals(id))) save();
+        if (RULES.removeIf(rule -> rule.id().equals(id))) {
+            rulesVersion++;
+            save();
+        }
     }
 
     public static synchronized void save() {
@@ -198,6 +216,8 @@ public final class DisplayRuleManager {
             }
         } catch (IOException | RuntimeException exception) {
             throw new IllegalStateException("Unable to load display rules from " + rulesFile, exception);
+        } finally {
+            rulesVersion++;
         }
     }
 

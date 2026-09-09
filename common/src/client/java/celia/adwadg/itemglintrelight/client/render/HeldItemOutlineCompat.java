@@ -12,6 +12,16 @@ public final class HeldItemOutlineCompat {
     private static final Method SHADER_PACK_IN_USE;
     private static final Method SHADOW_PASS;
     private static final Method IRIS_PACK_IN_USE_QUICK;
+    /**
+     * Pipeline handles are resolved once instead of once per frame: the previous implementation
+     * ran {@code Class.forName}, {@code getMethod} and a full {@code getDeclaredFields} hierarchy
+     * walk on every third-person capture, inside the render loop.
+     */
+    private static final Method GET_PIPELINE_MANAGER;
+    private static boolean pipelineHandlesResolved;
+    private static Method getPipelineNullable;
+    private static Field pipelineTargetsField;
+    private static Method getDepthTextureNoHand;
     private static String apiResolutionFailure = "none";
     private static String pipelineResolutionFailure = "none";
     private static String apiInvocationFailure = "none";
@@ -23,6 +33,7 @@ public final class HeldItemOutlineCompat {
         Method shaderPackInUse = null;
         Method shadowPass = null;
         Method packInUseQuick = null;
+        Method pipelineManager = null;
         if (IRIS_LOADED) {
             try {
                 Class<?> api = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
@@ -36,6 +47,7 @@ public final class HeldItemOutlineCompat {
             try {
                 Class<?> iris = Class.forName("net.irisshaders.iris.Iris");
                 packInUseQuick = iris.getMethod("isPackInUseQuick");
+                pipelineManager = iris.getMethod("getPipelineManager");
             } catch (ReflectiveOperationException exception) {
                 pipelineResolutionFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
                 ItemGlintRelight.LOGGER.warn("Unable to resolve Iris pipeline outline compatibility hook", exception);
@@ -45,6 +57,7 @@ public final class HeldItemOutlineCompat {
         SHADER_PACK_IN_USE = shaderPackInUse;
         SHADOW_PASS = shadowPass;
         IRIS_PACK_IN_USE_QUICK = packInUseQuick;
+        GET_PIPELINE_MANAGER = pipelineManager;
     }
 
     private HeldItemOutlineCompat() { }
@@ -63,6 +76,8 @@ public final class HeldItemOutlineCompat {
         // pipeline check here; on some Iris builds the public API can be observed before its
         // pipeline is attached, which incorrectly sends the third-person composite through
         // the vanilla BufferSource path.
+        // This deliberately stays uncached: the result changes between the shadow pass and the
+        // main pass within a single frame, and the cached reflection handles make it cheap.
         return (invokeApi(SHADER_PACK_IN_USE) || invokeStatic(IRIS_PACK_IN_USE_QUICK))
                 && !invokeApi(SHADOW_PASS);
     }
@@ -70,11 +85,35 @@ public final class HeldItemOutlineCompat {
     /** Returns Iris' depthtex2/no-hand depth texture, if its active pipeline exposes it. */
     public static Object getIrisNoHandDepthTexture() {
         if (!IRIS_LOADED || !isIrisShaderPackRendering()) return null;
+        if (!pipelineHandlesResolved) {
+            // Only reached while a shader pack is rendering, so the pipeline already exists.
+            pipelineHandlesResolved = true;
+            resolvePipelineHandles();
+        }
+        if (getPipelineNullable == null || pipelineTargetsField == null || getDepthTextureNoHand == null) {
+            return null;
+        }
         try {
-            Class<?> iris = Class.forName("net.irisshaders.iris.Iris");
-            Object manager = iris.getMethod("getPipelineManager").invoke(null);
-            Object pipeline = manager.getClass().getMethod("getPipelineNullable").invoke(manager);
+            Object manager = GET_PIPELINE_MANAGER.invoke(null);
+            if (manager == null) return null;
+            Object pipeline = getPipelineNullable.invoke(manager);
             if (pipeline == null) return null;
+            Object targets = pipelineTargetsField.get(pipeline);
+            return targets == null ? null : getDepthTextureNoHand.invoke(targets);
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            pipelineInvocationFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
+            return null;
+        }
+    }
+
+    private static void resolvePipelineHandles() {
+        if (GET_PIPELINE_MANAGER == null) return;
+        try {
+            Object manager = GET_PIPELINE_MANAGER.invoke(null);
+            if (manager == null) return;
+            Method nullable = manager.getClass().getMethod("getPipelineNullable");
+            Object pipeline = nullable.invoke(manager);
+            if (pipeline == null) return;
             Field targetsField = null;
             for (Class<?> type = pipeline.getClass(); type != null && targetsField == null; type = type.getSuperclass()) {
                 for (Field field : type.getDeclaredFields()) {
@@ -84,12 +123,13 @@ public final class HeldItemOutlineCompat {
                     }
                 }
             }
-            if (targetsField == null) return null;
+            if (targetsField == null) return;
             targetsField.trySetAccessible();
-            Object targets = targetsField.get(pipeline);
-            return targets == null ? null : targets.getClass().getMethod("getDepthTextureNoHand").invoke(targets);
+            getPipelineNullable = nullable;
+            pipelineTargetsField = targetsField;
+            getDepthTextureNoHand = targetsField.getType().getMethod("getDepthTextureNoHand");
         } catch (ReflectiveOperationException | RuntimeException exception) {
-            return null;
+            pipelineResolutionFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
         }
     }
 

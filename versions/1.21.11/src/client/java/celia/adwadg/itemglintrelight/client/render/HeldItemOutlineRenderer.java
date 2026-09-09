@@ -24,6 +24,7 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.opengl.GlDevice;
+import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTextureView;
 import com.mojang.blaze3d.systems.RenderPass;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -49,13 +50,12 @@ import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
+import org.joml.Vector3fc;
 import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL30C;
-import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
-import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Comparator;
@@ -71,11 +71,19 @@ public final class HeldItemOutlineRenderer {
     // OutlineInfo occupies 272 bytes after bloom softness was added. Uniform-buffer offsets must
     // stay aligned to 256 bytes, so each ring slot uses the next valid 512-byte stride.
     private static final int OUTLINE_UNIFORM_BYTES = 512;
+    /** Extra slack for the mask clear and depth seed beyond the composite scissor. */
+    private static final int MASK_REGION_MARGIN = 16;
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
     private static final float THIRD_PERSON_BLOOM_REFERENCE_DISTANCE = 4.0F;
+    /**
+     * Tightens the composite scissor to the item's real projected model bounds. The passes only
+     * write inside the scissor and every write outside it is a no-op, so this changes no pixel.
+     * {@code -Ditemglintrelight.itemBoundsScissor=false} restores the previous fixed-cube scissor.
+     */
+    private static final boolean ITEM_BOUNDS_SCISSOR_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("itemglintrelight.itemBoundsScissor", "true"));
     private static final CaptureState MAIN_HAND = new CaptureState();
     private static final CaptureState OFF_HAND = new CaptureState();
-    private static final CaptureState ARM_OCCLUDER = new CaptureState();
     private static final CaptureState PREVIEW = new CaptureState();
     private static final CaptureState THIRD_PERSON_MAIN_HAND = new CaptureState();
     private static final CaptureState THIRD_PERSON_OFF_HAND = new CaptureState();
@@ -101,8 +109,10 @@ public final class HeldItemOutlineRenderer {
     private static TextureTarget thirdPersonBloomSecond;
     private static TextureTarget previewBloomFirst;
     private static TextureTarget previewBloomSecond;
-    private static TextureTarget armOccluder;
-    private static boolean capturingArmOccluder;
+    // The arm occluder capture path is inert: nothing ever submits into it, so both of its
+    // samplers read one cleared texel (coverage 0, depth 1.0) exactly like the old
+    // full-screen target that was cleared to the same values every frame.
+    private static TextureTarget armOccluderPlaceholder;
     private static UniformRing uniforms = new UniformRing("itemglintrelight_outline", OUTLINE_UNIFORM_BYTES, 1024);
     // GUI blits are consumed after the current render build. Unlike the hand pass, their
     // per-item material palettes must remain valid across several rendered frames.
@@ -112,7 +122,6 @@ public final class HeldItemOutlineRenderer {
     private static long nextDiagnosticMillis;
     private static long nextPreviewDiagnosticMillis;
     private static long nextThirdPersonDepthDiagnosticMillis;
-    private static long nextIrisDepthProbeMillis;
     private static long thirdPersonCompositeSequence;
     private static String framebufferLookupFailure = "none";
     private static Object irisNoHandDepthTexture;
@@ -121,7 +130,18 @@ public final class HeldItemOutlineRenderer {
     private static String irisNoHandDepthStatus = "not_attempted";
     private static boolean storageWrapped;
     private static int handPasses;
+    /**
+     * The matrix MC passes to {@code renderItemInHand} is the camera rotation, not a projection.
+     * It is only used here as a marker that the first-person hand pass is active.
+     */
+    private static Matrix4f handPassMatrix;
+    /**
+     * The projection actually installed while the hand pass renders. GameRenderer installs it
+     * from its cached perspective buffer, which is unrelated to the renderItemInHand argument.
+     */
     private static Matrix4f handProjectionMatrix;
+    /** Level projection captured from the projection buffer; only the uniform buffer is public. */
+    private static Matrix4f levelProjectionMatrix;
 
     private HeldItemOutlineRenderer() { }
 
@@ -135,12 +155,10 @@ public final class HeldItemOutlineRenderer {
         handPasses = 0;
         MAIN_HAND.reset();
         OFF_HAND.reset();
-        ARM_OCCLUDER.reset();
         THIRD_PERSON_MAIN_HAND.reset();
         THIRD_PERSON_OFF_HAND.reset();
         recordingThirdPerson = null;
         THIRD_PERSON_CAPTURES.clear();
-        capturingArmOccluder = false;
         uniforms.beginFrame();
         blurUniforms.beginFrame();
     }
@@ -151,7 +169,7 @@ public final class HeldItemOutlineRenderer {
         if (MAIN_HAND.captured || OFF_HAND.captured) {
             return;
         }
-        handProjectionMatrix = projection == null ? null : new Matrix4f(projection);
+        handPassMatrix = projection == null ? null : new Matrix4f(projection);
         Minecraft minecraft = Minecraft.getInstance();
         if (shouldRender(minecraft) && minecraft.player != null) {
             prepareHand(InteractionHand.MAIN_HAND, minecraft.player.getMainHandItem());
@@ -171,12 +189,10 @@ public final class HeldItemOutlineRenderer {
         storageWrapped = false;
         MAIN_HAND.reset();
         OFF_HAND.reset();
-        ARM_OCCLUDER.reset();
-        capturingArmOccluder = false;
     }
 
     public static void endHandPass() {
-        handProjectionMatrix = null;
+        handPassMatrix = null;
     }
 
     public static void queuePreview(ItemStack item, float centerX, float centerY, float scale, float pitch, float yaw,
@@ -219,17 +235,35 @@ public final class HeldItemOutlineRenderer {
                 outlineScale, colorScrollScale, bloomScale, uniforms);
     }
 
-    /** GUI items use a non-resetting uniform ring so in-flight GUI blits keep their palette. */
+    /**
+     * GUI items use a non-resetting uniform ring so in-flight GUI blits keep their palette, and a
+     * caller-provided bloom chain that only depends on the mask and the config.
+     */
     public static void compositeGuiItemToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
                                                  GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
-                                                 float outlineScale, float colorScrollScale, float bloomScale) {
+                                                 float outlineScale, float colorScrollScale, float bloomScale, GpuTextureView bloom) {
         compositePreviewToTexture(minecraft, config, mask, colorTarget, depthTarget, materialPalette,
-                outlineScale, colorScrollScale, bloomScale, guiUniforms);
+                outlineScale, colorScrollScale, bloomScale, guiUniforms, bloom);
+    }
+
+    /** Renders the GUI bloom chain into caller-owned targets so it can be cached across frames. */
+    public static GpuTextureView renderGuiBloom(int width, int height, GpuTextureView mask, ItemGlintRelightConfig config,
+                                                TextureTarget first, TextureTarget second, float bloomScale) {
+        GpuSampler sampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        return renderBloomChain(width, height, mask, config, sampler, bloomScale, first, second);
     }
 
     private static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
                                                   GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
                                                   float outlineScale, float colorScrollScale, float bloomScale, UniformRing uniformRing) {
+        compositePreviewToTexture(minecraft, config, mask, colorTarget, depthTarget, materialPalette,
+                outlineScale, colorScrollScale, bloomScale, uniformRing, null);
+    }
+
+    private static void compositePreviewToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
+                                                  GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
+                                                  float outlineScale, float colorScrollScale, float bloomScale, UniformRing uniformRing,
+                                                  GpuTextureView cachedBloom) {
         if (minecraft == null || config == null || mask == null || colorTarget == null || depthTarget == null || !config.outlineEnabled()) {
             return;
         }
@@ -240,7 +274,8 @@ public final class HeldItemOutlineRenderer {
         GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
-            GpuTextureView bloom = renderPreviewBloom(width, height, mask.getColorTextureView(), config, linear, bloomScale);
+            GpuTextureView bloom = cachedBloom != null ? cachedBloom
+                    : renderPreviewBloom(width, height, mask.getColorTextureView(), config, linear, bloomScale);
             submitPreviewBloomComposite(colorTarget, bloom, mask, depthTarget, info, linear);
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
@@ -265,15 +300,24 @@ public final class HeldItemOutlineRenderer {
             previewBloomFirst.resize(width, height);
             previewBloomSecond.resize(width, height);
         }
+        return renderBloomChain(width, height, mask, config, sampler, outlineScale, previewBloomFirst, previewBloomSecond);
+    }
+
+    /**
+     * The bloom chain is a pure function of the mask and the config: it never reads the animated
+     * colours. Callers may therefore keep the result between frames.
+     */
+    private static GpuTextureView renderBloomChain(int width, int height, GpuTextureView mask, ItemGlintRelightConfig config,
+                                                   GpuSampler sampler, float outlineScale, TextureTarget first, TextureTarget second) {
         int passes = config.outlineBloomBlurPasses();
         float radius = config.outlineBloomRadius() * 3.0F * 0.4F * height / REFERENCE_RENDER_HEIGHT
                 * Math.max(0.01F, outlineScale) / (float) Math.sqrt(passes);
         GpuTextureView source = mask;
         for (int pass = 0; pass < passes; pass++) {
-            renderPreviewBloomBlur(width, height, previewBloomFirst, source, radius, 1.0F, 0.0F, config.outlineBloomQuality(), sampler, "horizontal");
-            renderPreviewBloomBlur(width, height, previewBloomSecond, previewBloomFirst.getColorTextureView(), radius, 0.0F, 1.0F,
+            renderPreviewBloomBlur(width, height, first, source, radius, 1.0F, 0.0F, config.outlineBloomQuality(), sampler, "horizontal");
+            renderPreviewBloomBlur(width, height, second, first.getColorTextureView(), radius, 0.0F, 1.0F,
                     config.outlineBloomQuality(), sampler, "vertical");
-            source = previewBloomSecond.getColorTextureView();
+            source = second.getColorTextureView();
         }
         return source;
     }
@@ -344,9 +388,10 @@ public final class HeldItemOutlineRenderer {
         PREVIEW.buffers.crumblingBufferSource().endBatch();
         previewDiagnostic("screen replay complete captured=" + PREVIEW.captured + " replayed=" + PREVIEW.replayed);
 
-        clear(sceneDepth);
+        // copyDepthFrom overwrites the whole depth attachment, so only the mask colour needs
+        // clearing here.
+        clearColor(sceneDepth);
         sceneDepth.copyDepthFrom(mainTarget);
-        clear(armOccluder);
         renderCapture(minecraft, PREVIEW);
         previewDiagnostic("mask replay complete target=" + sceneDepth.width + "x" + sceneDepth.height
                 + " projection=" + (PREVIEW.projectionType == null ? "null" : PREVIEW.projectionType));
@@ -390,16 +435,6 @@ public final class HeldItemOutlineRenderer {
         if (externalSubmissionDepth > 0) externalSubmissionDepth--;
         endHand();
     }
-
-    public static void beginArmOccluderCapture(PoseStack pose) {
-        snapshotRenderContext(ARM_OCCLUDER);
-        if (pose != null) {
-            ARM_OCCLUDER.itemPoseMatrix = new Matrix4f(pose.last().pose());
-        }
-        capturingArmOccluder = true;
-    }
-
-    public static void endArmOccluderCapture() { capturingArmOccluder = false; }
 
     public static void beginItemSubmission(ItemDisplayContext context, PoseStack pose) {
         InteractionHand hand = handForContext(context);
@@ -509,7 +544,7 @@ public final class HeldItemOutlineRenderer {
         if (!shouldRenderThirdPerson(minecraft) || original instanceof MirroringCollector || original instanceof MirroringStorage) {
             return original;
         }
-        return original instanceof SubmitNodeStorage storage ? new MirroringStorage(storage) : new MirroringCollector(original);
+        return original instanceof SubmitNodeStorage storage ? new MirroringStorage(storage, true) : new MirroringCollector(original, true);
     }
 
     /**
@@ -520,7 +555,6 @@ public final class HeldItemOutlineRenderer {
         if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty()) return;
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         ensureTarget(mainTarget);
-        clear(armOccluder);
         while (!THIRD_PERSON_CAPTURES.isEmpty()) {
             CaptureState capture = THIRD_PERSON_CAPTURES.removeFirst();
             if (!capture.captured || capture.config == null || capture.dispatcher == null || capture.buffers == null) {
@@ -533,6 +567,11 @@ public final class HeldItemOutlineRenderer {
                 // before its mask can reach the outline shader.  This is essential with Iris:
                 // its final pass owns the main target depth, whereas a blank replay target lets
                 // hidden item fragments create a silhouette unconditionally.
+                ItemGlintRelightConfig config = capture.config.copy();
+                config.setOutlineQuality(config.thirdPersonOutlineQuality());
+                config.setOutlineWidth(config.outlineWidth() * 0.5F);
+                config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * thirdPersonBloomDistanceScale(capture));
+                ScissorRect scissor = resolveThirdPersonScissor(mainTarget, capture, config);
                 boolean irisDepthReady = copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget);
                 if (!irisDepthReady && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
                     thirdPersonDepthDiagnostic(source, "iris_depth_unavailable", mainTarget, capture);
@@ -541,31 +580,26 @@ public final class HeldItemOutlineRenderer {
                 if (!irisDepthReady) {
                     thirdPersonSceneDepth.copyDepthFrom(mainTarget);
                 }
-                if (irisDepthReady) {
+                // The mask only needs clearing and seeding where the item can rasterise; the
+                // shaders never read outside that region.
+                clearMask(sceneDepth, scissor);
+                if (!irisDepthReady) {
                     // depthtex2 already contains the original third-person item. Replaying into
                     // that depth makes the item compete with itself and produces frame-to-frame
                     // z-fighting. Capture a complete private mask instead; the outline and bloom
                     // shaders below perform the authoritative per-pixel depthtex2 rejection.
-                    clear(sceneDepth);
-                } else {
-                    sceneDepth.copyDepthFrom(thirdPersonSceneDepth);
-                    clearColor(sceneDepth);
+                    copyDepthRegion(sceneDepth, thirdPersonSceneDepth, scissor);
                 }
                 thirdPersonCompositeSequence++;
                 thirdPersonDepthDiagnostic(source, "preload", mainTarget, capture);
                 renderCapture(minecraft, capture, sceneDepth);
-                irisDepthProbe(mainTarget);
                 thirdPersonDepthDiagnostic(source, "replay", mainTarget, capture);
-                ItemGlintRelightConfig config = capture.config.copy();
-                config.setOutlineQuality(config.thirdPersonOutlineQuality());
-                config.setOutlineWidth(config.outlineWidth() * 0.5F);
-                config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * thirdPersonBloomDistanceScale(capture));
                 if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && capture.materialPalette == null
                         && capture.item != null && !capture.item.isEmpty()) {
                     captureFallbackTextureColors(minecraft, capture, null);
                 }
-                submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(capture, config), "third_person", null,
-                        thirdPersonSceneDepth.getDepthTextureView());
+                submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(capture, config), "third_person",
+                        scissor, thirdPersonSceneDepth.getDepthTextureView());
                 thirdPersonDepthDiagnostic(source, "composite", mainTarget, capture);
             } finally {
                 capture.reset();
@@ -609,11 +643,10 @@ public final class HeldItemOutlineRenderer {
         }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        ensureDispatcher(minecraft, ARM_OCCLUDER);
         MAIN_HAND.storage.clear();
         OFF_HAND.storage.clear();
         storageWrapped = true;
-        return new MirroringStorage(original);
+        return new MirroringStorage(original, false);
     }
 
     public static SubmitNodeCollector wrapCollector(Minecraft minecraft, SubmitNodeCollector original) {
@@ -625,11 +658,10 @@ public final class HeldItemOutlineRenderer {
         }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        ensureDispatcher(minecraft, ARM_OCCLUDER);
         MAIN_HAND.storage.clear();
         OFF_HAND.storage.clear();
         storageWrapped = true;
-        return new MirroringCollector(original);
+        return new MirroringCollector(original, false);
     }
 
     public static void composite(Minecraft minecraft) {
@@ -644,8 +676,6 @@ public final class HeldItemOutlineRenderer {
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         ensureTarget(mainTarget);
         try {
-            clear(armOccluder);
-            renderCapture(minecraft, ARM_OCCLUDER, armOccluder);
             if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
                 captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
                 captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
@@ -662,21 +692,22 @@ public final class HeldItemOutlineRenderer {
         if (!state.captured) {
             return;
         }
-        clear(sceneDepth);
-        sceneDepth.copyDepthFrom(mainTarget);
-        renderCapture(minecraft, state);
         ItemGlintRelightConfig config = state.config == null ? ItemGlintRelightConfigManager.get() : state.config;
-        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(state, config), hand, resolveCompositeScissor(mainTarget, state));
+        ScissorRect scissor = resolveCompositeScissor(mainTarget, state);
+        clearMask(sceneDepth, scissor);
+        copyDepthRegion(sceneDepth, mainTarget, scissor);
+        renderCapture(minecraft, state);
+        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(state, config), hand, scissor);
     }
 
     private static void compositeCombined(Minecraft minecraft, RenderTarget mainTarget) {
-        clear(sceneDepth);
-        sceneDepth.copyDepthFrom(mainTarget);
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        ScissorRect scissor = ScissorRect.union(resolveCompositeScissor(mainTarget, MAIN_HAND), resolveCompositeScissor(mainTarget, OFF_HAND));
+        clearMask(sceneDepth, scissor);
+        copyDepthRegion(sceneDepth, mainTarget, scissor);
         renderCapture(minecraft, MAIN_HAND);
         renderCapture(minecraft, OFF_HAND);
-        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
-        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(MAIN_HAND, config), "combined",
-                ScissorRect.union(resolveCompositeScissor(mainTarget, MAIN_HAND), resolveCompositeScissor(mainTarget, OFF_HAND)));
+        submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(MAIN_HAND, config), "combined", scissor);
     }
 
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette, String hand, ScissorRect scissor) {
@@ -708,8 +739,8 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), maskSampler);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
-            pass.bindTexture("ArmOccluderSampler", armOccluder.getColorTextureView(), maskSampler);
-            pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
+            pass.bindTexture("ArmOccluderSampler", armOccluderPlaceholder.getColorTextureView(), maskSampler);
+            pass.bindTexture("ArmOccluderDepthSampler", armOccluderPlaceholder.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
             diagnostic("composite " + hand + " submitted target=" + mainTarget.width + "x" + mainTarget.height
                     + " radius=" + resolveOutlineRadius(mainTarget, config));
@@ -753,10 +784,104 @@ public final class HeldItemOutlineRenderer {
         return true;
     }
 
+    /** Installed by the hand projection-buffer mixin with the matrix the hand pass renders with. */
+    public static void captureHandProjection(Matrix4f projection) {
+        if (projection == null) {
+            return;
+        }
+        if (handProjectionMatrix == null) {
+            handProjectionMatrix = new Matrix4f(projection);
+        } else {
+            handProjectionMatrix.set(projection);
+        }
+    }
+
+    /** Installed by the projection-buffer mixin once per frame with the level projection. */
+    public static void captureLevelProjection(Matrix4f projection) {
+        if (projection == null) {
+            return;
+        }
+        if (levelProjectionMatrix == null) {
+            levelProjectionMatrix = new Matrix4f(projection);
+        } else {
+            levelProjectionMatrix.set(projection);
+        }
+    }
+
+    /**
+     * Accumulates the item's model-space extent, transformed exactly like its vertices, so the
+     * composite scissor can cover the real silhouette instead of a fixed cube.
+     */
+    private static void accumulateItemBounds(CaptureState capture, PoseStack pose, List<BakedQuad> quads) {
+        if (!ITEM_BOUNDS_SCISSOR_ENABLED || capture == null || quads == null || quads.isEmpty()) {
+            return;
+        }
+        float minX = Float.POSITIVE_INFINITY;
+        float minY = Float.POSITIVE_INFINITY;
+        float minZ = Float.POSITIVE_INFINITY;
+        float maxX = Float.NEGATIVE_INFINITY;
+        float maxY = Float.NEGATIVE_INFINITY;
+        float maxZ = Float.NEGATIVE_INFINITY;
+        for (BakedQuad quad : quads) {
+            if (quad == null) {
+                continue;
+            }
+            for (int index = 0; index < 4; index++) {
+                Vector3fc position = quad.position(index);
+                minX = Math.min(minX, position.x());
+                minY = Math.min(minY, position.y());
+                minZ = Math.min(minZ, position.z());
+                maxX = Math.max(maxX, position.x());
+                maxY = Math.max(maxY, position.y());
+                maxZ = Math.max(maxZ, position.z());
+            }
+        }
+        if (!Float.isFinite(minX) || !Float.isFinite(maxX)) {
+            return;
+        }
+        // The renderer's own transform is ModelViewMat * pose, so accumulate the bounds in
+        // exactly that space and let the capture's projection finish the job.
+        Matrix4f modelToView = capture.modelViewMatrix != null
+                ? new Matrix4f(capture.modelViewMatrix) : new Matrix4f(RenderSystem.getModelViewMatrix());
+        if (pose != null) {
+            modelToView.mul(pose.last().pose());
+        }
+        // Inflate slightly so tiny pose/quad discrepancies can never clip the outline.
+        float inflateX = (maxX - minX) * 0.06F + 0.05F;
+        float inflateY = (maxY - minY) * 0.06F + 0.05F;
+        float inflateZ = (maxZ - minZ) * 0.06F + 0.05F;
+        minX -= inflateX;
+        maxX += inflateX;
+        minY -= inflateY;
+        maxY += inflateY;
+        minZ -= inflateZ;
+        maxZ += inflateZ;
+        Vector4f corner = new Vector4f();
+        for (int index = 0; index < 8; index++) {
+            corner.set((index & 1) == 0 ? minX : maxX, (index & 2) == 0 ? minY : maxY,
+                    (index & 4) == 0 ? minZ : maxZ, 1.0F).mul(modelToView);
+            if (capture.itemBounds == null) {
+                capture.itemBounds = new float[]{corner.x, corner.y, corner.z, corner.x, corner.y, corner.z};
+            } else {
+                float[] bounds = capture.itemBounds;
+                bounds[0] = Math.min(bounds[0], corner.x);
+                bounds[1] = Math.min(bounds[1], corner.y);
+                bounds[2] = Math.min(bounds[2], corner.z);
+                bounds[3] = Math.max(bounds[3], corner.x);
+                bounds[4] = Math.max(bounds[4], corner.y);
+                bounds[5] = Math.max(bounds[5], corner.z);
+            }
+        }
+    }
+
     private static void snapshotRenderContext(CaptureState state) {
         state.modelViewMatrix = new Matrix4f(RenderSystem.getModelViewMatrix());
         state.projectionMatrix = RenderSystem.getProjectionMatrixBuffer();
         state.projectionType = RenderSystem.getProjectionType();
+        // The hand pass and the world pass use different projections; record the one that is
+        // actually installed so the scissor can project the captured bounds correctly.
+        Matrix4f active = handPassMatrix != null ? handProjectionMatrix : levelProjectionMatrix;
+        state.projectionMatrix4f = active == null ? null : new Matrix4f(active);
     }
 
     private static CaptureState stateFor(InteractionHand hand) {
@@ -799,11 +924,6 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static SubmitNodeCollection captureCollection(int order, InteractionHand directHand) {
-        if (capturingArmOccluder) {
-            if (ARM_OCCLUDER.storage == null) return null;
-            ARM_OCCLUDER.captured = true;
-            return ARM_OCCLUDER.storage.order(order);
-        }
         if (recordingThirdPerson != null && recordingThirdPerson.requested && recordingThirdPerson.storage != null) {
             recordingThirdPerson.captured = true;
             recordingThirdPerson.submittedItems++;
@@ -849,8 +969,11 @@ public final class HeldItemOutlineRenderer {
             thirdPersonBloomSeed = new TextureTarget("itemglintrelight_third_person_bloom_seed", mainTarget.width, mainTarget.height, false);
             thirdPersonBloomFirst = new TextureTarget("itemglintrelight_third_person_bloom_first", mainTarget.width, mainTarget.height, false);
             thirdPersonBloomSecond = new TextureTarget("itemglintrelight_third_person_bloom_second", mainTarget.width, mainTarget.height, false);
-            armOccluder = new TextureTarget("itemglintrelight_hand_arm_occluder", mainTarget.width, mainTarget.height, true);
             thirdPersonSceneDepth = new TextureTarget("itemglintrelight_third_person_scene_depth", mainTarget.width, mainTarget.height, true);
+            // Inert 1x1 stand-in for the unused arm-occluder samplers: coverage 0 and depth 1.0,
+            // which is exactly what the cleared full-screen target used to supply every frame.
+            armOccluderPlaceholder = new TextureTarget("itemglintrelight_arm_occluder_placeholder", 1, 1, true);
+            clear(armOccluderPlaceholder);
         } else if (sceneDepth.width != mainTarget.width || sceneDepth.height != mainTarget.height) {
             sceneDepth.resize(mainTarget.width, mainTarget.height);
             bloomFirst.resize(mainTarget.width, mainTarget.height);
@@ -858,7 +981,6 @@ public final class HeldItemOutlineRenderer {
             thirdPersonBloomSeed.resize(mainTarget.width, mainTarget.height);
             thirdPersonBloomFirst.resize(mainTarget.width, mainTarget.height);
             thirdPersonBloomSecond.resize(mainTarget.width, mainTarget.height);
-            armOccluder.resize(mainTarget.width, mainTarget.height);
             thirdPersonSceneDepth.resize(mainTarget.width, mainTarget.height);
         }
     }
@@ -1017,6 +1139,63 @@ public final class HeldItemOutlineRenderer {
     private static void clear(TextureTarget target) {
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
                 target.getColorTexture(), 0, target.getDepthTexture(), 1.0D);
+    }
+
+    /**
+     * Clears colour and depth only inside the composite region. Everything the mask feeds is read
+     * from inside that region, so the rest of the target may keep stale content.
+     */
+    private static void clearMask(TextureTarget target, ScissorRect scissor) {
+        var encoder = RenderSystem.getDevice().createCommandEncoder();
+        if (scissor == null) {
+            encoder.clearColorAndDepthTextures(target.getColorTexture(), 0, target.getDepthTexture(), 1.0D);
+            return;
+        }
+        ScissorRect region = scissor.expanded(MASK_REGION_MARGIN, target.width, target.height);
+        encoder.clearColorAndDepthTextures(target.getColorTexture(), 0, target.getDepthTexture(), 1.0D,
+                region.x(), region.y(), region.width(), region.height());
+    }
+
+    /** Seeds the replay depth only where the item can rasterise; falls back to a full copy. */
+    private static void copyDepthRegion(TextureTarget destination, RenderTarget source, ScissorRect scissor) {
+        if (scissor == null
+                || !blitDepthRegion(source, destination,
+                scissor.expanded(MASK_REGION_MARGIN, destination.width, destination.height))) {
+            destination.copyDepthFrom(source);
+        }
+    }
+
+    /**
+     * RenderTarget.copyDepthFrom always blits the full extent. The item's fragments only exist
+     * inside the composite region, so a region blit is equivalent and avoids a full-frame depth
+     * read plus write. The depth blit is not affected by the scissor test.
+     */
+    private static boolean blitDepthRegion(RenderTarget source, TextureTarget destination, ScissorRect scissor) {
+        int sourceFramebuffer = framebufferId(source);
+        int destinationFramebuffer = framebufferId(destination);
+        if (sourceFramebuffer <= 0 || destinationFramebuffer <= 0) {
+            return false;
+        }
+        int previous = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
+        try {
+            // Blits ignore the scissor test, but MC's own texture copy clears it first; keep the
+            // state identical to the engine path.
+            GlStateManager._disableScissorTest();
+            int x0 = scissor.x();
+            int y0 = scissor.y();
+            int x1 = x0 + scissor.width();
+            int y1 = y0 + scissor.height();
+            GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, sourceFramebuffer);
+            GL30C.glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, destinationFramebuffer);
+            GL30C.glBlitFramebuffer(x0, y0, x1, y1, x0, y0, x1, y1,
+                    GL30C.GL_DEPTH_BUFFER_BIT, GL11C.GL_NEAREST);
+            return GL11C.glGetError() == GL11C.GL_NO_ERROR;
+        } catch (RuntimeException exception) {
+            framebufferLookupFailure = "depthRegionBlit=" + exception.getClass().getSimpleName() + ":" + exception.getMessage();
+            return false;
+        } finally {
+            GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, previous);
+        }
     }
 
     private static void clearColor(TextureTarget target) {
@@ -1349,48 +1528,81 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static ScissorRect resolveCompositeScissor(RenderTarget target, CaptureState state) {
-        if (!state.captured || state.externalSubmission || handProjectionMatrix == null || (state.itemPoseMatrix == null && state.modelViewMatrix == null)) {
+        if (!state.captured || state.externalSubmission || handPassMatrix == null || state.projectionMatrix4f == null) {
             return null;
         }
-        Matrix4f itemTransform = state.itemPoseMatrix == null ? state.modelViewMatrix : state.itemPoseMatrix;
-        if (itemTransform == null) {
-            return null;
-        }
-        Matrix4f transform = new Matrix4f(handProjectionMatrix).mul(itemTransform);
-        float minX = Float.POSITIVE_INFINITY;
-        float minY = Float.POSITIVE_INFINITY;
-        float maxX = Float.NEGATIVE_INFINITY;
-        float maxY = Float.NEGATIVE_INFINITY;
-        float[] bounds = new float[]{-1.1F, 0.5F, 2.1F};
-        for (float x : bounds) {
-            for (float y : bounds) {
-                for (float z : bounds) {
-                    Vector4f clip = transform.transform(new Vector4f(x, y, z, 1.0F));
-                    if (!Float.isFinite(clip.w) || Math.abs(clip.w) < 0.0001F) {
-                        continue;
-                    }
-                    float projectedX = clip.x / clip.w;
-                    float projectedY = clip.y / clip.w;
-                    if (!Float.isFinite(projectedX) || !Float.isFinite(projectedY)) {
-                        continue;
-                    }
-                    minX = Math.min(minX, projectedX);
-                    minY = Math.min(minY, projectedY);
-                    maxX = Math.max(maxX, projectedX);
-                    maxY = Math.max(maxY, projectedY);
-                }
-            }
-        }
-        if (!Float.isFinite(minX) || !Float.isFinite(minY) || !Float.isFinite(maxX) || !Float.isFinite(maxY)) {
-            return null;
-        }
-        int x0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, minX)) * 0.5F + 0.5F) * target.width);
-        int y0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, minY)) * 0.5F + 0.5F) * target.height);
-        int x1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxX)) * 0.5F + 0.5F) * target.width);
-        int y1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxY)) * 0.5F + 0.5F) * target.height);
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
         int padding = (int) Math.ceil(resolveCompositePadding(target, config));
-        return ScissorRect.fromCorners(x0 - padding, y0 - padding, x1 + padding, y1 + padding, target.width, target.height);
+        float[] itemBounds = state.itemBounds;
+        if (itemBounds != null) {
+            // Bounds were accumulated as ModelViewMat * pose, i.e. in the same view space the
+            // replay renders in, so the capture's own projection finishes the transform.
+            return projectBounds(target, state.projectionMatrix4f, itemBounds[0], itemBounds[1], itemBounds[2],
+                    itemBounds[3], itemBounds[4], itemBounds[5], padding);
+        }
+        if (state.itemPoseMatrix == null || state.modelViewMatrix == null) {
+            return null;
+        }
+        // Fallback for items submitted as models (BEWLR) with no quad bounds.
+        Matrix4f transform = new Matrix4f(state.projectionMatrix4f).mul(state.modelViewMatrix).mul(state.itemPoseMatrix);
+        return projectBounds(target, transform, -1.1F, -1.1F, -1.1F, 2.1F, 2.1F, 2.1F, padding);
+    }
+
+    /**
+     * Third-person captures are submitted while the level projection is installed, so the scissor
+     * has to be derived from the captured level matrix. The passes only write where the mask or
+     * the bloom actually reaches; outside that every write is a no-op, so limiting the scissor
+     * to the item's projected bounds changes no pixel.
+     */
+    private static ScissorRect resolveThirdPersonScissor(RenderTarget target, CaptureState state, ItemGlintRelightConfig config) {
+        float[] itemBounds = state.itemBounds;
+        if (!ITEM_BOUNDS_SCISSOR_ENABLED || !state.captured || itemBounds == null || state.projectionMatrix4f == null) {
+            return null;
+        }
+        int padding = (int) Math.ceil(resolveCompositePadding(target, config)) + 4;
+        return projectBounds(target, state.projectionMatrix4f, itemBounds[0], itemBounds[1], itemBounds[2],
+                itemBounds[3], itemBounds[4], itemBounds[5], padding);
+    }
+
+    private static ScissorRect projectBounds(RenderTarget target, Matrix4f projection, float minX, float minY, float minZ,
+                                             float maxX, float maxY, float maxZ, int padding) {
+        float projectedMinX = Float.POSITIVE_INFINITY;
+        float projectedMinY = Float.POSITIVE_INFINITY;
+        float projectedMaxX = Float.NEGATIVE_INFINITY;
+        float projectedMaxY = Float.NEGATIVE_INFINITY;
+        Vector4f clip = new Vector4f();
+        for (int index = 0; index < 8; index++) {
+            clip.set((index & 1) == 0 ? minX : maxX, (index & 2) == 0 ? minY : maxY,
+                    (index & 4) == 0 ? minZ : maxZ, 1.0F).mul(projection);
+            // A corner at or behind the eye plane makes the projection meaningless; keep the
+            // previous full-target behaviour instead of guessing a rect.
+            if (!Float.isFinite(clip.w) || clip.w <= 0.0001F) {
+                return null;
+            }
+            float x = clip.x / clip.w;
+            float y = clip.y / clip.w;
+            if (!Float.isFinite(x) || !Float.isFinite(y)) {
+                return null;
+            }
+            projectedMinX = Math.min(projectedMinX, x);
+            projectedMinY = Math.min(projectedMinY, y);
+            projectedMaxX = Math.max(projectedMaxX, x);
+            projectedMaxY = Math.max(projectedMaxY, y);
+        }
+        if (!Float.isFinite(projectedMinX) || !Float.isFinite(projectedMinY)
+                || !Float.isFinite(projectedMaxX) || !Float.isFinite(projectedMaxY)) {
+            return null;
+        }
+        int x0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, projectedMinX)) * 0.5F + 0.5F) * target.width);
+        int y0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, projectedMinY)) * 0.5F + 0.5F) * target.height);
+        int x1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, projectedMaxX)) * 0.5F + 0.5F) * target.width);
+        int y1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, projectedMaxY)) * 0.5F + 0.5F) * target.height);
+        // 10% relative margin on top of the absolute padding absorbs any residual mismatch
+        // between the accumulated bounds and the exact vertex transform.
+        int marginX = (int) ((x1 - x0) * 0.1F);
+        int marginY = (int) ((y1 - y0) * 0.1F);
+        return ScissorRect.fromCorners(x0 - padding - marginX, y0 - padding - marginY,
+                x1 + padding + marginX, y1 + padding + marginY, target.width, target.height);
     }
 
     private static float resolveCompositePadding(RenderTarget target, ItemGlintRelightConfig config) {
@@ -1426,6 +1638,18 @@ public final class HeldItemOutlineRenderer {
     }
 
     private record ScissorRect(int x, int y, int width, int height) {
+        /**
+         * Grows the rect for the mask clear/seed. These are strictly wider than the composite
+         * scissor so a slightly tight composite can never leave stale mask content behind.
+         */
+        private ScissorRect expanded(int margin, int maxWidth, int maxHeight) {
+            int x0 = Math.max(0, x - margin);
+            int y0 = Math.max(0, y - margin);
+            int x1 = Math.min(maxWidth, x + width + margin);
+            int y1 = Math.min(maxHeight, y + height + margin);
+            return x1 > x0 && y1 > y0 ? new ScissorRect(x0, y0, x1 - x0, y1 - y0) : this;
+        }
+
         private static ScissorRect fromCorners(int x0, int y0, int x1, int y1, int maxWidth, int maxHeight) {
             int minimumX = Math.max(0, Math.min(maxWidth, Math.min(x0, x1)));
             int minimumY = Math.max(0, Math.min(maxHeight, Math.min(y0, y1)));
@@ -1505,146 +1729,6 @@ public final class HeldItemOutlineRenderer {
                 capture.submittedItems,
                 capture.renderTypes
         );
-    }
-
-    /**
-     * Iris replaces the world render pipeline but still exposes the final scene depth through
-     * the main target. Read all three depth surfaces after the replay once per second.
-     * The resulting counts distinguish a bad depth copy, a replay that ignores its depth
-     * attachment, and a later screen-space comparison error without changing render state.
-     */
-    private static void irisDepthProbe(RenderTarget mainTarget) {
-        if (!HeldItemOutlineCompat.isIrisShaderPackRendering()) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        if (now < nextIrisDepthProbeMillis) {
-            return;
-        }
-        nextIrisDepthProbeMillis = now + 1000L;
-
-        final float epsilon = 0.00015F;
-        int previousFramebuffer = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
-        try {
-            GL11C.glGetError(); // Clear an error left by unrelated render work before this probe.
-            float[] mainDepth = readDepth(mainTarget);
-            float[] snapshotDepth = readDepth(thirdPersonSceneDepth);
-            float[] replayDepth = readDepth(sceneDepth);
-            float[] replayMask = readAlpha(sceneDepth);
-            if (mainDepth == null || snapshotDepth == null || replayDepth == null || replayMask == null) {
-                ItemGlintRelight.LOGGER.warn(
-                        "[IrisThirdPersonDepthProbe] frame={} seq={} readbackFailed main={} snapshot={} replayDepth={} replayMask={} irisNoHand={} irisNoHandStatus={} fboLookup={} glError=0x{}",
-                        frameNumber, thirdPersonCompositeSequence, mainDepth != null, snapshotDepth != null,
-                        replayDepth != null, replayMask != null, irisNoHandDepthReady, irisNoHandDepthStatus,
-                        framebufferLookupFailure, Integer.toHexString(GL11C.glGetError()));
-                return;
-            }
-
-            int sampled = mainDepth.length;
-            int snapshotMismatch = 0;
-            int maskPixels = 0;
-            int visibleMaskPixels = 0;
-            int occludedMaskPixels = 0;
-            int replayDepthMismatch = 0;
-            float maxSnapshotDelta = 0.0F;
-            float maxReplayDelta = 0.0F;
-            float nearestVisibleItemDepth = 1.0F;
-            float nearestOccludedItemDepth = 1.0F;
-            for (int index = 0; index < sampled; index++) {
-                float main = mainDepth[index];
-                float snapshot = snapshotDepth[index];
-                float replay = replayDepth[index];
-                float mask = replayMask[index];
-                float snapshotDelta = Math.abs(main - snapshot);
-                maxSnapshotDelta = Math.max(maxSnapshotDelta, snapshotDelta);
-                if (snapshotDelta > epsilon) {
-                    snapshotMismatch++;
-                }
-                if (mask <= 0.01F) {
-                    continue;
-                }
-                maskPixels++;
-                float replayDelta = Math.abs(main - replay);
-                maxReplayDelta = Math.max(maxReplayDelta, replayDelta);
-                if (replayDelta > epsilon) {
-                    replayDepthMismatch++;
-                }
-                if (main + epsilon < replay) {
-                    occludedMaskPixels++;
-                    nearestOccludedItemDepth = Math.min(nearestOccludedItemDepth, replay);
-                } else {
-                    visibleMaskPixels++;
-                    nearestVisibleItemDepth = Math.min(nearestVisibleItemDepth, replay);
-                }
-            }
-
-            ItemGlintRelight.LOGGER.info(
-                    "[IrisThirdPersonDepthProbe] frame={} seq={} target={}x{} samples={} copyMismatch={}/{} copyMaxDelta={} "
-                            + "mask={} visibleMask={} occludedMask={} replayVsSceneMismatch={} replayMaxDelta={} "
-                            + "nearestVisibleItem={} nearestOccludedItem={} boundBefore={} fb(main/snapshot/replay)={}/{}/{} "
-                            + "status(main/snapshot/replay)=0x{}/0x{}/0x{} depth(main/snapshot/replay)={}/{}/{} glError=0x{}",
-                    frameNumber, thirdPersonCompositeSequence, mainTarget.width, mainTarget.height, sampled,
-                    snapshotMismatch, sampled, maxSnapshotDelta,
-                    maskPixels, visibleMaskPixels, occludedMaskPixels, replayDepthMismatch, maxReplayDelta,
-                    nearestVisibleItemDepth, nearestOccludedItemDepth,
-                    previousFramebuffer,
-                    framebufferId(mainTarget), framebufferId(thirdPersonSceneDepth), framebufferId(sceneDepth),
-                    framebufferStatus(mainTarget), framebufferStatus(thirdPersonSceneDepth), framebufferStatus(sceneDepth),
-                    depthDescription(mainTarget), depthDescription(thirdPersonSceneDepth), depthDescription(sceneDepth),
-                    Integer.toHexString(GL11C.glGetError()));
-        } catch (RuntimeException exception) {
-            ItemGlintRelight.LOGGER.warn("[IrisThirdPersonDepthProbe] frame={} seq={} probeFailed", frameNumber,
-                    thirdPersonCompositeSequence, exception);
-        } finally {
-            GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, previousFramebuffer);
-        }
-    }
-
-    private static float[] readDepth(RenderTarget target) {
-        int framebuffer = framebufferId(target);
-        if (framebuffer <= 0) {
-            return null;
-        }
-        GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
-        int pixels = target.width * target.height;
-        FloatBuffer data = MemoryUtil.memAllocFloat(pixels);
-        try {
-            GL11C.glReadPixels(0, 0, target.width, target.height, GL11C.GL_DEPTH_COMPONENT, GL11C.GL_FLOAT, data);
-            float[] result = new float[pixels];
-            data.get(result);
-            return result;
-        } finally {
-            MemoryUtil.memFree(data);
-        }
-    }
-
-    private static float[] readAlpha(TextureTarget target) {
-        int framebuffer = framebufferId(target);
-        if (framebuffer <= 0) {
-            return null;
-        }
-        GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
-        int pixels = target.width * target.height;
-        FloatBuffer data = MemoryUtil.memAllocFloat(pixels * 4);
-        try {
-            GL11C.glReadPixels(0, 0, target.width, target.height, GL11C.GL_RGBA, GL11C.GL_FLOAT, data);
-            float[] result = new float[pixels];
-            for (int index = 0; index < result.length; index++) {
-                result[index] = data.get(index * 4 + 3);
-            }
-            return result;
-        } finally {
-            MemoryUtil.memFree(data);
-        }
-    }
-
-    private static int framebufferStatus(RenderTarget target) {
-        int framebuffer = framebufferId(target);
-        if (framebuffer <= 0) {
-            return 0;
-        }
-        GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
-        return GL30C.glCheckFramebufferStatus(GL30C.GL_FRAMEBUFFER);
     }
 
     private static int framebufferId(RenderTarget target) {
@@ -1758,8 +1842,12 @@ public final class HeldItemOutlineRenderer {
         private String disabledStack = "-";
         private Matrix4f modelViewMatrix;
         private Matrix4f itemPoseMatrix;
+        /** View-space model bounds of the submitted item: minX, minY, minZ, maxX, maxY, maxZ. */
+        private float[] itemBounds;
         private GpuBufferSlice projectionMatrix;
         private ProjectionType projectionType;
+        /** Projection active for this capture's pass; turns the view-space bounds into clip space. */
+        private Matrix4f projectionMatrix4f;
         private boolean externalSubmission;
 
         private void reset() {
@@ -1778,8 +1866,10 @@ public final class HeldItemOutlineRenderer {
             disabledStack = "-";
             modelViewMatrix = null;
             itemPoseMatrix = null;
+            itemBounds = null;
             projectionMatrix = null;
             projectionType = null;
+            projectionMatrix4f = null;
             externalSubmission = false;
             if (storage != null) storage.clear();
         }
@@ -1795,12 +1885,19 @@ public final class HeldItemOutlineRenderer {
 
     private static final class MirroringCollector implements SubmitNodeCollector {
         private final SubmitNodeCollector delegate;
+        private final boolean thirdPersonOnly;
 
-        private MirroringCollector(SubmitNodeCollector delegate) {
+        private MirroringCollector(SubmitNodeCollector delegate, boolean thirdPersonOnly) {
             this.delegate = delegate;
+            this.thirdPersonOnly = thirdPersonOnly;
         }
 
-        @Override public OrderedSubmitNodeCollector order(int order) { return new MirroringOrderedCollector(delegate.order(order), order); }
+        @Override public OrderedSubmitNodeCollector order(int order) {
+            OrderedSubmitNodeCollector ordered = delegate.order(order);
+            // Third-person wrapping covers every player's arm, but only the local player's is ever
+            // captured: skip the wrapper (and its allocations) for everyone else.
+            return thirdPersonOnly && recordingThirdPerson == null ? ordered : new MirroringOrderedCollector(ordered, order);
+        }
         @Override public void submitShadow(PoseStack pose, float radius, java.util.List<net.minecraft.client.renderer.entity.state.EntityRenderState.ShadowPiece> pieces) { delegate.submitShadow(pose, radius, pieces); }
         @Override public void submitNameTag(PoseStack pose, net.minecraft.world.phys.Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, double scale, net.minecraft.client.renderer.state.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, scale, camera); }
         @Override public void submitText(PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
@@ -1845,6 +1942,7 @@ public final class HeldItemOutlineRenderer {
         if (isThirdPersonContext(context) && recordingThirdPerson != null) {
             recordingThirdPerson.renderTypes.add(String.valueOf(type));
             recordingThirdPerson.itemPoseMatrix = new Matrix4f(pose.last().pose());
+            accumulateItemBounds(recordingThirdPerson, pose, quads);
             if (recordingThirdPerson.config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
                 captureTextureColors(recordingThirdPerson, quads, tints);
             }
@@ -1858,6 +1956,9 @@ public final class HeldItemOutlineRenderer {
         if (hand != null) {
             CaptureState state = stateFor(hand);
             state.itemPoseMatrix = new Matrix4f(pose.last().pose());
+            if (state.requested) {
+                accumulateItemBounds(state, pose, quads);
+            }
         }
         if (ItemGlintRelightConfigManager.get().outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && hand != null) {
             captureTextureColors(stateFor(hand), quads, tints);
@@ -1868,14 +1969,19 @@ public final class HeldItemOutlineRenderer {
 
     private static final class MirroringStorage extends SubmitNodeStorage {
         private final SubmitNodeStorage delegate;
+        private final boolean thirdPersonOnly;
 
-        private MirroringStorage(SubmitNodeStorage delegate) {
+        private MirroringStorage(SubmitNodeStorage delegate, boolean thirdPersonOnly) {
             this.delegate = delegate;
+            this.thirdPersonOnly = thirdPersonOnly;
         }
 
         @Override
         public SubmitNodeCollection order(int order) {
-            return new MirroringCollection(delegate.order(order), order);
+            SubmitNodeCollection collection = delegate.order(order);
+            // See MirroringCollector.order. The first-person hand pass always wraps (thirdPersonOnly
+            // is false), so its capture path is untouched by this gate.
+            return thirdPersonOnly && recordingThirdPerson == null ? collection : new MirroringCollection(collection, order);
         }
 
         @Override public void clear() { delegate.clear(); }

@@ -19,7 +19,9 @@
     "GuiRendererItemOutlineMixin",
     "GameRendererFrameMixin",
     "PlayerItemInHandLayerMixin",
-    "ItemInHandRendererMixin"
+    "ItemInHandRendererMixin",
+    "PerspectiveProjectionMatrixBufferMixin",
+    "CachedPerspectiveProjectionMatrixBufferMixin"
   ],
   "injectors": {
     "defaultRequire": 1
