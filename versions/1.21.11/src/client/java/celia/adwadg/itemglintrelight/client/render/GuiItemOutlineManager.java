@@ -122,8 +122,9 @@ public final class GuiItemOutlineManager {
         // shares entries, but a GUI capture must never observe a later cache replacement.
         float[][] palette = config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE
                 ? copyPalette(materialPalette(stack, config)) : UNIT_PALETTE;
-        // The signature is built once here and reused by the mask/output keys in submit().
-        Capture previous = CAPTURES.put(state, new Capture(stack.copy(), config.copy(), palette, stack.toString()));
+        // The full stack identity (item + count + components) is built once here and reused by
+        // the mask/output/palette keys; ItemStack.toString() would drop every component.
+        Capture previous = CAPTURES.put(state, new Capture(stack.copy(), config.copy(), palette, ItemStackKey.of(stack)));
         if (previous != null && config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
             trace("CAPTURE_REPLACED", "frame={} state={} oldItem={} oldPalette={} newItem={} newPalette={} tooltipDepth={}",
                     frameIndex, System.identityHashCode(state), previous.stack().getItem(), paletteHash(previous.materialPalette()),
@@ -159,9 +160,9 @@ public final class GuiItemOutlineManager {
         int maskWidth = outputRect.width() * precision;
         int maskHeight = outputRect.height() * precision;
         boolean cacheableMask = !trackingState.isAnimated();
-        String signature = capture.signature();
-        MaskKey maskKey = new MaskKey(signature, maskWidth, maskHeight, precision);
-        OutputKey outputKey = new OutputKey(signature, itemState.x(), itemState.y(),
+        ItemStackKey stackKey = capture.key();
+        MaskKey maskKey = new MaskKey(stackKey, maskWidth, maskHeight, precision);
+        OutputKey outputKey = new OutputKey(stackKey, itemState.x(), itemState.y(),
                 outputRect.width() * precision, outputRect.height() * precision,
                 textureSampleIdentity(capture));
         CachedOutput cachedOutput = cachedOutput(outputKey);
@@ -459,7 +460,7 @@ public final class GuiItemOutlineManager {
         if (config.outlineColorMode() != celia.adwadg.itemglintrelight.config.OutlineColorMode.TEXTURE_SAMPLE) {
             return HeldItemOutlineRenderer.resolveGuiMaterialPalette(Minecraft.getInstance(), stack, config);
         }
-        PaletteKey key = new PaletteKey(stack.toString(), config.outlineSampleSize(), config.outlineSampleColorCount());
+        PaletteKey key = new PaletteKey(ItemStackKey.of(stack), config.outlineSampleSize(), config.outlineSampleColorCount());
         float[][] palette = MATERIAL_PALETTES.get(key);
         if (palette == null) {
             palette = HeldItemOutlineRenderer.resolveGuiMaterialPalette(Minecraft.getInstance(), stack, config);
@@ -468,10 +469,10 @@ public final class GuiItemOutlineManager {
         return palette;
     }
 
-    private record Capture(ItemStack stack, ItemGlintRelightConfig config, float[][] materialPalette, String signature) { }
-    private record PaletteKey(String stackSignature, int sampleSize, int colorCount) { }
-    private record MaskKey(String stackSignature, int width, int height, int precision) { }
-    private record OutputKey(String stackSignature, int x, int y, int width, int height, String textureSampleIdentity) { }
+    private record Capture(ItemStack stack, ItemGlintRelightConfig config, float[][] materialPalette, ItemStackKey key) { }
+    private record PaletteKey(ItemStackKey stack, int sampleSize, int colorCount) { }
+    private record MaskKey(ItemStackKey stack, int width, int height, int precision) { }
+    private record OutputKey(ItemStackKey stack, int x, int y, int width, int height, String textureSampleIdentity) { }
     private record CachedMask(TextureTarget target, long builtFrame) { }
     private static final class CachedOutput {
         private final TextureTarget[] targets = new TextureTarget[OUTPUT_TARGET_HISTORY];

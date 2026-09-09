@@ -89,9 +89,14 @@ public final class HeldItemOutlineRenderer {
     private static final CaptureState THIRD_PERSON_OFF_HAND = new CaptureState();
     private static final Deque<CaptureState> THIRD_PERSON_CAPTURES = new ArrayDeque<>();
     private static PreviewRequest queuedPreview;
-    private static final Map<String, float[][]> MATERIAL_PALETTE_CACHE = new LinkedHashMap<>(128, 0.75F, true) {
+    /**
+     * Keyed by the full stack identity (item, count and components). {@code ItemStack.toString()}
+     * drops every component, so potions, dyed leather, charged crossbows and custom_model_data
+     * items used to share one sampled palette.
+     */
+    private static final Map<PaletteCacheKey, float[][]> MATERIAL_PALETTE_CACHE = new LinkedHashMap<>(128, 0.75F, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, float[][]> eldest) {
+        protected boolean removeEldestEntry(Map.Entry<PaletteCacheKey, float[][]> eldest) {
             return size() > 128;
         }
     };
@@ -1507,9 +1512,9 @@ public final class HeldItemOutlineRenderer {
         return palette;
     }
 
-    private static String materialPaletteKey(ItemStack stack) {
+    private static PaletteCacheKey materialPaletteKey(ItemStack stack) {
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
-        return stack + "|" + config.outlineSampleSize() + "|" + config.outlineSampleColorCount();
+        return new PaletteCacheKey(ItemStackKey.of(stack), config.outlineSampleSize(), config.outlineSampleColorCount());
     }
 
     private static void cacheMaterialPalette(CaptureState state) {
@@ -1881,7 +1886,7 @@ public final class HeldItemOutlineRenderer {
         private final Set<String> renderTypes = new LinkedHashSet<>();
         private final Map<Integer, Integer> materialColors = new LinkedHashMap<>();
         private float[][] materialPalette;
-        private String materialPaletteKey;
+        private PaletteCacheKey materialPaletteKey;
         private String stack = "-";
         private ItemStack item;
         private ItemDisplayContext itemContext;
@@ -1929,6 +1934,8 @@ public final class HeldItemOutlineRenderer {
 
     private record PreviewRequest(ItemStack item, float centerX, float centerY, float scale, float pitch, float yaw,
                                   ItemGlintRelightConfig config) { }
+
+    private record PaletteCacheKey(ItemStackKey stack, int sampleSize, int colorCount) { }
 
     private static final class MirroringCollector implements SubmitNodeCollector {
         private final SubmitNodeCollector delegate;
