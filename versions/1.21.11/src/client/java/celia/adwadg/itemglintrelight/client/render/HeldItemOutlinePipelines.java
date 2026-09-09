@@ -34,6 +34,18 @@ public final class HeldItemOutlinePipelines {
             .withUniform("BlurInfo", UniformType.UNIFORM_BUFFER)
             .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
             .build());
+    /**
+     * Writes transparent black with blending disabled, so a scissored pass can clear exactly the
+     * region a bloom chain touches instead of the whole target.
+     */
+    private static final RenderPipeline REGION_CLEAR = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/outline_region_clear"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/outline_region_clear"))
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
     private static final RenderPipeline BLOOM_COMPOSITE = RenderPipelines.register(RenderPipeline.builder()
             .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/held_item_bloom_composite"))
             .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
@@ -87,6 +99,10 @@ public final class HeldItemOutlinePipelines {
 
     public static RenderPipeline bloomBlur() {
         return BLOOM_BLUR;
+    }
+
+    public static RenderPipeline regionClear() {
+        return REGION_CLEAR;
     }
 
     public static RenderPipeline bloomComposite() {

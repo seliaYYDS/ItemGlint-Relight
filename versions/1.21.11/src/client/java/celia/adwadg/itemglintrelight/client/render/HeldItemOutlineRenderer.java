@@ -572,13 +572,14 @@ public final class HeldItemOutlineRenderer {
                 config.setOutlineWidth(config.outlineWidth() * 0.5F);
                 config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * thirdPersonBloomDistanceScale(capture));
                 ScissorRect scissor = resolveThirdPersonScissor(mainTarget, capture, config);
-                boolean irisDepthReady = copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget);
+                boolean irisDepthReady = copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget, scissor);
                 if (!irisDepthReady && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
                     thirdPersonDepthDiagnostic(source, "iris_depth_unavailable", mainTarget, capture);
                     continue;
                 }
                 if (!irisDepthReady) {
-                    thirdPersonSceneDepth.copyDepthFrom(mainTarget);
+                    // The shaders only read scene depth inside the composite region.
+                    copyDepthRegion(thirdPersonSceneDepth, mainTarget, scissor);
                 }
                 // The mask only needs clearing and seeding where the item can rasterise; the
                 // shaders never read outside that region.
@@ -666,7 +667,10 @@ public final class HeldItemOutlineRenderer {
 
     public static void composite(Minecraft minecraft) {
         if (!shouldRender(minecraft)) {
-            diagnostic("skip: render policy is inactive " + renderPolicy(minecraft));
+            // Called every frame; only build the message when the log line is actually due.
+            if (diagnosticDue()) {
+                diagnostic("skip: render policy is inactive " + renderPolicy(minecraft));
+            }
             return;
         }
         if (!MAIN_HAND.captured && !OFF_HAND.captured) {
@@ -988,8 +992,9 @@ public final class HeldItemOutlineRenderer {
 
     private static GpuTextureView renderBloom(RenderTarget target, ItemGlintRelightConfig config, ScissorRect scissor, GpuSampler sampler,
                                              GpuTextureView mask) {
-        clearColor(bloomFirst);
-        clearColor(bloomSecond);
+        ScissorRect clearRegion = bloomClearRegion(target, config, scissor);
+        clearColorRegion(bloomFirst, clearRegion);
+        clearColorRegion(bloomSecond, clearRegion);
         int passes = config.outlineBloomBlurPasses();
         float radius = resolveBloomRadius(target, config) / (float) Math.sqrt(passes);
         GpuTextureView source = mask;
@@ -1041,9 +1046,10 @@ public final class HeldItemOutlineRenderer {
      */
     private static void submitThirdPersonBloomComposite(RenderTarget mainTarget, ItemGlintRelightConfig config, GpuBufferSlice info,
                                                         ScissorRect scissor, TextureTarget maskTarget, GpuTextureView sceneDepthView) {
-        clearColor(thirdPersonBloomSeed);
-        clearColor(thirdPersonBloomFirst);
-        clearColor(thirdPersonBloomSecond);
+        ScissorRect clearRegion = bloomClearRegion(mainTarget, config, scissor);
+        clearColorRegion(thirdPersonBloomSeed, clearRegion);
+        clearColorRegion(thirdPersonBloomFirst, clearRegion);
+        clearColorRegion(thirdPersonBloomSecond, clearRegion);
         GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
@@ -1200,6 +1206,34 @@ public final class HeldItemOutlineRenderer {
 
     private static void clearColor(TextureTarget target) {
         RenderSystem.getDevice().createCommandEncoder().clearColorTexture(target.getColorTexture(), 0);
+    }
+
+    /**
+     * Colour-only clear limited to a region. MC only exposes a scissored colour+depth clear, and
+     * the bloom targets have no depth attachment, so a blending-disabled fullscreen pass is used
+     * instead. Every pixel the bloom chain can read is inside {@code region}.
+     */
+    private static void clearColorRegion(TextureTarget target, ScissorRect region) {
+        if (region == null) {
+            clearColor(target);
+            return;
+        }
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_bloom_region_clear", target.getColorTextureView(), OptionalInt.empty())) {
+            pass.enableScissor(region.x(), region.y(), region.width(), region.height());
+            pass.setPipeline(HeldItemOutlinePipelines.regionClear());
+            pass.draw(0, 3);
+        }
+    }
+
+    /** Region a bloom chain may read: the composite scissor plus one blur reach on every side. */
+    private static ScissorRect bloomClearRegion(RenderTarget target, ItemGlintRelightConfig config, ScissorRect scissor) {
+        if (scissor == null) {
+            return null;
+        }
+        float radius = resolveBloomRadius(target, config)
+                / (float) Math.sqrt(Math.max(1, config.outlineBloomBlurPasses()));
+        return scissor.expanded((int) Math.ceil(radius) + 2, target.width, target.height);
     }
 
     private static void writeUniforms(ByteBuffer buffer, RenderTarget target, ItemGlintRelightConfig config, Minecraft minecraft, float[][] materialPalette,
@@ -1687,6 +1721,10 @@ public final class HeldItemOutlineRenderer {
                 + " outline=" + config.outlineEnabled();
     }
 
+    private static boolean diagnosticDue() {
+        return System.currentTimeMillis() >= nextDiagnosticMillis;
+    }
+
     private static void diagnostic(String outcome) {
         long now = System.currentTimeMillis();
         if (now < nextDiagnosticMillis) {
@@ -1754,7 +1792,7 @@ public final class HeldItemOutlineRenderer {
         return 0;
     }
 
-    private static boolean copyIrisNoHandDepth(TextureTarget destination, RenderTarget mainTarget) {
+    private static boolean copyIrisNoHandDepth(TextureTarget destination, RenderTarget mainTarget, ScissorRect scissor) {
         Object texture = HeldItemOutlineCompat.getIrisNoHandDepthTexture();
         if (!(texture instanceof com.mojang.blaze3d.textures.GpuTexture gpuTexture)
                 || !(gpuTexture instanceof com.mojang.blaze3d.opengl.GlTexture glTexture)) {
@@ -1784,8 +1822,17 @@ public final class HeldItemOutlineRenderer {
                     GL11C.GL_TEXTURE_2D, sourceTextureId, 0);
             GL30C.glReadBuffer(GL11C.GL_NONE);
             GL30C.glBindFramebuffer(GL30C.GL_DRAW_FRAMEBUFFER, destinationFbo);
-            GL30C.glBlitFramebuffer(0, 0, mainTarget.width, mainTarget.height,
-                    0, 0, destination.width, destination.height, GL30C.GL_DEPTH_BUFFER_BIT, GL11C.GL_NEAREST);
+            ScissorRect region = scissor == null ? null
+                    : scissor.expanded(MASK_REGION_MARGIN, destination.width, destination.height);
+            if (region == null) {
+                GL30C.glBlitFramebuffer(0, 0, mainTarget.width, mainTarget.height,
+                        0, 0, destination.width, destination.height, GL30C.GL_DEPTH_BUFFER_BIT, GL11C.GL_NEAREST);
+            } else {
+                // The scene depth is only read inside the composite region.
+                GL30C.glBlitFramebuffer(region.x(), region.y(), region.x() + region.width(), region.y() + region.height(),
+                        region.x(), region.y(), region.x() + region.width(), region.y() + region.height(),
+                        GL30C.GL_DEPTH_BUFFER_BIT, GL11C.GL_NEAREST);
+            }
             GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, 0);
             int error = GL11C.glGetError();
             irisNoHandDepthReady = error == GL11C.GL_NO_ERROR;
