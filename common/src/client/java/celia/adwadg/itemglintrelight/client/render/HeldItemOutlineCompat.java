@@ -71,6 +71,11 @@ public final class HeldItemOutlineCompat {
         return IRIS_LOADED;
     }
 
+    /** True while Iris renders its shadow pass, whose view and projection differ from the frame. */
+    public static boolean isIrisShadowPass() {
+        return IRIS_LOADED && invokeApi(SHADOW_PASS);
+    }
+
     public static boolean isIrisShaderPackRendering() {
         // Iris itself uses isPackInUseQuick() for its GameRenderer hooks. Prefer the same
         // pipeline check here; on some Iris builds the public API can be observed before its

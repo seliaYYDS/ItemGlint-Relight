@@ -82,6 +82,25 @@ public final class HeldItemOutlineRenderer {
      */
     private static final boolean ITEM_BOUNDS_SCISSOR_ENABLED =
             !"false".equalsIgnoreCase(System.getProperty("itemglintrelight.itemBoundsScissor", "true"));
+    /** Temporary diagnostic: {@code -Ditemglintrelight.irisProbe=true} logs the third-person replay state. */
+    private static final boolean IRIS_PROBE_ENABLED = Boolean.getBoolean("itemglintrelight.irisProbe");
+    /**
+     * Iris' {@code depthtex2} is the finished scene depth, so it contains the third-person item
+     * itself and the shader's scene-depth rejection can eat part of the outline wherever the
+     * replayed silhouette differs from Iris' own render. This diagnostic switch clears the scene
+     * depth instead: the outline then draws through occluders, which separates a depth-test
+     * problem from a composite-scissor problem in one run.
+     * {@code -Ditemglintrelight.irisSceneOcclusion=false} disables the test.
+     */
+    private static final boolean IRIS_SCENE_OCCLUSION_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("itemglintrelight.irisSceneOcclusion", "true"));
+    /**
+     * Iris gets the same item-free opaque snapshot the vanilla path uses.
+     * {@code -Ditemglintrelight.irisOpaqueSnapshot=false} restores the previous Iris behaviour,
+     * which took the finished-frame depthtex2 (that depth contains the item itself).
+     */
+    private static final boolean IRIS_OPAQUE_SNAPSHOT_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("itemglintrelight.irisOpaqueSnapshot", "true"));
     private static final CaptureState MAIN_HAND = new CaptureState();
     private static final CaptureState OFF_HAND = new CaptureState();
     private static final CaptureState PREVIEW = new CaptureState();
@@ -467,6 +486,12 @@ public final class HeldItemOutlineRenderer {
 
     public static void beginThirdPersonItem(ItemStack stack, ItemDisplayContext context, PoseStack pose) {
         if (!isThirdPersonContext(context) || recordingThirdPerson != null) return;
+        // Iris renders the level twice: the shadow pass uses the sun's view and an orthographic
+        // projection. A capture taken there would poison both the replay and the composite scissor.
+        if (HeldItemOutlineCompat.isIrisShadowPass()) {
+            shadowCaptureDiagnostic();
+            return;
+        }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null || stack == null || stack.isEmpty()) return;
 
@@ -516,6 +541,10 @@ public final class HeldItemOutlineRenderer {
                 || itemState == null || itemState.isEmpty() || !shouldRenderThirdPerson(minecraft)) {
             return;
         }
+        if (HeldItemOutlineCompat.isIrisShadowPass()) {
+            shadowCaptureDiagnostic();
+            return;
+        }
         ItemGlintRelightConfig base = ItemGlintRelightConfigManager.get();
         ItemGlintRelightConfig config = DisplayRuleManager.resolve(stack, base);
         if (!config.outlineEnabled() || !config.renderThirdPerson() || !config.outlineThirdPerson()) return;
@@ -554,7 +583,72 @@ public final class HeldItemOutlineRenderer {
         return minecraft != null && minecraft.player != null && minecraft.level != null
                 && !minecraft.options.getCameraType().isFirstPerson()
                 && minecraft.screen == null
+                && !HeldItemOutlineCompat.isIrisShadowPass()
                 && config.outlineEnabled() && config.renderThirdPerson() && config.outlineThirdPerson();
+    }
+
+    /** Diagnostic: region covered by the opaque snapshot taken in phase one. */
+    private static String thirdPersonSnapshotRect = "none";
+
+    private static long nextShadowCaptureDiagnosticMillis;
+
+    private static void shadowCaptureDiagnostic() {
+        long now = System.currentTimeMillis();
+        if (now < nextShadowCaptureDiagnosticMillis) return;
+        nextShadowCaptureDiagnosticMillis = now + 1000L;
+        ItemGlintRelight.LOGGER.info("[ThirdPersonShadowCapture] frame={} skipped a capture taken during Iris' shadow pass",
+                frameNumber);
+    }
+
+    private static long nextIrisCaptureProbeMillis;
+
+    /**
+     * Rate-limited probe for the Iris third-person path: reports the scissor, the projection the
+     * capture was taken with and the depth texture sizes, so a mismatch can be identified from a
+     * log instead of guessed at. Enable with {@code -Ditemglintrelight.irisProbe=true}.
+     */
+    private static void irisCaptureProbe(CaptureState capture, RenderTarget mainTarget, ScissorRect scissor) {
+        if (!IRIS_PROBE_ENABLED) return;
+        long now = System.currentTimeMillis();
+        if (now < nextIrisCaptureProbeMillis) return;
+        nextIrisCaptureProbeMillis = now + 1000L;
+        Object texture = HeldItemOutlineCompat.getIrisNoHandDepthTexture();
+        String depthSize = texture instanceof com.mojang.blaze3d.textures.GpuTexture gpu
+                ? gpu.getWidth(0) + "x" + gpu.getHeight(0) : "unavailable";
+        ItemGlintRelight.LOGGER.info(
+                "[ThirdPersonIrisProbe] frame={} item={} main={}x{} depthtex2={} scissor={} captureProj={} levelProj={} "
+                        + "captureMatchesLevel={} bounds={} sceneDepthReady={} snapshotFrame={} irisDepthStatus={}",
+                frameNumber, capture.stack, mainTarget.width, mainTarget.height, depthSize,
+                scissor == null ? "null" : scissor.width() + "x" + scissor.height() + "@" + scissor.x() + "," + scissor.y(),
+                describeProjection(capture.projectionMatrix4f), describeProjection(levelProjectionMatrix),
+                sameProjection(capture.projectionMatrix4f, levelProjectionMatrix),
+                capture.itemBounds == null ? "null" : java.util.Arrays.toString(capture.itemBounds),
+                capture.sceneDepthReady, thirdPersonSceneDepthFrame == frameNumber, irisNoHandDepthStatus);
+    }
+
+    /** View-space translation of the captured item: origin, distance and bloom distance scale. */
+    private static String itemViewDistance(CaptureState capture) {
+        if (capture == null || capture.modelViewMatrix == null || capture.itemPoseMatrix == null) {
+            return "unknown";
+        }
+        Matrix4f itemView = new Matrix4f(capture.modelViewMatrix).mul(capture.itemPoseMatrix);
+        return String.format(java.util.Locale.ROOT, "[%.3f,%.3f,%.3f] d=%.3f scale=%.3f",
+                itemView.m30(), itemView.m31(), itemView.m32(), Math.abs(itemView.m32()),
+                thirdPersonBloomDistanceScale(capture));
+    }
+
+    private static String describeProjection(Matrix4f matrix) {
+        if (matrix == null) return "null";
+        return String.format(java.util.Locale.ROOT, "[m00=%.4f m11=%.4f m22=%.4f m23=%.4f m33=%.4f]",
+                matrix.m00(), matrix.m11(), matrix.m22(), matrix.m23(), matrix.m33());
+    }
+
+    private static boolean sameProjection(Matrix4f first, Matrix4f second) {
+        if (first == null || second == null) return false;
+        return Math.abs(first.m00() - second.m00()) < 1.0E-4F
+                && Math.abs(first.m11() - second.m11()) < 1.0E-4F
+                && Math.abs(first.m22() - second.m22()) < 1.0E-4F
+                && Math.abs(first.m23() - second.m23()) < 1.0E-4F;
     }
 
     public static SubmitNodeCollector wrapThirdPersonCollector(Minecraft minecraft, SubmitNodeCollector original) {
@@ -586,16 +680,28 @@ public final class HeldItemOutlineRenderer {
                 ItemGlintRelightConfig config = thirdPersonConfig(capture);
                 ScissorRect scissor = resolveThirdPersonScissor(mainTarget, capture, config);
                 if (iris) {
-                    // Iris' depthtex2 is the no-hand scene depth of the finished frame.
-                    if (!copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget, scissor)) {
+                    if (!IRIS_SCENE_OCCLUSION_ENABLED) {
+                        // Diagnostic only: an all-far scene depth makes the shader's occlusion
+                        // test a no-op, so the outline survives everywhere it can rasterise.
+                        irisNoHandDepthStatus = "scene_occlusion_disabled";
+                        clearMask(thirdPersonSceneDepth, scissor);
+                    } else if (capture.sceneDepthReady) {
+                        // Preferred: the opaque snapshot from the first main-batch flush is item
+                        // free, so the shader's depth rejection compares the outline against the
+                        // scene. Iris' depthtex2 is the finished frame depth and therefore holds
+                        // the third-person item itself; testing against it eats the parts of the
+                        // outline where the replayed silhouette differs from Iris' own render.
+                        irisNoHandDepthStatus = "opaque_snapshot";
+                    } else if (!copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget, scissor)) {
                         thirdPersonDepthDiagnostic(source, "iris_depth_unavailable", mainTarget, capture);
                         continue;
                     }
-                    // depthtex2 already contains the original third-person item. Replaying into
-                    // that depth makes the item compete with itself and produces frame-to-frame
-                    // z-fighting. Capture a complete private mask instead; the outline and bloom
-                    // shaders below perform the authoritative per-pixel depthtex2 rejection.
+                    // The mask stays unseeded: depthtex2 (and the snapshot) can already contain the
+                    // item, and seeding from either would let the replay compete with it and punch
+                    // frame-to-frame holes into the coverage. The shaders perform the authoritative
+                    // per-pixel rejection against the scene depth instead.
                     clearMask(sceneDepth, scissor);
+                    irisCaptureProbe(capture, mainTarget, scissor);
                 } else {
                     if (!capture.sceneDepthReady) {
                         // This capture was submitted after the opaque snapshot (or no snapshot
@@ -636,7 +742,11 @@ public final class HeldItemOutlineRenderer {
             return;
         }
         HeldItemOutlineCompat.logDiagnosticStateOnce();
-        if (HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+        // The snapshot is taken under Iris as well: the level depth lives in the main target there
+        // too (the first-person path has always copied it), and an item-free depth is what lets
+        // the third-person shader test the outline against the scene instead of against Iris' own
+        // copy of the item. Only the composite itself stays in phase two.
+        if (!IRIS_OPAQUE_SNAPSHOT_ENABLED && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
             return;
         }
         RenderBuffers renderBuffers = ((GameRendererAccessor) minecraft.gameRenderer).itemglintrelight$getRenderBuffers();
@@ -654,7 +764,16 @@ public final class HeldItemOutlineRenderer {
         }
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         ensureTarget(mainTarget);
-        copyDepthRegion(thirdPersonSceneDepth, mainTarget, thirdPersonUnionScissor(mainTarget));
+        ScissorRect snapshotRect = thirdPersonUnionScissor(mainTarget);
+        // Reset to "no geometry" first: whatever the snapshot region does not cover must read as
+        // the far plane (no occluder) instead of last frame's depth or a cleared near plane. A
+        // region that is stale-near would reject the outline there, which is exactly how a
+        // too-small snapshot region turns into a rectangular hole in the outline.
+        RenderSystem.getDevice().createCommandEncoder()
+                .clearDepthTexture(thirdPersonSceneDepth.getDepthTexture(), 1.0D);
+        copyDepthRegion(thirdPersonSceneDepth, mainTarget, snapshotRect);
+        thirdPersonSnapshotRect = snapshotRect == null ? "null"
+                : snapshotRect.x() + "," + snapshotRect.y() + " " + snapshotRect.width() + "x" + snapshotRect.height();
         thirdPersonSceneDepthFrame = frameNumber;
         for (CaptureState capture : THIRD_PERSON_CAPTURES) {
             if (capture.captured && capture.config != null) {
@@ -837,7 +956,7 @@ public final class HeldItemOutlineRenderer {
 
     /** Installed by the hand projection-buffer mixin with the matrix the hand pass renders with. */
     public static void captureHandProjection(Matrix4f projection) {
-        if (projection == null) {
+        if (projection == null || !isPerspectiveProjection(projection)) {
             return;
         }
         if (handProjectionMatrix == null) {
@@ -847,9 +966,14 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
-    /** Installed by the projection-buffer mixin once per frame with the level projection. */
+    /**
+     * Installed by the projection-buffer mixin once per frame with the level projection.
+     * Iris uploads its shadow pass matrix into the same buffer, so anything that is not a
+     * perspective matrix is ignored: an orthographic matrix would project the item bounds into a
+     * meaningless rectangle and clip the outline to it.
+     */
     public static void captureLevelProjection(Matrix4f projection) {
-        if (projection == null) {
+        if (projection == null || !isPerspectiveProjection(projection)) {
             return;
         }
         if (levelProjectionMatrix == null) {
@@ -1609,7 +1733,8 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static ScissorRect resolveCompositeScissor(RenderTarget target, CaptureState state) {
-        if (!state.captured || state.externalSubmission || handPassMatrix == null || state.projectionMatrix4f == null) {
+        if (!state.captured || state.externalSubmission || handPassMatrix == null
+                || !isPerspectiveProjection(state.projectionMatrix4f)) {
             return null;
         }
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
@@ -1637,12 +1762,23 @@ public final class HeldItemOutlineRenderer {
      */
     private static ScissorRect resolveThirdPersonScissor(RenderTarget target, CaptureState state, ItemGlintRelightConfig config) {
         float[] itemBounds = state.itemBounds;
-        if (!ITEM_BOUNDS_SCISSOR_ENABLED || !state.captured || itemBounds == null || state.projectionMatrix4f == null) {
+        if (!ITEM_BOUNDS_SCISSOR_ENABLED || !state.captured || itemBounds == null
+                || !isPerspectiveProjection(state.projectionMatrix4f)) {
             return null;
         }
         int padding = (int) Math.ceil(resolveCompositePadding(target, config)) + 4;
         return projectBounds(target, state.projectionMatrix4f, itemBounds[0], itemBounds[1], itemBounds[2],
                 itemBounds[3], itemBounds[4], itemBounds[5], padding);
+    }
+
+    /**
+     * MC installs a perspective matrix for the level and hand passes (m33 = 0, m32 = -1). Iris
+     * uploads its shadow pass orthographic matrix (m33 = 1, m00 = 1/2 * shadow extent) into the
+     * same projection buffer, and projecting the item bounds with that matrix yields a rectangle
+     * unrelated to the item, which then clips the outline.
+     */
+    private static boolean isPerspectiveProjection(Matrix4f projection) {
+        return projection != null && Math.abs(projection.m33()) < 0.5F;
     }
 
     private static ScissorRect projectBounds(RenderTarget target, Matrix4f projection, float minX, float minY, float minZ,
@@ -1791,9 +1927,14 @@ public final class HeldItemOutlineRenderer {
         if ("preload".equals(stage)) {
             nextThirdPersonDepthDiagnosticMillis = now + 1000L;
         }
+        ItemGlintRelightConfig diagnosticConfig = capture.config == null ? null : thirdPersonConfig(capture);
+        ScissorRect diagnosticScissor = diagnosticConfig == null ? null
+                : resolveThirdPersonScissor(mainTarget, capture, diagnosticConfig);
         ItemGlintRelight.LOGGER.info(
                 "[ThirdPersonDepth] frame={} sequence={} source={} stage={} main={}x{} mainColor={} mainDepth={} mask={}x{} maskColor={} maskDepth={} "
-                        + "depthTargetsSame={} copiedMainDepth=true overrideColor={} overrideDepth={} captured={} replayed={} nodes={} renderTypes={} ",
+                        + "depthTargetsSame={} copiedMainDepth=true overrideColor={} overrideDepth={} captured={} replayed={} nodes={} "
+                        + "scissor={} padding={} bounds={} proj={} levelProj={} projMatch={} sceneDepthReady={} snapshotRect={} "
+                        + "irisDepth={} itemDistance={} renderTypes={} ",
                 frameNumber,
                 thirdPersonCompositeSequence,
                 source,
@@ -1812,6 +1953,18 @@ public final class HeldItemOutlineRenderer {
                 capture.captured,
                 capture.replayed,
                 capture.submittedItems,
+                diagnosticScissor == null ? "null"
+                        : diagnosticScissor.x() + "," + diagnosticScissor.y() + " "
+                        + diagnosticScissor.width() + "x" + diagnosticScissor.height(),
+                diagnosticConfig == null ? -1.0F : resolveCompositePadding(mainTarget, diagnosticConfig),
+                capture.itemBounds == null ? "null" : java.util.Arrays.toString(capture.itemBounds),
+                describeProjection(capture.projectionMatrix4f),
+                describeProjection(levelProjectionMatrix),
+                sameProjection(capture.projectionMatrix4f, levelProjectionMatrix),
+                capture.sceneDepthReady,
+                thirdPersonSnapshotRect,
+                irisNoHandDepthStatus,
+                itemViewDistance(capture),
                 capture.renderTypes
         );
     }
