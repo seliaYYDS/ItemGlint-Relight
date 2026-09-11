@@ -33,6 +33,7 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.OrderedSubmitNodeCollector;
 import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -133,10 +134,24 @@ public final class HeldItemOutlineRenderer {
     private static TextureTarget thirdPersonBloomSecond;
     private static TextureTarget previewBloomFirst;
     private static TextureTarget previewBloomSecond;
-    // The arm occluder capture path is inert: nothing ever submits into it, so both of its
-    // samplers read one cleared texel (coverage 0, depth 1.0) exactly like the old
-    // full-screen target that was cleared to the same values every frame.
+    private static final CaptureState MAIN_ARM = new CaptureState();
+    private static final CaptureState OFF_ARM = new CaptureState();
+    /**
+     * First-person arm geometry, replayed into the mask the outline shader samples as
+     * {@code ArmOccluderSampler}. The arm must decide occlusion in the same depth space as the item
+     * instead of deferring to the scene depth buffer: under a shader pack the level depth is written
+     * by Iris' own hand program with its z-compressed projection, and several of Iris' full-screen
+     * passes run over that depth before the composite. Replaying the arm here keeps the two depth
+     * values comparable no matter what the pack does.
+     */
+    private static TextureTarget armOccluderTarget;
+    /** Inert 1x1 stand-in used whenever no arm was captured this frame (third person, GUI, ...). */
     private static TextureTarget armOccluderPlaceholder;
+    /** Hand whose arm is being captured right now, null outside the arm render window. */
+    private static InteractionHand occludingHand;
+    private static int armOccluderDepth;
+    /** True once the current frame replayed its arms into {@link #armOccluderTarget}. */
+    private static boolean armOccluderReady;
     private static UniformRing uniforms = new UniformRing("itemglintrelight_outline", OUTLINE_UNIFORM_BYTES, 1024);
     // GUI blits are consumed after the current render build. Unlike the hand pass, their
     // per-item material palettes must remain valid across several rendered frames.
@@ -149,6 +164,13 @@ public final class HeldItemOutlineRenderer {
     private static long thirdPersonCompositeSequence;
     /** Frame whose opaque scene depth is already snapshotted; Long.MIN_VALUE when none. */
     private static long thirdPersonSceneDepthFrame = Long.MIN_VALUE;
+    /**
+     * Monotonic stamp of the order in which the two first-person hands were captured. Vanilla always
+     * submits the main hand first, so its composite order is fixed; Punchy draws both hands in one
+     * pass and may submit the off hand first, which is why the composite order is derived from this
+     * counter whenever Punchy is installed.
+     */
+    private static long captureSequenceCounter;
     private static String framebufferLookupFailure = "none";
     private static Object irisNoHandDepthTexture;
     private static int irisNoHandDepthFbo;
@@ -181,11 +203,17 @@ public final class HeldItemOutlineRenderer {
         handPasses = 0;
         MAIN_HAND.reset();
         OFF_HAND.reset();
+        MAIN_ARM.reset();
+        OFF_ARM.reset();
+        occludingHand = null;
+        armOccluderDepth = 0;
+        armOccluderReady = false;
         THIRD_PERSON_MAIN_HAND.reset();
         THIRD_PERSON_OFF_HAND.reset();
         recordingThirdPerson = null;
         THIRD_PERSON_CAPTURES.clear();
         thirdPersonSceneDepthFrame = Long.MIN_VALUE;
+        captureSequenceCounter = 0L;
         uniforms.beginFrame();
         blurUniforms.beginFrame();
     }
@@ -312,8 +340,12 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", mask.getColorTextureView(), linear);
             pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), nearest);
             pass.bindTexture("SceneDepthSampler", depthTarget, nearest);
-            pass.bindTexture("ArmOccluderSampler", mask.getColorTextureView(), linear);
-            pass.bindTexture("ArmOccluderDepthSampler", mask.getDepthTextureView(), nearest);
+            // The preview has no arm pass of its own, so it keeps the inert stand-in rather than
+            // feeding the item mask back in as an "arm": the shader's arm term is coverage driven
+            // and would otherwise eat the preview stroke wherever the mask has coverage.
+            TextureTarget previewArmOccluder = armOccluderStandIn();
+            pass.bindTexture("ArmOccluderSampler", previewArmOccluder.getColorTextureView(), linear);
+            pass.bindTexture("ArmOccluderDepthSampler", previewArmOccluder.getDepthTextureView(), nearest);
             pass.draw(0, 3);
         }
     }
@@ -371,6 +403,9 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", mask.getColorTextureView(), sampler);
             pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.bindTexture("SceneDepthSampler", sceneDepth, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
+            TextureTarget previewArmOccluder = armOccluderStandIn();
+            pass.bindTexture("ArmOccluderSampler", previewArmOccluder.getColorTextureView(), sampler);
+            pass.bindTexture("ArmOccluderDepthSampler", previewArmOccluder.getDepthTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.draw(0, 3);
         }
     }
@@ -444,6 +479,64 @@ public final class HeldItemOutlineRenderer {
 
     public static void endHand() {
         recordingHand = null;
+    }
+
+    /**
+     * Opens the window in which the first-person arm is drawn. Every node submitted until
+     * {@link #endArmOccluderCapture()} is replayed into the arm-occluder mask, which is what tells the
+     * outline shader where the arm is in front of the item.
+     */
+    public static void beginArmOccluderCapture(HumanoidArm humanoidArm) {
+        InteractionHand hand = resolveHandForArm(humanoidArm);
+        Minecraft minecraft = Minecraft.getInstance();
+        if (hand == null || minecraft == null || !shouldRender(minecraft)) {
+            return;
+        }
+        if (armOccluderDepth == 0) {
+            occludingHand = hand;
+        }
+        armOccluderDepth++;
+        CaptureState arm = armStateFor(hand);
+        ensureDispatcher(minecraft, arm);
+        // The pose the arm renders with, so the replay lands exactly where the arm was drawn.
+        snapshotRenderContext(arm);
+    }
+
+    public static void endArmOccluderCapture() {
+        if (armOccluderDepth > 0) {
+            armOccluderDepth--;
+        }
+        if (armOccluderDepth == 0) {
+            occludingHand = null;
+        }
+    }
+
+    private static CaptureState armStateFor(InteractionHand hand) {
+        return hand == InteractionHand.MAIN_HAND ? MAIN_ARM : OFF_ARM;
+    }
+
+    /**
+     * 1x1 stand-in for every pass that has no arm data (third person, GUI, preview). Its cleared
+     * texel reads as coverage 0 with depth 1.0, which the shader's arm term treats as "no arm".
+     */
+    private static TextureTarget armOccluderStandIn() {
+        if (armOccluderPlaceholder == null) {
+            armOccluderPlaceholder = new TextureTarget("itemglintrelight_arm_occluder_placeholder", 1, 1, true);
+            clear(armOccluderPlaceholder);
+        }
+        return armOccluderPlaceholder;
+    }
+
+    private static InteractionHand resolveHandForArm(HumanoidArm humanoidArm) {
+        if (humanoidArm == null) {
+            return null;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        LocalPlayer player = minecraft == null ? null : minecraft.player;
+        if (player == null) {
+            return humanoidArm == HumanoidArm.RIGHT ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+        }
+        return player.getMainArm() == humanoidArm ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
     }
 
     public static void beginExternalHandSubmission(InteractionHand hand, ItemStack stack, PoseStack pose) {
@@ -850,12 +943,47 @@ public final class HeldItemOutlineRenderer {
                 captureFallbackTextureColors(minecraft, MAIN_HAND, InteractionHand.MAIN_HAND);
                 captureFallbackTextureColors(minecraft, OFF_HAND, InteractionHand.OFF_HAND);
             }
-            compositeCapture(minecraft, mainTarget, MAIN_HAND, "main");
-            compositeCapture(minecraft, mainTarget, OFF_HAND, "off");
+            compositeArmOccluder(minecraft, mainTarget);
+            compositeHands(minecraft, mainTarget);
         } finally {
             MAIN_HAND.reset();
             OFF_HAND.reset();
         }
+    }
+
+    /**
+     * Replays the arms captured during the hand pass into the occluder mask, and clears the whole
+     * mask first: the shader reads the arm conservatively over one outline radius, so stale arm
+     * coverage left outside the composite scissor by an earlier frame would keep eating the stroke.
+     */
+    private static void compositeArmOccluder(Minecraft minecraft, RenderTarget mainTarget) {
+        armOccluderReady = false;
+        if (!MAIN_ARM.captured && !OFF_ARM.captured) {
+            return;
+        }
+        ensureTarget(mainTarget);
+        clear(armOccluderTarget);
+        renderCapture(minecraft, MAIN_ARM, armOccluderTarget);
+        renderCapture(minecraft, OFF_ARM, armOccluderTarget);
+        armOccluderReady = true;
+    }
+
+    /**
+     * Composites the two first-person hands in the order they were captured.
+     * <p>Vanilla submits the main hand first, so the fixed main/off order already is the capture
+     * order and stays untouched. Punchy renders both hands inside a single pass and may submit the
+     * off hand first; the composite blends, so the hand submitted last has to be composited last for
+     * its outline to stay on top, exactly like the items themselves are layered on screen.
+     */
+    private static void compositeHands(Minecraft minecraft, RenderTarget mainTarget) {
+        boolean offHandFirst = HeldItemOutlinePunchyCompat.isLoaded()
+                && OFF_HAND.lastCaptureSequence != 0L
+                && (MAIN_HAND.lastCaptureSequence == 0L
+                || OFF_HAND.lastCaptureSequence < MAIN_HAND.lastCaptureSequence);
+        CaptureState first = offHandFirst ? OFF_HAND : MAIN_HAND;
+        CaptureState second = offHandFirst ? MAIN_HAND : OFF_HAND;
+        compositeCapture(minecraft, mainTarget, first, first == MAIN_HAND ? "main" : "off");
+        compositeCapture(minecraft, mainTarget, second, second == MAIN_HAND ? "main" : "off");
     }
 
     private static void compositeCapture(Minecraft minecraft, RenderTarget mainTarget, CaptureState state, String hand) {
@@ -909,8 +1037,9 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), maskSampler);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
-            pass.bindTexture("ArmOccluderSampler", armOccluderPlaceholder.getColorTextureView(), maskSampler);
-            pass.bindTexture("ArmOccluderDepthSampler", armOccluderPlaceholder.getDepthTextureView(), depthSampler);
+            TextureTarget armOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
+            pass.bindTexture("ArmOccluderSampler", armOccluder.getColorTextureView(), maskSampler);
+            pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
             diagnostic("composite " + hand + " submitted target=" + mainTarget.width + "x" + mainTarget.height
                     + " radius=" + resolveOutlineRadius(mainTarget, config));
@@ -1099,6 +1228,18 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static SubmitNodeCollection captureCollection(int order, InteractionHand directHand) {
+        // The arm renderer runs inside the hand window (vanilla draws the arm from renderArmWithItem,
+        // Punchy from its own renderArm), so its nodes must be diverted here. Without this the arm
+        // would either be swallowed by the item capture or dropped entirely.
+        if (armOccluderDepth > 0 && occludingHand != null) {
+            CaptureState arm = armStateFor(occludingHand);
+            if (arm.storage == null || arm.dispatcher == null) {
+                return null;
+            }
+            arm.captured = true;
+            arm.submittedItems++;
+            return arm.storage.order(order);
+        }
         if (recordingThirdPerson != null && recordingThirdPerson.requested && recordingThirdPerson.storage != null) {
             recordingThirdPerson.captured = true;
             recordingThirdPerson.submittedItems++;
@@ -1115,6 +1256,7 @@ public final class HeldItemOutlineRenderer {
         }
         capture.captured = true;
         capture.submittedItems++;
+        capture.lastCaptureSequence = ++captureSequenceCounter;
         return capture.storage.order(order);
     }
 
@@ -1145,10 +1287,9 @@ public final class HeldItemOutlineRenderer {
             thirdPersonBloomFirst = new TextureTarget("itemglintrelight_third_person_bloom_first", mainTarget.width, mainTarget.height, false);
             thirdPersonBloomSecond = new TextureTarget("itemglintrelight_third_person_bloom_second", mainTarget.width, mainTarget.height, false);
             thirdPersonSceneDepth = new TextureTarget("itemglintrelight_third_person_scene_depth", mainTarget.width, mainTarget.height, true);
-            // Inert 1x1 stand-in for the unused arm-occluder samplers: coverage 0 and depth 1.0,
-            // which is exactly what the cleared full-screen target used to supply every frame.
-            armOccluderPlaceholder = new TextureTarget("itemglintrelight_arm_occluder_placeholder", 1, 1, true);
-            clear(armOccluderPlaceholder);
+            armOccluderTarget = new TextureTarget("itemglintrelight_arm_occluder", mainTarget.width, mainTarget.height, true);
+            clear(armOccluderTarget);
+            armOccluderStandIn();
         } else if (sceneDepth.width != mainTarget.width || sceneDepth.height != mainTarget.height) {
             sceneDepth.resize(mainTarget.width, mainTarget.height);
             bloomFirst.resize(mainTarget.width, mainTarget.height);
@@ -1157,6 +1298,8 @@ public final class HeldItemOutlineRenderer {
             thirdPersonBloomFirst.resize(mainTarget.width, mainTarget.height);
             thirdPersonBloomSecond.resize(mainTarget.width, mainTarget.height);
             thirdPersonSceneDepth.resize(mainTarget.width, mainTarget.height);
+            armOccluderTarget.resize(mainTarget.width, mainTarget.height);
+            clear(armOccluderTarget);
         }
     }
 
@@ -1206,6 +1349,10 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), sampler);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
+            // The halo is cut by the arm exactly like the stroke, so it does not glow through it.
+            TextureTarget armOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
+            pass.bindTexture("ArmOccluderSampler", armOccluder.getColorTextureView(), sampler);
+            pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
         }
     }
@@ -2098,6 +2245,8 @@ public final class HeldItemOutlineRenderer {
         /** Projection active for this capture's pass; turns the view-space bounds into clip space. */
         private Matrix4f projectionMatrix4f;
         private boolean externalSubmission;
+        /** Order in which this state last captured a node; 0 when it captured nothing this frame. */
+        private long lastCaptureSequence;
 
         private void reset() {
             captured = false;
@@ -2121,6 +2270,7 @@ public final class HeldItemOutlineRenderer {
             projectionType = null;
             projectionMatrix4f = null;
             externalSubmission = false;
+            lastCaptureSequence = 0L;
             if (storage != null) storage.clear();
         }
 

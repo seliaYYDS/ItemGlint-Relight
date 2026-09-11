@@ -8,6 +8,7 @@ import net.minecraft.client.renderer.ItemInHandRenderer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
@@ -39,6 +40,36 @@ public abstract class ItemInHandRendererMixin {
                                            InteractionHand hand, float swing, ItemStack stack, float equip,
                                            PoseStack poseStack, SubmitNodeCollector collector, int light, CallbackInfo ci) {
         HeldItemOutlineRenderer.endHand();
+    }
+
+    /**
+     * The arm the vanilla renderer draws from {@code renderArmWithItem}. Its nodes are diverted into
+     * the arm-occluder mask so the outline is suppressed where the arm covers the item.
+     */
+    @Inject(method = "renderPlayerArm", at = @At("HEAD"))
+    private void itemglintrelight$beginArmOccluder(PoseStack poseStack, SubmitNodeCollector collector, int light,
+                                                   float equipProgress, float swingProgress, HumanoidArm arm,
+                                                   CallbackInfo ci) {
+        HeldItemOutlineRenderer.beginArmOccluderCapture(arm);
+    }
+
+    @Inject(method = "renderPlayerArm", at = @At("RETURN"))
+    private void itemglintrelight$endArmOccluder(PoseStack poseStack, SubmitNodeCollector collector, int light,
+                                                 float equipProgress, float swingProgress, HumanoidArm arm,
+                                                 CallbackInfo ci) {
+        HeldItemOutlineRenderer.endArmOccluderCapture();
+    }
+
+    @Inject(method = "renderMapHand", at = @At("HEAD"))
+    private void itemglintrelight$beginMapArmOccluder(PoseStack poseStack, SubmitNodeCollector collector, int light,
+                                                      HumanoidArm arm, CallbackInfo ci) {
+        HeldItemOutlineRenderer.beginArmOccluderCapture(arm);
+    }
+
+    @Inject(method = "renderMapHand", at = @At("RETURN"))
+    private void itemglintrelight$endMapArmOccluder(PoseStack poseStack, SubmitNodeCollector collector, int light,
+                                                    HumanoidArm arm, CallbackInfo ci) {
+        HeldItemOutlineRenderer.endArmOccluderCapture();
     }
 
     @Inject(method = "renderItem", at = @At("HEAD"))

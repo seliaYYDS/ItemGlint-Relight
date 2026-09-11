@@ -1,6 +1,7 @@
 {
   "required": true,
   "package": "celia.adwadg.itemglintrelight.mixin.client",
+  "plugin": "celia.adwadg.itemglintrelight.mixin.ItemGlintRelightMixinPlugin",
   "refmap": "itemglintrelight.refmap.json",
   "compatibilityLevel": "JAVA_21",
   "client": [
@@ -21,7 +22,8 @@
     "PlayerItemInHandLayerMixin",
     "ItemInHandRendererMixin",
     "PerspectiveProjectionMatrixBufferMixin",
-    "CachedPerspectiveProjectionMatrixBufferMixin"
+    "CachedPerspectiveProjectionMatrixBufferMixin",
+    "PunchyArmRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1

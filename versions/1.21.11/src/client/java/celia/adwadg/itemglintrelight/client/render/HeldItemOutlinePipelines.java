@@ -54,6 +54,8 @@ public final class HeldItemOutlinePipelines {
             .withSampler("MaskSampler")
             .withSampler("ItemDepthSampler")
             .withSampler("SceneDepthSampler")
+            .withSampler("ArmOccluderSampler")
+            .withSampler("ArmOccluderDepthSampler")
             .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
             .withBlend(BlendFunction.TRANSLUCENT)
             .withDepthWrite(false)

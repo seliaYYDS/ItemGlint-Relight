@@ -4,6 +4,8 @@ uniform sampler2D BloomSampler;
 uniform sampler2D MaskSampler;
 uniform sampler2D ItemDepthSampler;
 uniform sampler2D SceneDepthSampler;
+uniform sampler2D ArmOccluderSampler;
+uniform sampler2D ArmOccluderDepthSampler;
 
 layout(std140) uniform OutlineInfo {
     vec4 primaryColor;
@@ -89,6 +91,93 @@ float bloomAlpha(float coverage) {
     return pow(normalizedCoverage, alphaExponent);
 }
 
+float armDepthAt(vec2 uv) {
+    return texture(ArmOccluderDepthSampler, clamp(uv, vec2(0.0), vec2(1.0))).r;
+}
+
+float armDepthPresence(float depth) {
+    return 1.0 - smoothstep(0.9998, 0.99998, depth);
+}
+
+// The arm pass writes coverage and depth, but a render type may write only one of them, so either
+// one counts as "the arm is here". Same contract as the reference hand mask.
+float armMaskAt(vec2 uv) {
+    vec2 clamped = clamp(uv, vec2(0.0), vec2(1.0));
+    vec4 armSample = texture(ArmOccluderSampler, clamped);
+    float colorPresence = step(1.0 / 255.0, max(max(armSample.r, armSample.g), armSample.b));
+    return max(max(armSample.a, colorPresence), armDepthPresence(armDepthAt(clamped)));
+}
+
+float armOccluderRadius() {
+    return clamp(1.05 + geometry.z * 0.46 + clamp(animation.w, 0.0, 1.0) * 0.32, 0.95, 4.8);
+}
+
+// Coverage owns the decision, depth only refines it: an outline pixel always sits next to the
+// silhouette, so the item depth there is the nearest item surface in the stroke's reach while the
+// arm would only be a single texel. See the outline shader for the full reasoning.
+float armOcclusion(float itemDepth, vec2 uv, vec2 texel) {
+    vec2 reach = texel * armOccluderRadius();
+    float centerCoverage = armMaskAt(uv);
+    float maxCoverage = centerCoverage;
+    float totalCoverage = centerCoverage;
+    float armDepth = armDepthAt(uv);
+    float tap;
+
+    tap = armMaskAt(uv + vec2(reach.x, 0.0));
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv + vec2(reach.x, 0.0)));
+    tap = armMaskAt(uv - vec2(reach.x, 0.0));
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv - vec2(reach.x, 0.0)));
+    tap = armMaskAt(uv + vec2(0.0, reach.y));
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv + vec2(0.0, reach.y)));
+    tap = armMaskAt(uv - vec2(0.0, reach.y));
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv - vec2(0.0, reach.y)));
+    tap = armMaskAt(uv + reach);
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv + reach));
+    tap = armMaskAt(uv - reach);
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv - reach));
+    tap = armMaskAt(uv + vec2(reach.x, -reach.y));
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv + vec2(reach.x, -reach.y)));
+    tap = armMaskAt(uv + vec2(-reach.x, reach.y));
+    maxCoverage = max(maxCoverage, tap);
+    totalCoverage += tap;
+    armDepth = min(armDepth, armDepthAt(uv + vec2(-reach.x, reach.y)));
+
+    if (maxCoverage <= 0.001) {
+        return 1.0;
+    }
+
+    float averageCoverage = totalCoverage / 9.0;
+    float featherCoverage = mix(maxCoverage, averageCoverage, 0.35);
+    float armCoverage = smoothstep(0.035, 0.52, max(centerCoverage, featherCoverage));
+
+    float coreOcclusion = smoothstep(0.10, 0.46, centerCoverage);
+    float fringeOcclusion = smoothstep(0.22, 0.88, armCoverage);
+    float maskVisibility = 1.0 - max(coreOcclusion, fringeOcclusion * 0.62);
+
+    float validDepth = armDepthPresence(armDepth);
+    if (validDepth <= 0.001) {
+        return maskVisibility;
+    }
+
+    float depthVisibility = smoothstep(itemDepth - 0.0035, itemDepth + 0.0008, armDepth);
+    float depthContribution = mix(1.0, depthVisibility, (0.18 + 0.08 * smoothstep(0.18, 0.90, armCoverage)) * validDepth);
+    return min(maskVisibility, depthContribution);
+}
+
 void main() {
     float blurredCoverage = max(texture(BloomSampler, texCoord).a - texture(MaskSampler, texCoord).a, 0.0);
     float bloom = bloomAlpha(blurredCoverage);
@@ -122,6 +211,7 @@ void main() {
     float visible = thirdPerson
         ? (sceneDepth + 0.00015 < itemDepth ? 0.0 : 1.0)
         : smoothstep(itemDepth - 0.0004, itemDepth + 0.0003, sceneDepth);
+    visible *= armOcclusion(itemDepth, texCoord, texel);
     if (sceneDepth + 0.00015 < itemDepth) {
         discard;
     }

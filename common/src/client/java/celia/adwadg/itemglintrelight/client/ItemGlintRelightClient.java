@@ -1,6 +1,8 @@
 package celia.adwadg.itemglintrelight.client;
 
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
+import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineCompat;
+import celia.adwadg.itemglintrelight.client.render.HeldItemOutlinePunchyCompat;
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
@@ -25,6 +27,9 @@ public final class ItemGlintRelightClient implements ClientModInitializer {
                 if (client.screen == null) client.setScreen(new ItemGlintRelightConfigScreen(null));
             }
         });
+        ItemGlintRelight.LOGGER.info("[Compat] punchy={} punchyHooksReady={} iris={}",
+                HeldItemOutlinePunchyCompat.isLoaded(), HeldItemOutlinePunchyCompat.hooksAvailable(),
+                HeldItemOutlineCompat.isIrisLoaded());
         ItemGlintRelight.LOGGER.info("ItemGlintRelight client initialized");
     }
 }
