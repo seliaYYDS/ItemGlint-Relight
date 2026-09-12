@@ -216,6 +216,11 @@ public final class HeldItemOutlineRenderer {
         captureSequenceCounter = 0L;
         uniforms.beginFrame();
         blurUniforms.beginFrame();
+        // Creating a lazily-allocated placeholder issues a clear, and Blaze3D rejects a clear while a
+        // render pass is open. The composite passes below resolve their arm sampler from inside their
+        // own pass, so the stand-in has to already exist by then. beginFrame() runs at the head of
+        // GameRenderer.render, which is always pass-free, so warm it up here once.
+        armOccluderStandIn();
     }
 
     public static void beginHandPass(Matrix4f projection) {
@@ -291,14 +296,39 @@ public final class HeldItemOutlineRenderer {
     }
 
     /**
-     * GUI items use a non-resetting uniform ring so in-flight GUI blits keep their palette, and a
-     * caller-provided bloom chain that only depends on the mask and the config.
+     * GUI items composite in a single pass.
+     *
+     * <p>They use a non-resetting uniform ring so in-flight GUI blits keep their palette, and a
+     * caller-provided bloom chain that depends only on the mask and the config. Unlike the preview
+     * path they also never enable scene occlusion, so {@link HeldItemOutlinePipelines#guiComposite()}
+     * can drop the scene-depth and arm-occluder terms and merge the bloom composite with the outline.
+     * No depth target is needed at all: the only depth the GUI reads is the item depth that already
+     * lives in the mask.
      */
     public static void compositeGuiItemToTexture(Minecraft minecraft, ItemGlintRelightConfig config, TextureTarget mask,
-                                                 GpuTextureView colorTarget, GpuTextureView depthTarget, float[][] materialPalette,
-                                                 float outlineScale, float colorScrollScale, float bloomScale, GpuTextureView bloom) {
-        compositePreviewToTexture(minecraft, config, mask, colorTarget, depthTarget, materialPalette,
-                outlineScale, colorScrollScale, bloomScale, guiUniforms, bloom);
+                                                 GpuTextureView colorTarget, float[][] materialPalette,
+                                                 float outlineScale, float colorScrollScale, GpuTextureView bloom) {
+        if (minecraft == null || config == null || mask == null || colorTarget == null || !config.outlineEnabled()) {
+            return;
+        }
+        int width = colorTarget.getWidth(0);
+        int height = colorTarget.getHeight(0);
+        GpuBufferSlice info = guiUniforms.write(buffer -> writePreviewUniforms(buffer, width, height, config, materialPalette,
+                outlineScale, colorScrollScale));
+        GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
+        GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
+        // With bloom disabled the shader is told so through bloomParameters.y and never samples the
+        // bloom texture; feeding it the mask keeps every declared sampler bound to a live view.
+        GpuTextureView bloomSource = bloom == null ? mask.getColorTextureView() : bloom;
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "itemglintrelight_gui_item_composite", colorTarget, OptionalInt.empty())) {
+            pass.setPipeline(HeldItemOutlinePipelines.guiComposite());
+            pass.setUniform("OutlineInfo", info);
+            pass.bindTexture("MaskSampler", mask.getColorTextureView(), linear);
+            pass.bindTexture("BloomSampler", bloomSource, linear);
+            pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), nearest);
+            pass.draw(0, 3);
+        }
     }
 
     /** Renders the GUI bloom chain into caller-owned targets so it can be cached across frames. */
@@ -333,6 +363,11 @@ public final class HeldItemOutlineRenderer {
                     : renderPreviewBloom(width, height, mask.getColorTextureView(), config, linear, bloomScale);
             submitPreviewBloomComposite(colorTarget, bloom, mask, depthTarget, info, linear);
         }
+        // The preview has no arm pass of its own, so it keeps the inert stand-in rather than feeding
+        // the item mask back in as an "arm": the shader's arm term is coverage driven and would
+        // otherwise eat the preview stroke wherever the mask has coverage. Resolved before the pass
+        // opens, because creating the stand-in on first use clears it.
+        TextureTarget previewArmOccluder = armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_preview_outline", colorTarget, OptionalInt.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.outline());
@@ -340,10 +375,6 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", mask.getColorTextureView(), linear);
             pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), nearest);
             pass.bindTexture("SceneDepthSampler", depthTarget, nearest);
-            // The preview has no arm pass of its own, so it keeps the inert stand-in rather than
-            // feeding the item mask back in as an "arm": the shader's arm term is coverage driven
-            // and would otherwise eat the preview stroke wherever the mask has coverage.
-            TextureTarget previewArmOccluder = armOccluderStandIn();
             pass.bindTexture("ArmOccluderSampler", previewArmOccluder.getColorTextureView(), linear);
             pass.bindTexture("ArmOccluderDepthSampler", previewArmOccluder.getDepthTextureView(), nearest);
             pass.draw(0, 3);
@@ -395,6 +426,8 @@ public final class HeldItemOutlineRenderer {
 
     private static void submitPreviewBloomComposite(GpuTextureView colorTarget, GpuTextureView bloom, TextureTarget mask,
                                                     GpuTextureView sceneDepth, GpuBufferSlice info, GpuSampler sampler) {
+        // Resolved before the pass opens: the stand-in clears its 1x1 target when it is first created.
+        TextureTarget previewArmOccluder = armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_preview_bloom_composite", colorTarget, OptionalInt.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.bloomComposite());
@@ -403,7 +436,6 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", mask.getColorTextureView(), sampler);
             pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.bindTexture("SceneDepthSampler", sceneDepth, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-            TextureTarget previewArmOccluder = armOccluderStandIn();
             pass.bindTexture("ArmOccluderSampler", previewArmOccluder.getColorTextureView(), sampler);
             pass.bindTexture("ArmOccluderDepthSampler", previewArmOccluder.getDepthTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.draw(0, 3);
@@ -1027,6 +1059,8 @@ public final class HeldItemOutlineRenderer {
                 submitBloomComposite(mainTarget, bloom, info, scissor, maskSampler, depthSampler, hand, maskTarget, sceneDepthView);
             }
         }
+        // Resolved before the pass opens: the stand-in clears its 1x1 target when it is first created.
+        TextureTarget outlineArmOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
             if (scissor != null) {
@@ -1037,9 +1071,8 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), maskSampler);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
-            TextureTarget armOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
-            pass.bindTexture("ArmOccluderSampler", armOccluder.getColorTextureView(), maskSampler);
-            pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
+            pass.bindTexture("ArmOccluderSampler", outlineArmOccluder.getColorTextureView(), maskSampler);
+            pass.bindTexture("ArmOccluderDepthSampler", outlineArmOccluder.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
             diagnostic("composite " + hand + " submitted target=" + mainTarget.width + "x" + mainTarget.height
                     + " radius=" + resolveOutlineRadius(mainTarget, config));
@@ -1338,6 +1371,8 @@ public final class HeldItemOutlineRenderer {
 
     private static void submitBloomComposite(RenderTarget mainTarget, GpuTextureView bloom, GpuBufferSlice info, ScissorRect scissor,
                                              GpuSampler sampler, GpuSampler depthSampler, String hand, TextureTarget maskTarget, GpuTextureView sceneDepthView) {
+        // Resolved before the pass opens: the stand-in clears its 1x1 target when it is first created.
+        TextureTarget bloomArmOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                 () -> "itemglintrelight_held_bloom_composite_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
             if (scissor != null) {
@@ -1350,9 +1385,8 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), depthSampler);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
             // The halo is cut by the arm exactly like the stroke, so it does not glow through it.
-            TextureTarget armOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
-            pass.bindTexture("ArmOccluderSampler", armOccluder.getColorTextureView(), sampler);
-            pass.bindTexture("ArmOccluderDepthSampler", armOccluder.getDepthTextureView(), depthSampler);
+            pass.bindTexture("ArmOccluderSampler", bloomArmOccluder.getColorTextureView(), sampler);
+            pass.bindTexture("ArmOccluderDepthSampler", bloomArmOccluder.getDepthTextureView(), depthSampler);
             pass.draw(0, 3);
         }
     }
@@ -1605,7 +1639,9 @@ public final class HeldItemOutlineRenderer {
                     : ((index & 1) == 0 ? rgb(config.outlinePrimaryColor()) : rgb(config.outlineSecondaryColor()));
             put(buffer, color[0], color[1], color[2], 1.0F);
         }
-        put(buffer, config.outlineBloomSoftness(), 0.0F, 0.0F, 0.0F);
+        // .y carries "bloom is on" for the GUI-only composite shader. Every other shader reads only
+        // .x, so this leaves the shared hand, third-person and preview paths untouched.
+        put(buffer, config.outlineBloomSoftness(), config.outlineBloomEnabled() ? 1.0F : 0.0F, 0.0F, 0.0F);
     }
 
     public static float[][] resolvePreviewMaterialPalette(ItemStackRenderState renderState, ItemGlintRelightConfig config) {

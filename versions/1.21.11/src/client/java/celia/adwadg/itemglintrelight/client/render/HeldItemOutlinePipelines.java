@@ -62,6 +62,29 @@ public final class HeldItemOutlinePipelines {
             .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
             .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
             .build());
+    /**
+     * GUI-only single-pass composite.
+     *
+     * <p>The GUI pins {@code scrollBounds.z} to the constant 1.0, so scene occlusion is off there and
+     * the scene-depth and arm-occluder terms of {@link #OUTLINE} / {@link #BLOOM_COMPOSITE} can never
+     * change a pixel. {@code held_item_gui_composite} drops them instead of sampling the 1x1
+     * placeholders, and folds the bloom composite and the outline into one pass that writes the
+     * already-composited colour with blending disabled -- exactly what the two blended passes left in
+     * the target. That removes a render pass, seven texture bindings and two 1x1 placeholder targets
+     * per GUI item per frame.
+     */
+    private static final RenderPipeline GUI_COMPOSITE = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/gui_item_outline_composite"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/held_item_gui_composite"))
+            .withSampler("MaskSampler")
+            .withSampler("BloomSampler")
+            .withSampler("ItemDepthSampler")
+            .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
     private static final RenderPipeline THIRD_PERSON_BLOOM_SEED = RenderPipelines.register(RenderPipeline.builder()
             .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_seed"))
             .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
@@ -109,6 +132,10 @@ public final class HeldItemOutlinePipelines {
 
     public static RenderPipeline bloomComposite() {
         return BLOOM_COMPOSITE;
+    }
+
+    public static RenderPipeline guiComposite() {
+        return GUI_COMPOSITE;
     }
 
     public static RenderPipeline thirdPersonBloomSeed() {
