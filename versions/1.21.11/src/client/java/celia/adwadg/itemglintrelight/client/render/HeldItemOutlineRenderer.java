@@ -33,6 +33,7 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.model.Model;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.OrderedSubmitNodeCollector;
 import net.minecraft.client.renderer.RenderBuffers;
@@ -43,10 +44,13 @@ import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+import net.minecraft.util.Mth;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
@@ -107,6 +111,19 @@ public final class HeldItemOutlineRenderer {
     private static final CaptureState PREVIEW = new CaptureState();
     private static final CaptureState THIRD_PERSON_MAIN_HAND = new CaptureState();
     private static final CaptureState THIRD_PERSON_OFF_HAND = new CaptureState();
+    /**
+     * Local player's armor in third person, one capture per armor slot.
+     *
+     * <p>Vanilla submits armor as an entity model, not as item quads, and it submits the four pieces
+     * separately. Each piece is an item in its own right and resolves its own display rule, so each
+     * needs its own config and therefore its own capture and composite pass.
+     */
+    private static final CaptureState[] THIRD_PERSON_ARMOR = {
+            new CaptureState(), new CaptureState(), new CaptureState(), new CaptureState()};
+    /** Armor group currently recording, and the config its pieces shared. */
+    private static CaptureState armorGroup;
+    private static ItemGlintRelightConfig armorGroupConfig;
+    private static int armorGroupCursor;
     private static final Deque<CaptureState> THIRD_PERSON_CAPTURES = new ArrayDeque<>();
     private static PreviewRequest queuedPreview;
     /**
@@ -210,6 +227,12 @@ public final class HeldItemOutlineRenderer {
         armOccluderReady = false;
         THIRD_PERSON_MAIN_HAND.reset();
         THIRD_PERSON_OFF_HAND.reset();
+        for (CaptureState armor : THIRD_PERSON_ARMOR) {
+            armor.reset();
+        }
+        armorGroup = null;
+        armorGroupConfig = null;
+        armorGroupCursor = 0;
         recordingThirdPerson = null;
         THIRD_PERSON_CAPTURES.clear();
         thirdPersonSceneDepthFrame = Long.MIN_VALUE;
@@ -659,6 +682,157 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+    /**
+     * Starts recording the local player's armor.
+     *
+     * <p>Vanilla draws armor as an entity model rather than as item quads, so it reaches the mirroring
+     * collector through submitModel/submitModelPart instead of submitItem. Once a capture is open
+     * those submissions funnel into {@link #THIRD_PERSON_ARMOR}, and from there the armor rides the
+     * same replay, scissor, bloom and composite machinery the third-person item outline uses.
+     */
+    public static void beginThirdPersonArmorPiece(Object renderState, ItemStack stack, Object equipmentSlot, PoseStack pose) {
+        Minecraft minecraft = Minecraft.getInstance();
+        ItemGlintRelightConfig config = null;
+        if (shouldRenderArmor(minecraft)
+                && renderState instanceof AvatarRenderState avatar
+                && avatar.id == minecraft.player.getId()
+                && stack != null && !stack.isEmpty()
+                && armorSlotIndex(equipmentSlot) >= 0) {
+            // The piece is matched exactly like a held or stored copy of the same item, so a rule aimed
+            // at minecraft:diamond_chestplate styles the worn diamond chestplate too. With rules present
+            // this also inherits the resolver's whitelist behaviour: a piece no rule matches is not
+            // outlined.
+            ItemGlintRelightConfig resolved = DisplayRuleManager.resolve(stack, ItemGlintRelightConfigManager.get());
+            if (resolved.outlineEnabled() && resolved.renderThirdPerson()) config = resolved;
+        }
+
+        // Consecutive pieces that resolve to the same config object share one capture, so the usual
+        // four-piece set is outlined as one merged silhouette in a single composite pass. Giving every
+        // piece its own pass drew four overlapping strokes -- visible as seams wherever two pieces
+        // meet -- and cost four times as much.
+        //
+        // Texture sampling is the one exception: the palette is sampled from the piece's own texture, so
+        // two pieces with different textures have to composite separately. Merging them built a single
+        // palette out of every piece's sprite and painted the whole body one colour -- a diamond helmet
+        // next to an iron chestplate came out uniformly diamond or uniformly iron. Every other mode
+        // derives its colour from the config alone and has nothing to keep apart.
+        boolean mergeable = config == null || config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE;
+        if (mergeable && armorGroup != null && armorGroupConfig == config) return;
+        // This piece does not continue the open group, so the group has to be closed *before* the piece
+        // submits. Otherwise the piece's model is recorded into the previous group's capture and gets
+        // outlined with that group's config -- which is how a rule aimed at one piece leaked onto every
+        // piece rendered after it.
+        closeArmorGroup();
+        if (config == null) return;
+
+        CaptureState capture = THIRD_PERSON_ARMOR[armorGroupCursor++ & (THIRD_PERSON_ARMOR.length - 1)];
+        armorGroup = capture;
+        armorGroupConfig = config;
+        capture.reset();
+        capture.item = stack.copy();
+        capture.stack = stack.toString();
+        capture.config = config;
+        capture.itemContext = ItemDisplayContext.THIRD_PERSON_RIGHT_HAND;
+        capture.requested = true;
+        capture.externalSubmission = true;
+        if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            // Same per-item palette cache the third-person item outline uses. It is keyed on the stack,
+            // so each piece resolves and caches its own palette.
+            capture.materialPaletteKey = materialPaletteKey(stack);
+            capture.materialPalette = MATERIAL_PALETTE_CACHE.get(capture.materialPaletteKey);
+        }
+        ensureDispatcher(minecraft, capture);
+        capture.storage.clear();
+        snapshotRenderContext(capture);
+        if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
+        // The composite region starts from the hitbox and is grown by accumulateArmorBounds as the
+        // armor models are submitted.
+        seedArmorBounds(capture);
+        recordingThirdPerson = capture;
+    }
+
+    /**
+     * View-space floor for an armor group's composite region, taken from the player's hitbox.
+     *
+     * <p>It is a floor, not the final answer: {@link #accumulateArmorBounds} grows the same box from the
+     * armor geometry the renderer actually submitted, exactly the way the third-person item outline
+     * derives its region. Keeping both means a wrong estimate from either source is covered by the
+     * other. Every write outside the region is a no-op, so a generous box changes no pixel.
+     */
+    private static void seedArmorBounds(CaptureState capture) {
+        Minecraft minecraft = Minecraft.getInstance();
+        LocalPlayer player = minecraft == null ? null : minecraft.player;
+        if (player == null || capture.modelViewMatrix == null) return;
+        float partialTick = minecraft.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+        double x = Mth.lerp(partialTick, player.xo, player.getX());
+        double y = Mth.lerp(partialTick, player.yo, player.getY());
+        double z = Mth.lerp(partialTick, player.zo, player.getZ());
+        float half = 0.95F;
+        float height = player.getBbHeight() + 0.6F;
+        expandBounds(capture, (float) x - half, (float) y - 0.6F, (float) z - half,
+                (float) x + half, (float) y + height, (float) z + half);
+    }
+
+    /**
+     * Grows an armor group's region from the armor model that is being submitted, the way
+     * {@link #accumulateItemBounds} does for the third-person item. The walk visits the model's cube
+     * corners under the submitted pose, so the box tracks the real animated silhouette instead of a
+     * guess about where the model might be.
+     */
+    private static void accumulateArmorBounds(Model<?> model, PoseStack pose) {
+        CaptureState capture = recordingThirdPerson;
+        if (model == null || pose == null || !isArmorCapture(capture) || capture.modelViewMatrix == null) return;
+        Matrix4f modelToView = capture.modelViewMatrix;
+        model.root().getExtentsForGui(pose, corner -> {
+            float sx = modelToView.m00() * corner.x() + modelToView.m10() * corner.y() + modelToView.m20() * corner.z() + modelToView.m30();
+            float sy = modelToView.m01() * corner.x() + modelToView.m11() * corner.y() + modelToView.m21() * corner.z() + modelToView.m31();
+            float sz = modelToView.m02() * corner.x() + modelToView.m12() * corner.y() + modelToView.m22() * corner.z() + modelToView.m32();
+            expandBounds(capture, sx, sy, sz, sx, sy, sz);
+        });
+    }
+
+    private static void expandBounds(CaptureState capture, float minX, float minY, float minZ,
+                                     float maxX, float maxY, float maxZ) {
+        float[] bounds = capture.itemBounds;
+        if (bounds == null) {
+            capture.itemBounds = new float[]{minX, minY, minZ, maxX, maxY, maxZ};
+            return;
+        }
+        bounds[0] = Math.min(bounds[0], minX);
+        bounds[1] = Math.min(bounds[1], minY);
+        bounds[2] = Math.min(bounds[2], minZ);
+        bounds[3] = Math.max(bounds[3], maxX);
+        bounds[4] = Math.max(bounds[4], maxY);
+        bounds[5] = Math.max(bounds[5], maxZ);
+    }
+
+    /** Closes the armor group opened by {@link #beginThirdPersonArmorPiece}. */
+    public static void endThirdPersonArmorGroup() {
+        closeArmorGroup();
+    }
+
+    private static void closeArmorGroup() {
+        CaptureState capture = armorGroup;
+        armorGroup = null;
+        armorGroupConfig = null;
+        if (capture == null || recordingThirdPerson != capture) return;
+        recordingThirdPerson = null;
+        if (capture.captured) {
+            THIRD_PERSON_CAPTURES.addLast(capture);
+        } else {
+            capture.reset();
+        }
+    }
+
+    /** Index of an armor slot in {@link #THIRD_PERSON_ARMOR}; -1 for every non-armor slot. */
+    private static int armorSlotIndex(Object equipmentSlot) {
+        if (equipmentSlot == EquipmentSlot.HEAD) return 0;
+        if (equipmentSlot == EquipmentSlot.CHEST) return 1;
+        if (equipmentSlot == EquipmentSlot.LEGS) return 2;
+        if (equipmentSlot == EquipmentSlot.FEET) return 3;
+        return -1;
+    }
+
     public static void captureThirdPersonItemDirect(Minecraft minecraft, InteractionHand hand, ItemStack stack,
                                                     ItemStackRenderState itemState, PoseStack pose, int light,
                                                     int overlay, int color) {
@@ -703,13 +877,37 @@ public final class HeldItemOutlineRenderer {
         return config;
     }
 
-    private static boolean shouldRenderThirdPerson(Minecraft minecraft) {
-        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+    /**
+     * Armor is recorded through the same mirroring collector as the third-person item: the wrapper
+     * diverts every submitModel / submitModelPart into whichever capture is currently open, which is
+     * how the armor model reaches {@link #THIRD_PERSON_ARMOR}.
+     */
+    public static SubmitNodeCollector wrapArmorCollector(Minecraft minecraft, SubmitNodeCollector original) {
+        return shouldRenderArmor(minecraft) ? wrapThirdPersonCollector(minecraft, original) : original;
+    }
+
+    /** Third-person overlays are only built while the player is actually looking at their own body. */
+    private static boolean thirdPersonViewActive(Minecraft minecraft) {
         return minecraft != null && minecraft.player != null && minecraft.level != null
                 && !minecraft.options.getCameraType().isFirstPerson()
                 && minecraft.screen == null
-                && !HeldItemOutlineCompat.isIrisShadowPass()
-                && config.outlineEnabled() && config.renderThirdPerson() && config.outlineThirdPerson();
+                && !HeldItemOutlineCompat.isIrisShadowPass();
+    }
+
+    private static boolean shouldRenderThirdPerson(Minecraft minecraft) {
+        // Either third-person overlay may be the only one enabled, and they share the depth snapshot,
+        // the scene-depth bookkeeping and the composite pass, so the machinery runs while either wants
+        // an outline. beginThirdPersonItem() still gates the item capture on outlineThirdPerson().
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        return thirdPersonViewActive(minecraft)
+                && config.outlineEnabled() && config.renderThirdPerson()
+                && (config.outlineThirdPerson() || config.outlineArmor());
+    }
+
+    private static boolean shouldRenderArmor(Minecraft minecraft) {
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        return thirdPersonViewActive(minecraft)
+                && config.outlineEnabled() && config.renderThirdPerson() && config.outlineArmor();
     }
 
     /** Diagnostic: region covered by the opaque snapshot taken in phase one. */
@@ -912,7 +1110,11 @@ public final class HeldItemOutlineRenderer {
         ScissorRect union = null;
         for (CaptureState capture : THIRD_PERSON_CAPTURES) {
             if (!capture.captured || capture.config == null) continue;
-            union = ScissorRect.union(union, resolveThirdPersonScissor(target, capture, thirdPersonConfig(capture)));
+            ScissorRect captureScissor = resolveThirdPersonScissor(target, capture, thirdPersonConfig(capture));
+            // One full-target capture makes the whole snapshot necessary; without this the region it
+            // composites over would read as the far plane and the outline would punch through walls.
+            if (captureScissor == null) return null;
+            union = ScissorRect.union(union, captureScissor);
         }
         return union;
     }
@@ -1742,6 +1944,27 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+    /**
+     * Texture sampling for mirrored model submissions. The hand-gated variant only reaches the
+     * first-person captures, so the armor capture -- which has no hand context at all -- would fall
+     * back to a flat primary colour; feed its sprite through directly instead.
+     */
+    private static void mirrorModelTextureColors(TextureAtlasSprite sprite, int tint) {
+        captureTextureColors(sprite, tint);
+        CaptureState capture = recordingThirdPerson;
+        if (sprite != null && isArmorCapture(capture)) {
+            captureTextureColors(capture, sprite, tint);
+        }
+    }
+
+    private static boolean isArmorCapture(CaptureState capture) {
+        if (capture == null) return false;
+        for (CaptureState candidate : THIRD_PERSON_ARMOR) {
+            if (candidate == capture) return true;
+        }
+        return false;
+    }
+
     private static void captureTextureColors(TextureAtlasSprite sprite, int tint) {
         InteractionHand hand = submittingHand != null ? submittingHand : recordingHand;
         if (hand == null || itemSubmissionDepth <= 0
@@ -1945,6 +2168,11 @@ public final class HeldItemOutlineRenderer {
      */
     private static ScissorRect resolveThirdPersonScissor(RenderTarget target, CaptureState state, ItemGlintRelightConfig config) {
         float[] itemBounds = state.itemBounds;
+        // A capture that opted out of the tight region composites over the whole target. Clipping the
+        // armor outline to a projected box proved unreliable -- the box is derived from the hitbox and
+        // the region could miss the model at some view angles, which cut the stroke away -- so armor
+        // asks for the full target and keeps the scene-depth test authoritative instead.
+        if (state.fullTargetRegion) return null;
         if (!ITEM_BOUNDS_SCISSOR_ENABLED || !state.captured || itemBounds == null
                 || !isPerspectiveProjection(state.projectionMatrix4f)) {
             return null;
@@ -2281,6 +2509,8 @@ public final class HeldItemOutlineRenderer {
         /** Projection active for this capture's pass; turns the view-space bounds into clip space. */
         private Matrix4f projectionMatrix4f;
         private boolean externalSubmission;
+        /** Composite over the whole target instead of a projected item box. */
+        private boolean fullTargetRegion;
         /** Order in which this state last captured a node; 0 when it captured nothing this frame. */
         private long lastCaptureSequence;
 
@@ -2306,6 +2536,7 @@ public final class HeldItemOutlineRenderer {
             projectionType = null;
             projectionMatrix4f = null;
             externalSubmission = false;
+            fullTargetRegion = false;
             lastCaptureSequence = 0L;
             if (storage != null) storage.clear();
         }
@@ -2430,8 +2661,8 @@ public final class HeldItemOutlineRenderer {
         @Override public void submitText(com.mojang.blaze3d.vertex.PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
         @Override public void submitFlame(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
         @Override public void submitLeash(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
-        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); captureTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
-        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); captureTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
+        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); accumulateArmorBounds(model, pose); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
+        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
         @Override public void submitBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.world.level.block.state.BlockState state, int light, int overlay, int color) { delegate.submitBlock(pose, state, light, overlay, color); }
         @Override public void submitMovingBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state) { delegate.submitMovingBlock(pose, state); }
         @Override public void submitBlockModel(com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, net.minecraft.client.renderer.block.model.BlockStateModel model, float red, float green, float blue, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, model, red, green, blue, light, overlay, color); }
@@ -2462,8 +2693,8 @@ public final class HeldItemOutlineRenderer {
         @Override public void submitText(com.mojang.blaze3d.vertex.PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
         @Override public void submitFlame(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
         @Override public void submitLeash(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
-        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); captureTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
-        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); captureTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
+        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); accumulateArmorBounds(model, pose); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
+        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
         @Override public void submitBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.world.level.block.state.BlockState state, int light, int overlay, int color) { delegate.submitBlock(pose, state, light, overlay, color); }
         @Override public void submitMovingBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state) { delegate.submitMovingBlock(pose, state); }
         @Override public void submitBlockModel(com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, net.minecraft.client.renderer.block.model.BlockStateModel model, float red, float green, float blue, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, model, red, green, blue, light, overlay, color); }

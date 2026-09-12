@@ -19,6 +19,7 @@
     "GuiRendererPreviewMixin",
     "GuiRendererItemOutlineMixin",
     "GameRendererFrameMixin",
+    "HumanoidArmorLayerMixin",
     "PlayerItemInHandLayerMixin",
     "ItemInHandRendererMixin",
     "PerspectiveProjectionMatrixBufferMixin",

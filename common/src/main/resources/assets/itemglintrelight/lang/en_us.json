@@ -30,6 +30,7 @@
   "ui.itemglintrelight.outline.off_hand": "Off hand",
   "ui.itemglintrelight.outline.third_person": "Third-person outline",
   "ui.itemglintrelight.outline.gui_items": "GUI item outline",
+  "ui.itemglintrelight.outline.armor": "Armor outline",
   "ui.itemglintrelight.render.outline_width": "Outline width",
   "ui.itemglintrelight.render.softness": "Softness",
   "ui.itemglintrelight.render.alpha_threshold": "Alpha threshold",
