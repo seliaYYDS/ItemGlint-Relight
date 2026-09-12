@@ -152,6 +152,43 @@ float bloomDepthGate(vec2 uv, vec2 texel) {
     return smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, GUI_SCENE_DEPTH);
 }
 
+// -------------------------------------------------------------------------------------------
+// Cubic face lighting (shared contract with held_item_outline.fsh)
+// -------------------------------------------------------------------------------------------
+// The cubic stroke is shaded as if the item sat inside an extruded box: the stroke's outward normal
+// selects one of four faces, each with its own brightness. faceSum accumulates the ring directions
+// that landed on covered pixels, so it points from the silhouette back towards the stroke pixel --
+// along the outward normal. The previous version normalised a sum gathered over a solid box, and a
+// symmetric covered neighbourhood cancels that sum to zero, so normalizing produced NaN; here a
+// vanishing sum simply fades the shading back to flat and the face seams are anti-aliased on both
+// axes instead of only along the diagonal.
+const float CUBIC_LIGHT_NEG_X = 0.96;
+const float CUBIC_LIGHT_POS_X = 0.72;
+const float CUBIC_LIGHT_NEG_Y = 1.14;
+const float CUBIC_LIGHT_POS_Y = 0.64;
+
+float cubicFaceLight(vec2 faceSum) {
+    float magnitude = length(faceSum);
+    if (magnitude <= 0.0001) {
+        return 1.0;
+    }
+    vec2 face = faceSum / magnitude;
+    float axisDelta = abs(face.x) - abs(face.y);
+    float axisSeam = max(fwidth(axisDelta) * 1.5, 0.02);
+    float sideSeam = max(fwidth(face.x) * 1.5, 0.02);
+    float verticalSeam = max(fwidth(face.y) * 1.5, 0.02);
+    float horizontalLight = mix(CUBIC_LIGHT_NEG_X, CUBIC_LIGHT_POS_X, smoothstep(-sideSeam, sideSeam, face.x));
+    float verticalLight = mix(CUBIC_LIGHT_NEG_Y, CUBIC_LIGHT_POS_Y, smoothstep(-verticalSeam, verticalSeam, face.y));
+    float faceLight = mix(verticalLight, horizontalLight, smoothstep(-axisSeam, axisSeam, axisDelta));
+    return mix(1.0, faceLight, smoothstep(0.0, 0.5, magnitude));
+}
+
+// Direction count for the cubic ring; see held_item_outline.fsh for the full reasoning. The GUI mask
+// is small, so this normally resolves to the six-sample floor rather than a full quality ring.
+int cubicSampleCount() {
+    return clamp(int(ceil(geometry.z * 4.0)), 6, MAX_OUTLINE_SAMPLES);
+}
+
 void main() {
     vec2 texel = 1.0 / max(geometry.xy, vec2(1.0));
     float softness = cornerSoftness();
@@ -162,33 +199,9 @@ void main() {
         : smoothstep(geometry.w - 0.02, geometry.w + 0.02, coverage(texCoord));
     float outer = 0.0;
     float cubicLight = 1.0;
-    if (cubicMode()) {
-        int cubicRadius = max(1, int(floor(geometry.z + 0.5)));
-        vec2 faceSum = vec2(0.0);
-        float lightWeight = 0.0;
-        for (int y = -cubicRadius; y <= cubicRadius; y++) {
-            for (int x = -cubicRadius; x <= cubicRadius; x++) {
-                ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), maskSize - ivec2(1));
-                vec2 sampleUv = (vec2(samplePixel) + 0.5) / vec2(maskSize);
-                float sampleCoverage = coverage(sampleUv);
-                if (sampleCoverage > geometry.w) {
-                    float layer = 1.0 - float(max(abs(x), abs(y))) / float(cubicRadius + 1);
-                    float weight = 0.20 + 0.80 * layer;
-                    faceSum += vec2(float(-x), float(-y)) * weight;
-                    lightWeight += weight;
-                }
-                outer = max(outer, sampleCoverage);
-            }
-        }
-        if (lightWeight > 0.0001) {
-            vec2 face = normalize(faceSum);
-            float horizontalLight = face.x < 0.0 ? 0.96 : 0.72;
-            float verticalLight = face.y < 0.0 ? 1.14 : 0.64;
-            float faceDelta = abs(face.x) - abs(face.y);
-            float seam = max(fwidth(faceDelta) * 2.5, 0.055);
-            cubicLight = mix(verticalLight, horizontalLight, smoothstep(-seam, seam, faceDelta));
-        }
-    } else if (softness <= 0.001) {
+    bool cubic = cubicMode();
+    if (!cubic && softness <= 0.001) {
+        // Sharply-edged flat stroke: the square search, left exactly as it was.
         int sharpRadius = max(1, int(floor(geometry.z + 0.5)));
         for (int y = -sharpRadius; y <= sharpRadius; y++) {
             for (int x = -sharpRadius; x <= sharpRadius; x++) {
@@ -197,20 +210,34 @@ void main() {
             }
         }
     } else {
-        int sampleCount = outlineSampleCount();
-        int ringCount = softness >= 0.999 ? 2 : 1;
+        // Ring sampling, shared by the soft flat path and the cubic path. Cubic keeps the square
+        // reach it had as a box but pays a cost set by the outline radius rather than by its square.
+        // Its half-radius ring matters here too: rings at r and r/2 fill every distance in [0, r] for
+        // anything at least r/2 thick, which the GUI mask always is. See held_item_outline.fsh.
+        int sampleCount = cubic ? cubicSampleCount() : outlineSampleCount();
+        int ringCount = cubic || softness >= 0.999 ? 2 : 1;
+        vec2 faceSum = vec2(0.0);
         for (int i = 0; i < MAX_OUTLINE_SAMPLES; i++) {
             if (i >= sampleCount) break;
             float angle = TAU * float(i) / float(sampleCount);
             vec2 circleDirection = vec2(cos(angle), sin(angle));
             vec2 squareDirection = circleDirection / max(max(abs(circleDirection.x), abs(circleDirection.y)), 0.0001);
-            vec2 sampleDirection = mix(squareDirection, circleDirection, softness);
+            // Cubic stays square at every softness, matching the box it replaces.
+            vec2 sampleDirection = cubic ? squareDirection : mix(squareDirection, circleDirection, softness);
             for (int ring = 0; ring < 2; ring++) {
                 if (ring >= ringCount) break;
                 if (ring == 1 && (i & 1) != 0) break;
                 float radius = geometry.z * (ring == 0 ? 1.0 : 0.5);
-                outer = max(outer, coverage(texCoord + sampleDirection * texel * radius));
+                vec2 sampleUv = texCoord + sampleDirection * texel * radius;
+                float sampleCoverage = coverage(sampleUv);
+                outer = max(outer, sampleCoverage);
+                if (cubic && sampleCoverage > geometry.w) {
+                    faceSum -= sampleDirection * (ring == 0 ? 1.0 : 0.5);
+                }
             }
+        }
+        if (cubic) {
+            cubicLight = cubicFaceLight(faceSum);
         }
     }
     // visible == 1: scene occlusion is disabled on this path.

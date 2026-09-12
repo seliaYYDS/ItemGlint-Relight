@@ -221,6 +221,52 @@ float armOcclusion(float itemDepth, vec2 uv, vec2 texel) {
     return min(maskVisibility, depthContribution);
 }
 
+// -------------------------------------------------------------------------------------------
+// Cubic face lighting
+// -------------------------------------------------------------------------------------------
+// The cubic stroke is shaded as if the item sat inside an extruded box: the stroke's outward normal
+// selects one of four faces, each with its own brightness. faceSum accumulates the ring directions
+// that landed on covered pixels, so it points from the silhouette back towards the stroke pixel --
+// along the outward normal.
+//
+// The previous version normalised a sum gathered over a solid box. A symmetric covered
+// neighbourhood cancels that sum to zero, and normalizing zero yields NaN, which is a large part of
+// why the wrapping read as irregular. Here a vanishing sum simply fades the shading back to flat,
+// the seams between the four faces are anti-aliased on both axes instead of only along the
+// diagonal, and the reach follows the radius continuously instead of snapping to whole texels.
+const float CUBIC_LIGHT_NEG_X = 0.96;
+const float CUBIC_LIGHT_POS_X = 0.72;
+const float CUBIC_LIGHT_NEG_Y = 1.14;
+const float CUBIC_LIGHT_POS_Y = 0.64;
+
+float cubicFaceLight(vec2 faceSum) {
+    float magnitude = length(faceSum);
+    if (magnitude <= 0.0001) {
+        return 1.0;
+    }
+    vec2 face = faceSum / magnitude;
+    float axisDelta = abs(face.x) - abs(face.y);
+    float axisSeam = max(fwidth(axisDelta) * 1.5, 0.02);
+    float sideSeam = max(fwidth(face.x) * 1.5, 0.02);
+    float verticalSeam = max(fwidth(face.y) * 1.5, 0.02);
+    float horizontalLight = mix(CUBIC_LIGHT_NEG_X, CUBIC_LIGHT_POS_X, smoothstep(-sideSeam, sideSeam, face.x));
+    float verticalLight = mix(CUBIC_LIGHT_NEG_Y, CUBIC_LIGHT_POS_Y, smoothstep(-verticalSeam, verticalSeam, face.y));
+    float faceLight = mix(verticalLight, horizontalLight, smoothstep(-axisSeam, axisSeam, axisDelta));
+    // A direction that almost cancels out sits in the middle of a thick covered band, where the
+    // stroke is at its most transparent; fading to flat keeps that transition continuous.
+    return mix(1.0, faceLight, smoothstep(0.0, 0.5, magnitude));
+}
+
+// Direction count for the cubic ring. The stroke is traced with a square ring of perimeter 8r, so
+// the count follows the outline radius rather than a fixed quality step: a thin GUI stroke stays at
+// a handful of samples while a wide screen-space stroke gets a dense ring. The cubic path used to
+// scan a solid box of radius round(geometry.z), which is quadratic in both the outline width and the
+// screen resolution -- 169 samples per pixel at 1080p, 289 at 1440p and 625 at 4K for the bundled
+// width-4.85 preset, against a fixed 12/24/48 for flat.
+int cubicSampleCount() {
+    return clamp(int(ceil(geometry.z * 4.0)), 6, MAX_OUTLINE_SAMPLES);
+}
+
 void main() {
     vec2 texel = 1.0 / max(geometry.xy, vec2(1.0));
     float softness = cornerSoftness();
@@ -233,34 +279,9 @@ void main() {
     float nearestDepth = 1.0;
     float cubicLight = 1.0;
     float glow = glowIntensity();
-    if (cubicMode()) {
-        int cubicRadius = max(1, int(floor(geometry.z + 0.5)));
-        vec2 faceSum = vec2(0.0);
-        float lightWeight = 0.0;
-        for (int y = -cubicRadius; y <= cubicRadius; y++) {
-            for (int x = -cubicRadius; x <= cubicRadius; x++) {
-                ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), maskSize - ivec2(1));
-                vec2 sampleUv = (vec2(samplePixel) + 0.5) / vec2(maskSize);
-                float sampleCoverage = visibleCoverage(sampleUv);
-                if (sampleCoverage > geometry.w) {
-                    float layer = 1.0 - float(max(abs(x), abs(y))) / float(cubicRadius + 1);
-                    float weight = 0.20 + 0.80 * layer;
-                    faceSum += vec2(float(-x), float(-y)) * weight;
-                    lightWeight += weight;
-                    nearestDepth = min(nearestDepth, texture(ItemDepthSampler, sampleUv).r);
-                }
-                outer = max(outer, sampleCoverage);
-            }
-        }
-        if (lightWeight > 0.0001) {
-            vec2 face = normalize(faceSum);
-            float horizontalLight = face.x < 0.0 ? 0.96 : 0.72;
-            float verticalLight = face.y < 0.0 ? 1.14 : 0.64;
-            float faceDelta = abs(face.x) - abs(face.y);
-            float seam = max(fwidth(faceDelta) * 2.5, 0.055);
-            cubicLight = mix(verticalLight, horizontalLight, smoothstep(-seam, seam, faceDelta));
-        }
-    } else if (softness <= 0.001) {
+    bool cubic = cubicMode();
+    if (!cubic && softness <= 0.001) {
+        // Sharply-edged flat stroke: the square search, left exactly as it was.
         int sharpRadius = max(1, int(floor(geometry.z + 0.5)));
         for (int y = -sharpRadius; y <= sharpRadius; y++) {
             for (int x = -sharpRadius; x <= sharpRadius; x++) {
@@ -274,14 +295,28 @@ void main() {
             }
         }
     } else {
-        int sampleCount = outlineSampleCount();
-        int ringCount = softness >= 0.999 ? 2 : 1;
+        // Ring sampling, shared by the soft flat path and the cubic path.
+        //
+        // Cubic keeps the square reach it had as a box -- a square ring's corners sit at
+        // geometry.z * sqrt(2), which is exactly where the box reached -- but pays a cost set by the
+        // outline radius rather than by its square.
+        //
+        // The half-radius ring on odd directions is what keeps that swap safe for the coverage test.
+        // A sample at radius p only lands inside an item of local thickness w when the pixel sits
+        // between p - w and p away from it, so rings at r and r/2 cover every distance in [0, r] as
+        // soon as w >= r/2. Anything at least half the stroke radius thick -- every item in practice
+        // -- therefore fills exactly the way the box did, and a single ring would have left a gap
+        // next to anything thinner than the stroke.
+        int sampleCount = cubic ? cubicSampleCount() : outlineSampleCount();
+        int ringCount = cubic || softness >= 0.999 ? 2 : 1;
+        vec2 faceSum = vec2(0.0);
         for (int i = 0; i < MAX_OUTLINE_SAMPLES; i++) {
             if (i >= sampleCount) break;
             float angle = TAU * float(i) / float(sampleCount);
             vec2 circleDirection = vec2(cos(angle), sin(angle));
             vec2 squareDirection = circleDirection / max(max(abs(circleDirection.x), abs(circleDirection.y)), 0.0001);
-            vec2 sampleDirection = mix(squareDirection, circleDirection, softness);
+            // Cubic stays square at every softness, matching the box it replaces.
+            vec2 sampleDirection = cubic ? squareDirection : mix(squareDirection, circleDirection, softness);
             for (int ring = 0; ring < 2; ring++) {
                 if (ring >= ringCount) break;
                 if (ring == 1 && (i & 1) != 0) break;
@@ -292,7 +327,15 @@ void main() {
                 if (sampleCoverage > 0.0) {
                     nearestDepth = min(nearestDepth, texture(ItemDepthSampler, clamp(sampleUv, vec2(0.0), vec2(1.0))).r);
                 }
+                if (cubic && sampleCoverage > geometry.w) {
+                    // Only the outer ring sits at the stroke's edge, so the inner one votes with less
+                    // weight -- the same "nearer samples matter more" bias the box weighting had.
+                    faceSum -= sampleDirection * (ring == 0 ? 1.0 : 0.5);
+                }
             }
+        }
+        if (cubic) {
+            cubicLight = cubicFaceLight(faceSum);
         }
     }
     float edge = smoothstep(geometry.w, 1.0, outer) * (1.0 - center);
