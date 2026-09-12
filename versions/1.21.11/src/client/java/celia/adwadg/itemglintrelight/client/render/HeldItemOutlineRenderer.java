@@ -45,7 +45,9 @@ import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.util.Mth;
+import net.minecraft.world.item.equipment.Equippable;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -123,6 +125,8 @@ public final class HeldItemOutlineRenderer {
     /** Armor group currently recording, and the config its pieces shared. */
     private static CaptureState armorGroup;
     private static ItemGlintRelightConfig armorGroupConfig;
+    /** Armor texture the open group samples from; only meaningful in TEXTURE_SAMPLE. */
+    private static String armorGroupAsset;
     private static int armorGroupCursor;
     private static final Deque<CaptureState> THIRD_PERSON_CAPTURES = new ArrayDeque<>();
     private static PreviewRequest queuedPreview;
@@ -232,6 +236,7 @@ public final class HeldItemOutlineRenderer {
         }
         armorGroup = null;
         armorGroupConfig = null;
+        armorGroupAsset = null;
         armorGroupCursor = 0;
         recordingThirdPerson = null;
         THIRD_PERSON_CAPTURES.clear();
@@ -712,11 +717,19 @@ public final class HeldItemOutlineRenderer {
         // meet -- and cost four times as much.
         //
         // Texture sampling is the one exception: the palette is sampled from the piece's own texture, so
-        // two pieces with different textures have to composite separately. Merging them built a single
-        // palette out of every piece's sprite and painted the whole body one colour -- a diamond helmet
-        // next to an iron chestplate came out uniformly diamond or uniformly iron. Every other mode
-        // derives its colour from the config alone and has nothing to keep apart.
-        boolean mergeable = config == null || config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE;
+        // pieces of different materials have to composite separately. Merging them built a single palette
+        // out of every piece's sprite and painted the whole body one colour -- a diamond helmet next to
+        // an iron chestplate came out uniformly diamond or uniformly iron.
+        //
+        // The equipable's assetId names that texture exactly, so the split happens per material rather
+        // than per piece: a matching set still merges into one silhouette and one composite pass, and
+        // only a mixed set splits, at the material boundary. Every other mode derives its colour from
+        // the config alone and has nothing to keep apart.
+        String armorAsset = config != null && config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE
+                ? armorAssetKey(stack) : null;
+        boolean mergeable = config != null
+                && (config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE
+                || (armorAsset != null && armorAsset.equals(armorGroupAsset)));
         if (mergeable && armorGroup != null && armorGroupConfig == config) return;
         // This piece does not continue the open group, so the group has to be closed *before* the piece
         // submits. Otherwise the piece's model is recorded into the previous group's capture and gets
@@ -728,6 +741,7 @@ public final class HeldItemOutlineRenderer {
         CaptureState capture = THIRD_PERSON_ARMOR[armorGroupCursor++ & (THIRD_PERSON_ARMOR.length - 1)];
         armorGroup = capture;
         armorGroupConfig = config;
+        armorGroupAsset = armorAsset;
         capture.reset();
         capture.item = stack.copy();
         capture.stack = stack.toString();
@@ -815,6 +829,7 @@ public final class HeldItemOutlineRenderer {
         CaptureState capture = armorGroup;
         armorGroup = null;
         armorGroupConfig = null;
+        armorGroupAsset = null;
         if (capture == null || recordingThirdPerson != capture) return;
         recordingThirdPerson = null;
         if (capture.captured) {
@@ -822,6 +837,13 @@ public final class HeldItemOutlineRenderer {
         } else {
             capture.reset();
         }
+    }
+
+    /** Texture identity of a wearable, or null when the stack carries no equipment asset. */
+    private static String armorAssetKey(ItemStack stack) {
+        Equippable equippable = stack.get(DataComponents.EQUIPPABLE);
+        if (equippable == null) return null;
+        return equippable.assetId().map(String::valueOf).orElse(null);
     }
 
     /** Index of an armor slot in {@link #THIRD_PERSON_ARMOR}; -1 for every non-armor slot. */
