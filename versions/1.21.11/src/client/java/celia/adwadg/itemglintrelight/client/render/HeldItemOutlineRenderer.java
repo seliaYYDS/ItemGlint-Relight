@@ -44,10 +44,12 @@ import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
 import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.rendertype.RenderType;
+import net.minecraft.client.renderer.entity.state.ArmorStandRenderState;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.equipment.Equippable;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -120,8 +122,21 @@ public final class HeldItemOutlineRenderer {
      * separately. Each piece is an item in its own right and resolves its own display rule, so each
      * needs its own config and therefore its own capture and composite pass.
      */
-    private static final CaptureState[] THIRD_PERSON_ARMOR = {
-            new CaptureState(), new CaptureState(), new CaptureState(), new CaptureState()};
+    private static final CaptureState[] THIRD_PERSON_ARMOR = armorCaptures(8);
+    /**
+     * Armor-stand equipment captures, recycled between frames.
+     *
+     * <p>A world can hold any number of stands and every piece of equipment resolves its own config,
+     * so unlike the local player's fixed slots this is a growable pool: one state is taken per armor
+     * group and per held item, and the cursor is rewound at the start of every frame. A state is only
+     * ever handed out after {@link CaptureState#reset()}, and the cap keeps a stand-heavy build from
+     * growing the pool -- and the feature dispatcher that lives in every state -- without bound.
+     */
+    private static final List<CaptureState> ARMOR_STAND_CAPTURES = new ArrayList<>();
+    private static final int MAX_ARMOR_STAND_CAPTURES = 64;
+    private static int armorStandCaptureCursor;
+    /** Held item of an armor stand currently being recorded, null outside that window. */
+    private static CaptureState recordingArmorStandItem;
     /** Armor group currently recording, and the config its pieces shared. */
     private static CaptureState armorGroup;
     private static ItemGlintRelightConfig armorGroupConfig;
@@ -238,6 +253,8 @@ public final class HeldItemOutlineRenderer {
         armorGroupConfig = null;
         armorGroupAsset = null;
         armorGroupCursor = 0;
+        recordingArmorStandItem = null;
+        armorStandCaptureCursor = 0;
         recordingThirdPerson = null;
         THIRD_PERSON_CAPTURES.clear();
         thirdPersonSceneDepthFrame = Long.MIN_VALUE;
@@ -249,6 +266,34 @@ public final class HeldItemOutlineRenderer {
         // own pass, so the stand-in has to already exist by then. beginFrame() runs at the head of
         // GameRenderer.render, which is always pass-free, so warm it up here once.
         armOccluderStandIn();
+    }
+
+    private static CaptureState[] armorCaptures(int count) {
+        CaptureState[] states = new CaptureState[count];
+        for (int index = 0; index < count; index++) {
+            states[index] = new CaptureState();
+            states[index].armor = true;
+        }
+        return states;
+    }
+
+    /**
+     * Takes the next armor-stand capture of this frame, or null once the per-frame cap is reached.
+     * The caller resets the state before filling it.
+     */
+    private static CaptureState acquireArmorStandCapture() {
+        if (armorStandCaptureCursor >= MAX_ARMOR_STAND_CAPTURES) {
+            return null;
+        }
+        CaptureState capture;
+        if (armorStandCaptureCursor < ARMOR_STAND_CAPTURES.size()) {
+            capture = ARMOR_STAND_CAPTURES.get(armorStandCaptureCursor);
+        } else {
+            capture = new CaptureState();
+            ARMOR_STAND_CAPTURES.add(capture);
+        }
+        armorStandCaptureCursor++;
+        return capture;
     }
 
     public static void beginHandPass(Matrix4f projection) {
@@ -647,6 +692,9 @@ public final class HeldItemOutlineRenderer {
         }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.level == null || stack == null || stack.isEmpty()) return;
+        // The collector wrap used to be the only thing holding this capture to the third-person
+        // camera; armor stands widen that wrap to every camera, so the gate is stated here instead.
+        if (!thirdPersonViewActive(minecraft)) return;
 
         ItemGlintRelightConfig baseConfig = ItemGlintRelightConfigManager.get();
         if (!baseConfig.outlineEnabled() || !baseConfig.renderThirdPerson() || !baseConfig.outlineThirdPerson()) {
@@ -697,10 +745,16 @@ public final class HeldItemOutlineRenderer {
      */
     public static void beginThirdPersonArmorPiece(Object renderState, ItemStack stack, Object equipmentSlot, PoseStack pose) {
         Minecraft minecraft = Minecraft.getInstance();
+        // Armor stands join the local player here. Both submit worn armor through HumanoidArmorLayer,
+        // so both reach this hook; each branch narrows the capture to its own entity and the rest of
+        // the world's humanoids simply wrap and pass through without recording anything.
+        boolean armorStandPiece = renderState instanceof ArmorStandRenderState
+                && shouldRenderArmorStandArmor(minecraft);
+        boolean playerPiece = !armorStandPiece && renderState instanceof AvatarRenderState avatar
+                && minecraft != null && minecraft.player != null && avatar.id == minecraft.player.getId()
+                && shouldRenderArmor(minecraft);
         ItemGlintRelightConfig config = null;
-        if (shouldRenderArmor(minecraft)
-                && renderState instanceof AvatarRenderState avatar
-                && avatar.id == minecraft.player.getId()
+        if ((armorStandPiece || playerPiece)
                 && stack != null && !stack.isEmpty()
                 && armorSlotIndex(equipmentSlot) >= 0) {
             // The piece is matched exactly like a held or stored copy of the same item, so a rule aimed
@@ -738,7 +792,12 @@ public final class HeldItemOutlineRenderer {
         closeArmorGroup();
         if (config == null) return;
 
-        CaptureState capture = THIRD_PERSON_ARMOR[armorGroupCursor++ & (THIRD_PERSON_ARMOR.length - 1)];
+        CaptureState capture = armorStandPiece
+                ? acquireArmorStandCapture()
+                : THIRD_PERSON_ARMOR[armorGroupCursor++ & (THIRD_PERSON_ARMOR.length - 1)];
+        if (capture == null) return;
+        capture.armor = true;
+        capture.armorStand = armorStandPiece;
         armorGroup = capture;
         armorGroupConfig = config;
         armorGroupAsset = armorAsset;
@@ -761,7 +820,11 @@ public final class HeldItemOutlineRenderer {
         if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
         // The composite region starts from the hitbox and is grown by accumulateArmorBounds as the
         // armor models are submitted.
-        seedArmorBounds(capture);
+        if (armorStandPiece) {
+            seedArmorStandBounds(capture, (ArmorStandRenderState) renderState);
+        } else {
+            seedArmorBounds(capture);
+        }
         recordingThirdPerson = capture;
     }
 
@@ -785,6 +848,58 @@ public final class HeldItemOutlineRenderer {
         float height = player.getBbHeight() + 0.6F;
         expandBounds(capture, (float) x - half, (float) y - 0.6F, (float) z - half,
                 (float) x + half, (float) y + height, (float) z + half);
+    }
+
+    /**
+     * Same floor as {@link #seedArmorBounds}, for one armor stand, taken from its render state.
+     *
+     * <p>The stand is neither the local player nor at the player's position, so the box is built from
+     * the state's own hitbox and then transformed into view space by the capture's model-view matrix.
+     * The transform is what makes the box actually cover the stand: entity geometry is drawn relative
+     * to the camera, so a world-space box would land somewhere else entirely on screen.
+     */
+    private static void seedArmorStandBounds(CaptureState capture, ArmorStandRenderState state) {
+        float halfWidth = Math.max(0.4F, state.boundingBoxWidth * 0.5F) + 0.15F;
+        float height = Math.max(1.2F, state.boundingBoxHeight) + 0.6F;
+        seedEntityBounds(capture, state.x, state.y, state.z, halfWidth, -0.3F, height);
+    }
+
+    /**
+     * View-space extents of a camera-relative box around one entity.
+     *
+     * <p>All eight corners are transformed instead of just two: the model-view matrix rotates, and the
+     * axis-aligned box around a rotated box is not the image of its corners.
+     */
+    private static void seedEntityBounds(CaptureState capture, double x, double y, double z,
+                                         float halfWidth, float bottomOffset, float height) {
+        Minecraft minecraft = Minecraft.getInstance();
+        Matrix4f modelToView = capture.modelViewMatrix;
+        if (minecraft == null || minecraft.gameRenderer == null || modelToView == null) return;
+        Vec3 camera = minecraft.gameRenderer.getMainCamera().position();
+        float centerX = (float) (x - camera.x);
+        float centerY = (float) (y - camera.y);
+        float centerZ = (float) (z - camera.z);
+        float minY = centerY + bottomOffset;
+        float maxY = minY + height;
+        float minX = Float.POSITIVE_INFINITY;
+        float minViewY = Float.POSITIVE_INFINITY;
+        float minZ = Float.POSITIVE_INFINITY;
+        float maxX = Float.NEGATIVE_INFINITY;
+        float maxViewY = Float.NEGATIVE_INFINITY;
+        float maxZ = Float.NEGATIVE_INFINITY;
+        Vector4f corner = new Vector4f();
+        for (int index = 0; index < 8; index++) {
+            corner.set(centerX + ((index & 1) == 0 ? -halfWidth : halfWidth),
+                    (index & 2) == 0 ? minY : maxY,
+                    centerZ + ((index & 4) == 0 ? -halfWidth : halfWidth), 1.0F).mul(modelToView);
+            minX = Math.min(minX, corner.x);
+            minViewY = Math.min(minViewY, corner.y);
+            minZ = Math.min(minZ, corner.z);
+            maxX = Math.max(maxX, corner.x);
+            maxViewY = Math.max(maxViewY, corner.y);
+            maxZ = Math.max(maxZ, corner.z);
+        }
+        expandBounds(capture, minX, minViewY, minZ, maxX, maxViewY, maxZ);
     }
 
     /**
@@ -890,11 +1005,78 @@ public final class HeldItemOutlineRenderer {
         THIRD_PERSON_CAPTURES.addLast(capture);
     }
 
-    /** Third-person outline settings: half width, distance-scaled bloom and the high quality. */
+    /**
+     * Starts recording one held item of an armor stand.
+     *
+     * <p>Stands hold their items through vanilla's {@code ItemInHandLayer}, which submits them with a
+     * third-person display context exactly like the local player's own layer does, so the same
+     * mirroring collector and the same replay machinery carry them. Only the entity differs: a stand
+     * is world geometry rather than the player's own body, so the capture waits for no third-person
+     * camera and does not share the player's fixed slots.
+     */
+    public static void beginArmorStandItem(Object renderState, ItemStack stack, Object arm, PoseStack pose) {
+        if (!(renderState instanceof ArmorStandRenderState) || recordingArmorStandItem != null
+                || recordingThirdPerson != null) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (stack == null || stack.isEmpty() || !shouldRenderArmorStandItems(minecraft)) return;
+        if (HeldItemOutlineCompat.isIrisShadowPass()) {
+            shadowCaptureDiagnostic();
+            return;
+        }
+        ItemGlintRelightConfig config = DisplayRuleManager.resolve(stack, ItemGlintRelightConfigManager.get());
+        if (!config.outlineEnabled() || !config.renderThirdPerson() || !config.outlineThirdPerson()) return;
+        CaptureState capture = acquireArmorStandCapture();
+        if (capture == null) return;
+        capture.reset();
+        capture.armor = false;
+        capture.armorStand = true;
+        capture.item = stack.copy();
+        capture.stack = stack.toString();
+        capture.config = config;
+        capture.itemContext = arm == HumanoidArm.LEFT
+                ? ItemDisplayContext.THIRD_PERSON_LEFT_HAND : ItemDisplayContext.THIRD_PERSON_RIGHT_HAND;
+        capture.requested = true;
+        capture.externalSubmission = true;
+        if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
+            capture.materialPaletteKey = materialPaletteKey(stack);
+            capture.materialPalette = MATERIAL_PALETTE_CACHE.get(capture.materialPaletteKey);
+        }
+        ensureDispatcher(minecraft, capture);
+        capture.storage.clear();
+        snapshotRenderContext(capture);
+        if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
+        recordingThirdPerson = capture;
+        recordingArmorStandItem = capture;
+    }
+
+    /** Closes the armor stand held-item capture opened by {@link #beginArmorStandItem}. */
+    public static void endArmorStandItem() {
+        CaptureState capture = recordingArmorStandItem;
+        if (capture == null) return;
+        recordingArmorStandItem = null;
+        if (recordingThirdPerson == capture) {
+            recordingThirdPerson = null;
+        }
+        if (capture.captured) {
+            THIRD_PERSON_CAPTURES.addLast(capture);
+        } else {
+            capture.reset();
+        }
+    }
+
+    /**
+     * Third-person outline settings: half width, distance-scaled bloom and the high quality.
+     *
+     * <p>Only the armor-stand captures scale their stroke width with the distance. The local player's
+     * own body sits at a roughly fixed four blocks, so a fixed screen-space width is already the right
+     * answer for it and scaling would change nothing but the risk.
+     */
     private static ItemGlintRelightConfig thirdPersonConfig(CaptureState capture) {
         ItemGlintRelightConfig config = capture.config.copy();
         config.setOutlineQuality(config.thirdPersonOutlineQuality());
-        config.setOutlineWidth(config.outlineWidth() * 0.5F);
+        config.setOutlineWidth(config.outlineWidth() * 0.5F * armorStandOutlineDistanceScale(capture));
         config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * thirdPersonBloomDistanceScale(capture));
         return config;
     }
@@ -905,7 +1087,18 @@ public final class HeldItemOutlineRenderer {
      * how the armor model reaches {@link #THIRD_PERSON_ARMOR}.
      */
     public static SubmitNodeCollector wrapArmorCollector(Minecraft minecraft, SubmitNodeCollector original) {
-        return shouldRenderArmor(minecraft) ? wrapThirdPersonCollector(minecraft, original) : original;
+        return shouldRenderArmor(minecraft) || shouldRenderArmorStandArmor(minecraft)
+                ? wrapThirdPersonCollector(minecraft, original) : original;
+    }
+
+    /**
+     * Collector wrap for vanilla's shared in-hand layer, which is what an armor stand's held items go
+     * through. Every other armed mob is wrapped too and simply passes through: only an armor stand
+     * render state ever opens a capture here.
+     */
+    public static SubmitNodeCollector wrapArmorStandCollector(Minecraft minecraft, SubmitNodeCollector original) {
+        return shouldRenderArmorStandEquipment(minecraft)
+                ? wrapThirdPersonCollector(minecraft, original) : original;
     }
 
     /** Third-person overlays are only built while the player is actually looking at their own body. */
@@ -926,10 +1119,57 @@ public final class HeldItemOutlineRenderer {
                 && (config.outlineThirdPerson() || config.outlineArmor());
     }
 
+    /** The local player's own worn armor, which is only visible from a third-person camera. */
     private static boolean shouldRenderArmor(Minecraft minecraft) {
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
         return thirdPersonViewActive(minecraft)
                 && config.outlineEnabled() && config.renderThirdPerson() && config.outlineArmor();
+    }
+
+    /**
+     * Armor stands are outlined from every camera, first person included.
+     *
+     * <p>A stand is world geometry, not the player's own body, so the third-person camera gate the
+     * local player uses would hide the feature in exactly the situation it exists for: standing in
+     * front of a stand and looking at it. The screen gate is dropped for the same reason -- the world
+     * keeps rendering behind a GUI, and the composite already runs below it.
+     */
+    private static boolean armorStandViewActive(Minecraft minecraft) {
+        return minecraft != null && minecraft.player != null && minecraft.level != null
+                && !HeldItemOutlineCompat.isIrisShadowPass();
+    }
+
+    /** Armor-stand held items ride the third-person outline settings plus the armor-stand switch. */
+    private static boolean shouldRenderArmorStandItems(Minecraft minecraft) {
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        return armorStandViewActive(minecraft)
+                && config.outlineEnabled() && config.renderThirdPerson()
+                && config.outlineThirdPerson() && config.outlineArmorStands();
+    }
+
+    /** Armor-stand worn armor rides the armor outline settings plus the armor-stand switch. */
+    private static boolean shouldRenderArmorStandArmor(Minecraft minecraft) {
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        return armorStandViewActive(minecraft)
+                && config.outlineEnabled() && config.renderThirdPerson()
+                && config.outlineArmor() && config.outlineArmorStands();
+    }
+
+    /**
+     * Either armor-stand overlay may be the only one enabled, and both share the depth snapshot, the
+     * scene-depth bookkeeping and the composite pass, so the machinery runs while either wants an
+     * outline. The individual begin methods still gate each capture on its own setting.
+     */
+    private static boolean shouldRenderArmorStandEquipment(Minecraft minecraft) {
+        ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        return armorStandViewActive(minecraft)
+                && config.outlineEnabled() && config.renderThirdPerson() && config.outlineArmorStands()
+                && (config.outlineThirdPerson() || config.outlineArmor());
+    }
+
+    /** True while any third-person capture -- the player's or an armor stand's -- may be taken. */
+    private static boolean thirdPersonPipelineActive(Minecraft minecraft) {
+        return shouldRenderThirdPerson(minecraft) || shouldRenderArmorStandEquipment(minecraft);
     }
 
     /** Diagnostic: region covered by the opaque snapshot taken in phase one. */
@@ -997,7 +1237,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     public static SubmitNodeCollector wrapThirdPersonCollector(Minecraft minecraft, SubmitNodeCollector original) {
-        if (!shouldRenderThirdPerson(minecraft) || original instanceof MirroringCollector || original instanceof MirroringStorage) {
+        if (!thirdPersonPipelineActive(minecraft) || original instanceof MirroringCollector || original instanceof MirroringStorage) {
             return original;
         }
         return original instanceof SubmitNodeStorage storage ? new MirroringStorage(storage, true) : new MirroringCollector(original, true);
@@ -1083,7 +1323,7 @@ public final class HeldItemOutlineRenderer {
      */
     public static void compositeThirdPersonAfterMainBatch(Minecraft minecraft, Object bufferSource) {
         if (minecraft == null || minecraft.gameRenderer == null || bufferSource == null
-                || THIRD_PERSON_CAPTURES.isEmpty() || !shouldRenderThirdPerson(minecraft)) {
+                || THIRD_PERSON_CAPTURES.isEmpty() || !thirdPersonPipelineActive(minecraft)) {
             return;
         }
         HeldItemOutlineCompat.logDiagnosticStateOnce();
@@ -1146,7 +1386,7 @@ public final class HeldItemOutlineRenderer {
      * pending third-person outlines on top of translucent terrain and clouds.
      */
     public static void compositeThirdPersonAfterLevel(Minecraft minecraft) {
-        if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty() || !shouldRenderThirdPerson(minecraft)) {
+        if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty() || !thirdPersonPipelineActive(minecraft)) {
             return;
         }
         HeldItemOutlineCompat.logDiagnosticStateOnce();
@@ -1980,11 +2220,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static boolean isArmorCapture(CaptureState capture) {
-        if (capture == null) return false;
-        for (CaptureState candidate : THIRD_PERSON_ARMOR) {
-            if (candidate == capture) return true;
-        }
-        return false;
+        return capture != null && capture.armor;
     }
 
     private static void captureTextureColors(TextureAtlasSprite sprite, int tint) {
@@ -2276,15 +2512,52 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static float thirdPersonBloomDistanceScale(CaptureState capture) {
-        if (capture == null || capture.modelViewMatrix == null || capture.itemPoseMatrix == null) {
-            return 1.0F;
-        }
-        Matrix4f itemViewTransform = new Matrix4f(capture.modelViewMatrix).mul(capture.itemPoseMatrix);
-        float distance = Math.abs(itemViewTransform.m32());
-        if (!Float.isFinite(distance) || distance <= 0.001F) {
+        float distance = captureViewDistance(capture);
+        if (distance <= 0.001F) {
             return 1.0F;
         }
         return Math.max(0.35F, Math.min(3.0F, THIRD_PERSON_BLOOM_REFERENCE_DISTANCE / distance));
+    }
+
+    /**
+     * Stroke width factor for an armor stand: the inverse of its distance, so the stroke keeps a
+     * constant thickness in world space.
+     *
+     * <p>The outline shader measures its radius in texels, which means a fixed width covers a fixed
+     * number of pixels no matter how small the object gets. A stand thirty blocks away is a few dozen
+     * pixels tall and would still carry the stroke a stand two blocks away does, reading as a much
+     * thicker line. Dividing by the distance cancels exactly that: projected size falls off as
+     * {@code 1/d}, so {@code 1/d} on the width keeps the ratio between stroke and stand constant.
+     *
+     * <p>The factor is deliberately unclamped. At the reference distance the configured width is
+     * honoured exactly -- the same four blocks the third-person bloom is anchored to, which is roughly
+     * where the local player's own body sits -- and nearer or farther stands simply hold that same
+     * world-space thickness. How thin that becomes in pixels is the width setting's business.
+     */
+    private static float armorStandOutlineDistanceScale(CaptureState capture) {
+        if (capture == null || !capture.armorStand) {
+            return 1.0F;
+        }
+        float distance = captureViewDistance(capture);
+        if (distance <= 0.001F) {
+            return 1.0F;
+        }
+        return THIRD_PERSON_BLOOM_REFERENCE_DISTANCE / distance;
+    }
+
+    /**
+     * View-space distance of a capture's anchor, or a non-positive value when it cannot be resolved.
+     *
+     * <p>Both matrices are camera-relative, so the product's z is how far the captured item sits in
+     * front of the camera -- the same distance the item's projected size falls off with.
+     */
+    private static float captureViewDistance(CaptureState capture) {
+        if (capture == null || capture.modelViewMatrix == null || capture.itemPoseMatrix == null) {
+            return -1.0F;
+        }
+        Matrix4f itemViewTransform = new Matrix4f(capture.modelViewMatrix).mul(capture.itemPoseMatrix);
+        float distance = Math.abs(itemViewTransform.m32());
+        return Float.isFinite(distance) ? distance : -1.0F;
     }
 
     private record ScissorRect(int x, int y, int width, int height) {
@@ -2535,6 +2808,18 @@ public final class HeldItemOutlineRenderer {
         private boolean fullTargetRegion;
         /** Order in which this state last captured a node; 0 when it captured nothing this frame. */
         private long lastCaptureSequence;
+        /**
+         * True for captures replaying an armor model. An armor capture has no hand context at all, so
+         * its texture-sampled palette has to come straight from the submitted sprite.
+         */
+        private boolean armor;
+        /**
+         * True for captures taken from an armor stand rather than from the local player. Stands sit at
+         * whatever distance the world puts them at, so their stroke width is scaled by it; the player's
+         * own body sits at a fixed distance and keeps the plain screen-space width. Like {@link #armor}
+         * this flag is not cleared by {@link #reset()} and is assigned on every acquisition.
+         */
+        private boolean armorStand;
 
         private void reset() {
             captured = false;

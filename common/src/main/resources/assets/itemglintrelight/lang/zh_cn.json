@@ -31,6 +31,7 @@
   "ui.itemglintrelight.outline.third_person": "第三人称描边",
   "ui.itemglintrelight.outline.gui_items": "UI 物品描边",
   "ui.itemglintrelight.outline.armor": "盔甲描边",
+  "ui.itemglintrelight.outline.armor_stands": "盔甲架渲染",
   "ui.itemglintrelight.render.outline_width": "描边宽度",
   "ui.itemglintrelight.render.softness": "柔和度",
   "ui.itemglintrelight.render.alpha_threshold": "透明度阈值",

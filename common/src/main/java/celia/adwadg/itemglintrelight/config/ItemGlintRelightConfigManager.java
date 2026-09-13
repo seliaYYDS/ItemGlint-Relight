@@ -43,6 +43,7 @@ public final class ItemGlintRelightConfigManager {
         values.setProperty("outlineMainHand", Boolean.toString(CONFIG.outlineMainHand()));
         values.setProperty("outlineOffHand", Boolean.toString(CONFIG.outlineOffHand()));
         values.setProperty("outlineThirdPerson", Boolean.toString(CONFIG.outlineThirdPerson()));
+        values.setProperty("outlineArmorStands", Boolean.toString(CONFIG.outlineArmorStands()));
         values.setProperty("outlineGuiItems", Boolean.toString(CONFIG.outlineGuiItems()));
         values.setProperty("outlineWidth", Float.toString(CONFIG.outlineWidth()));
         values.setProperty("outlineSoftness", Float.toString(CONFIG.outlineSoftness()));
@@ -101,6 +102,7 @@ public final class ItemGlintRelightConfigManager {
             CONFIG.setOutlineMainHand(booleanValue(values, "outlineMainHand", ItemGlintRelightConfig.DEFAULT_OUTLINE_MAIN_HAND));
             CONFIG.setOutlineOffHand(booleanValue(values, "outlineOffHand", ItemGlintRelightConfig.DEFAULT_OUTLINE_OFF_HAND));
             CONFIG.setOutlineThirdPerson(booleanValue(values, "outlineThirdPerson", ItemGlintRelightConfig.DEFAULT_OUTLINE_THIRD_PERSON));
+            CONFIG.setOutlineArmorStands(booleanValue(values, "outlineArmorStands", ItemGlintRelightConfig.DEFAULT_OUTLINE_ARMOR_STANDS));
             CONFIG.setOutlineGuiItems(booleanValue(values, "outlineGuiItems", ItemGlintRelightConfig.DEFAULT_OUTLINE_GUI_ITEMS));
             CONFIG.setOutlineWidth(floatValue(values, "outlineWidth", ItemGlintRelightConfig.DEFAULT_OUTLINE_WIDTH));
             CONFIG.setOutlineSoftness(floatValue(values, "outlineSoftness", ItemGlintRelightConfig.DEFAULT_OUTLINE_SOFTNESS));

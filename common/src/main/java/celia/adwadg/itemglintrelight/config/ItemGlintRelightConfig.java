@@ -13,6 +13,7 @@ public final class ItemGlintRelightConfig {
     public static final boolean DEFAULT_OUTLINE_OFF_HAND = true;
     public static final boolean DEFAULT_OUTLINE_THIRD_PERSON = true;
     public static final boolean DEFAULT_OUTLINE_ARMOR = true;
+    public static final boolean DEFAULT_OUTLINE_ARMOR_STANDS = true;
     public static final boolean DEFAULT_OUTLINE_GUI_ITEMS = true;
     public static final float DEFAULT_OUTLINE_WIDTH = 1.0F;
     public static final float DEFAULT_OUTLINE_SOFTNESS = 0.5F;
@@ -50,6 +51,7 @@ public final class ItemGlintRelightConfig {
     private boolean outlineOffHand = DEFAULT_OUTLINE_OFF_HAND;
     private boolean outlineThirdPerson = DEFAULT_OUTLINE_THIRD_PERSON;
     private boolean outlineArmor = DEFAULT_OUTLINE_ARMOR;
+    private boolean outlineArmorStands = DEFAULT_OUTLINE_ARMOR_STANDS;
     private boolean outlineGuiItems = DEFAULT_OUTLINE_GUI_ITEMS;
     private float outlineWidth = DEFAULT_OUTLINE_WIDTH;
     private float outlineSoftness = DEFAULT_OUTLINE_SOFTNESS;
@@ -89,6 +91,7 @@ public final class ItemGlintRelightConfig {
         copy.outlineOffHand = outlineOffHand;
         copy.outlineThirdPerson = outlineThirdPerson;
         copy.outlineArmor = outlineArmor;
+        copy.outlineArmorStands = outlineArmorStands;
         copy.outlineGuiItems = outlineGuiItems;
         copy.outlineWidth = outlineWidth;
         copy.outlineSoftness = outlineSoftness;
@@ -129,6 +132,7 @@ public final class ItemGlintRelightConfig {
         outlineOffHand = source.outlineOffHand;
         outlineThirdPerson = source.outlineThirdPerson;
         outlineArmor = source.outlineArmor;
+        outlineArmorStands = source.outlineArmorStands;
         outlineGuiItems = source.outlineGuiItems;
         outlineWidth = source.outlineWidth;
         outlineSoftness = source.outlineSoftness;
@@ -178,10 +182,12 @@ public final class ItemGlintRelightConfig {
     public void setOutlineThirdPerson(boolean outlineThirdPerson) { this.outlineThirdPerson = outlineThirdPerson; }
     public boolean outlineArmor() { return outlineArmor; }
     public void setOutlineArmor(boolean outlineArmor) { this.outlineArmor = outlineArmor; }
+    public boolean outlineArmorStands() { return outlineArmorStands; }
+    public void setOutlineArmorStands(boolean outlineArmorStands) { this.outlineArmorStands = outlineArmorStands; }
     public boolean outlineGuiItems() { return outlineGuiItems; }
     public void setOutlineGuiItems(boolean outlineGuiItems) { this.outlineGuiItems = outlineGuiItems; }
     public float outlineWidth() { return outlineWidth; }
-    public void setOutlineWidth(float outlineWidth) { this.outlineWidth = clamp(outlineWidth, 0.25F, 8.0F); }
+    public void setOutlineWidth(float outlineWidth) { this.outlineWidth = clamp(outlineWidth, 0.25F, 12.0F); }
     public float outlineSoftness() { return outlineSoftness; }
     public void setOutlineSoftness(float outlineSoftness) { this.outlineSoftness = clamp(outlineSoftness, 0.0F, 1.0F); }
     public float outlineAlphaThreshold() { return outlineAlphaThreshold; }

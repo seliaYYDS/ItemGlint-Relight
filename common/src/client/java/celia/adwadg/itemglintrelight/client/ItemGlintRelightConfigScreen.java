@@ -74,6 +74,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private UiToggle thirdPersonToggle;
     private UiToggle guiItemsToggle;
     private UiToggle armorToggle;
+    private UiToggle armorStandsToggle;
     private UiSlider outlineWidthSlider;
     private UiSlider outlineSoftnessSlider;
     private UiSlider outlineThresholdSlider;
@@ -243,7 +244,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 () -> model.draft().outlineGuiItems(), value -> model.draft().setOutlineGuiItems(value));
         armorToggle = new UiToggle(contentX, top + 182, contentWidth, tr("ui.itemglintrelight.outline.armor"),
                 () -> model.draft().outlineArmor(), value -> model.draft().setOutlineArmor(value));
-        outlineWidthSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.outline_width"), 0.25D, 8.0D, 0.05D,
+        armorStandsToggle = new UiToggle(contentX, top + 208, contentWidth, tr("ui.itemglintrelight.outline.armor_stands"),
+                () -> model.draft().outlineArmorStands(), value -> model.draft().setOutlineArmorStands(value));
+        outlineWidthSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.outline_width"), 0.25D, 12.0D, 0.05D,
                 () -> model.draft().outlineWidth(), value -> model.draft().setOutlineWidth(value.floatValue()));
         outlineSoftnessSlider = new UiSlider(contentX, top + 80, contentWidth, tr("ui.itemglintrelight.render.softness"), 0.0D, 1.0D, 0.01D,
                 () -> model.draft().outlineSoftness(), value -> model.draft().setOutlineSoftness(value.floatValue()));
@@ -429,7 +432,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (offHandToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (thirdPersonToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
             if (guiItemsToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
-        if (armorToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (armorToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (armorStandsToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
         }
         if (page == Page.PREVIEW && isPreviewItemLabel(mouseX, mouseY)) {
             openItemPicker();
@@ -770,6 +774,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             thirdPersonToggle.render(graphics, font, mouseX, mouseY);
             guiItemsToggle.render(graphics, font, mouseX, mouseY);
             armorToggle.render(graphics, font, mouseX, mouseY);
+            armorStandsToggle.render(graphics, font, mouseX, mouseY);
         }
         graphics.pose().popMatrix();
         graphics.disableScissor();
