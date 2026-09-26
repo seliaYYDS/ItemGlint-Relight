@@ -91,6 +91,19 @@ public final class HeldItemOutlineRenderer {
      * mirror the sampled depth back; 1.21.11 leaves it 0.0 and is unaffected.
      */
     private static final float REVERSE_Z_FLAG = 1.0F;
+
+    /** Colour every mask target is cleared to before an item is replayed into it. */
+    public static org.joml.Vector4fc clearColor() {
+        return CLEAR_COLOR;
+    }
+
+    /**
+     * Far-plane depth for the reverse-Z convention 26.2 renders with: a freshly cleared depth buffer
+     * holds this value. Callers clearing a mask target must use it instead of 1.21.11's 1.0.
+     */
+    public static double farDepth() {
+        return 0.0D;
+    }
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
     private static final float THIRD_PERSON_BLOOM_REFERENCE_DISTANCE = 4.0F;
     /**
@@ -235,11 +248,19 @@ public final class HeldItemOutlineRenderer {
     private static Matrix4f handProjectionMatrix;
     /** Level projection captured from the projection buffer; only the uniform buffer is public. */
     private static Matrix4f levelProjectionMatrix;
+    /**
+     * Open between {@code GameRenderer.render} and the end of the hand pass. 26.2 uploads a projection
+     * through the same {@code ProjectionMatrixBuffer#getBuffer(Projection)} entry point for the HUD and
+     * for every GUI picture-in-picture renderer, so capture has to stop before the GUI starts or a
+     * GUI projection would be mistaken for the hand pass' one.
+     */
+    private static boolean worldProjectionCaptureOpen;
 
     private HeldItemOutlineRenderer() { }
 
     public static void beginFrame() {
         frameNumber++;
+        worldProjectionCaptureOpen = true;
         recordingHand = null;
         submittingHand = null;
         itemSubmissionDepth = 0;
@@ -335,6 +356,14 @@ public final class HeldItemOutlineRenderer {
 
     public static void endHandPass() {
         handPassMatrix = null;
+        // Everything after the hand pass is GUI work, whose picture-in-picture renderers upload their
+        // own projections through the buffer this class captures from.
+        worldProjectionCaptureOpen = false;
+    }
+
+    /** Whether a projection uploaded right now belongs to the world/hand passes. */
+    public static boolean isWorldProjectionCaptureOpen() {
+        return worldProjectionCaptureOpen;
     }
 
     public static void queuePreview(ItemStack item, float centerX, float centerY, float scale, float pitch, float yaw,

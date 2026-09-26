@@ -28,12 +28,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public abstract class ProjectionMatrixBufferMixin {
     @Inject(method = "getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;", at = @At("HEAD"))
     private void itemglintrelight$captureLevelProjection(Matrix4f projection, CallbackInfoReturnable<GpuBufferSlice> cir) {
-        HeldItemOutlineRenderer.captureLevelProjection(projection);
+        if (HeldItemOutlineRenderer.isWorldProjectionCaptureOpen()) {
+            HeldItemOutlineRenderer.captureLevelProjection(projection);
+        }
     }
 
     @Inject(method = "getBuffer(Lnet/minecraft/client/renderer/Projection;)Lcom/mojang/blaze3d/buffers/GpuBufferSlice;", at = @At("HEAD"))
     private void itemglintrelight$captureHandProjection(Projection projection, CallbackInfoReturnable<GpuBufferSlice> cir) {
-        if (projection != null) {
+        // Only the world passes' uploads count: the same entry point serves the HUD and every GUI
+        // picture-in-picture renderer, whose projections must not be mistaken for the hand pass' one.
+        if (projection != null && HeldItemOutlineRenderer.isWorldProjectionCaptureOpen()) {
             HeldItemOutlineRenderer.captureHandProjection(projection.getMatrix(new Matrix4f()));
         }
     }
