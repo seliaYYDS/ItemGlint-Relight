@@ -18,7 +18,9 @@
     "GpuDeviceAccessor",
     "ItemInHandRendererMixin",
     "ProjectionMatrixBufferMixin",
-    "GameRendererFrameMixin"
+    "GameRendererFrameMixin",
+    "GuiGraphicsItemOutlineMixin",
+    "GuiRendererItemOutlineMixin"
   ],
   "injectors": {
     "require": 1

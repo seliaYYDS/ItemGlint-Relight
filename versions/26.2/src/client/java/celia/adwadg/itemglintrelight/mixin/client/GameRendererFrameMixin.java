@@ -1,5 +1,6 @@
 package celia.adwadg.itemglintrelight.mixin.client;
 
+import celia.adwadg.itemglintrelight.client.render.GuiItemOutlineManager;
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
@@ -15,8 +16,7 @@ public abstract class GameRendererFrameMixin {
     @Inject(method = "render", at = @At("HEAD"))
     private void itemglintrelight$beginFrame(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         HeldItemOutlineRenderer.beginFrame();
-        // TODO(P2): GuiItemOutlineManager.beginFrame() once the GUI outline manager is ported to
-        // 26.2's GuiGraphicsExtractor (the 1.21.11 manager still targets the removed GuiGraphics).
+        GuiItemOutlineManager.beginFrame();
     }
 
     @Inject(method = "renderItemInHand", at = @At("HEAD"))
