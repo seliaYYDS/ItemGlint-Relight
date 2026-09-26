@@ -6,8 +6,11 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.Rectangle;
 import java.awt.font.FontRenderContext;
+import java.awt.font.TextAttribute;
 import java.awt.font.TextLayout;
 import java.awt.image.BufferedImage;
+import java.io.InputStream;
+import java.text.AttributedString;
 import java.util.HashMap;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
@@ -19,7 +22,12 @@ import net.minecraft.resources.Identifier;
 
 public final class SmoothTextRenderer {
     private static final int OPACITY_STEPS = 32;
-    private static final java.awt.Font SYSTEM_FONT = new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 18);
+    /** Fixed font bundled with the mod so the config UI never follows the operating system font. */
+    private static final String BUNDLED_FONT_PATH = "/assets/itemglintrelight/font/NotoSans-Light.ttf";
+    /** Only reached for code points the bundled font does not cover (CJK, full-width punctuation, math symbols). */
+    private static final java.awt.Font FALLBACK_FONT = new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 18);
+    private static java.awt.Font bundledFont;
+    private static boolean bundledFontMissing;
     private static final Map<TextKey, TextureEntry> TEXTURES = new HashMap<>();
     private static final Map<GradientKey, GradientTexture> GRADIENT_TEXTURES = new HashMap<>();
     private static int textureIndex;
@@ -104,29 +112,77 @@ public final class SmoothTextRenderer {
         graphics.pose().popMatrix();
     }
 
-    private static TextureEntry createTexture(String text, float scale, int color, int sampling) {
-        int padding = sampling * 4;
-        float fontSize = Math.max(9.0F, 18.0F * scale) * sampling;
-        java.awt.Font font = SYSTEM_FONT.deriveFont(fontSize);
+    private static TextRaster rasterize(String text, float fontSize) {
         BufferedImage measuringImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
         Graphics2D measuringGraphics = measuringImage.createGraphics();
-        measuringGraphics.setFont(font);
         measuringGraphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         measuringGraphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
         FontRenderContext context = measuringGraphics.getFontRenderContext();
-        TextLayout layout = new TextLayout(text, font, context);
-        Rectangle bounds = layout.getPixelBounds(context, 0.0F, 0.0F);
+        measuringGraphics.dispose();
+        TextLayout layout = createLayout(text, fontSize, context);
+        return new TextRaster(layout, layout.getPixelBounds(context, 0.0F, 0.0F));
+    }
+
+    /**
+     * Lays the text out with the bundled font and only falls back to the platform font for code
+     * points the bundled font cannot draw, so CJK text and symbols such as {@code ⊂} stay readable.
+     */
+    private static TextLayout createLayout(String text, float fontSize, FontRenderContext context) {
+        java.awt.Font primary = baseFont().deriveFont(fontSize);
+        java.awt.Font fallback = FALLBACK_FONT.deriveFont(fontSize);
+        AttributedString attributed = new AttributedString(text);
+        int index = 0;
+        while (index < text.length()) {
+            int codePoint = text.codePointAt(index);
+            boolean primaryCovers = primary.canDisplay(codePoint);
+            int runEnd = index + Character.charCount(codePoint);
+            while (runEnd < text.length()) {
+                int nextCodePoint = text.codePointAt(runEnd);
+                if (primary.canDisplay(nextCodePoint) != primaryCovers) break;
+                runEnd += Character.charCount(nextCodePoint);
+            }
+            attributed.addAttribute(TextAttribute.FONT, primaryCovers ? primary : fallback, index, runEnd);
+            index = runEnd;
+        }
+        return new TextLayout(attributed.getIterator(), context);
+    }
+
+    private static java.awt.Font baseFont() {
+        if (bundledFont != null) return bundledFont;
+        if (bundledFontMissing) return FALLBACK_FONT;
+        return loadBundledFont();
+    }
+
+    private static synchronized java.awt.Font loadBundledFont() {
+        if (bundledFont != null) return bundledFont;
+        if (bundledFontMissing) return FALLBACK_FONT;
+        try (InputStream stream = SmoothTextRenderer.class.getResourceAsStream(BUNDLED_FONT_PATH)) {
+            if (stream == null) {
+                bundledFontMissing = true;
+                return FALLBACK_FONT;
+            }
+            bundledFont = java.awt.Font.createFont(java.awt.Font.TRUETYPE_FONT, stream);
+        } catch (Exception exception) {
+            bundledFontMissing = true;
+            return FALLBACK_FONT;
+        }
+        return bundledFont;
+    }
+
+    private static TextureEntry createTexture(String text, float scale, int color, int sampling) {
+        int padding = sampling * 4;
+        float fontSize = Math.max(9.0F, 18.0F * scale) * sampling;
+        TextRaster raster = rasterize(text, fontSize);
+        Rectangle bounds = raster.bounds();
         int sourceWidth = Math.max(1, bounds.width + padding * 2);
         int sourceHeight = Math.max(1, bounds.height + padding * 2);
-        measuringGraphics.dispose();
 
         BufferedImage image = new BufferedImage(sourceWidth, sourceHeight, BufferedImage.TYPE_INT_ARGB);
         Graphics2D graphics = image.createGraphics();
-        graphics.setFont(font);
         graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
         graphics.setColor(new Color(color, true));
-        graphics.drawString(text, padding - bounds.x, padding - bounds.y);
+        raster.layout().draw(graphics, padding - bounds.x, padding - bounds.y);
         graphics.dispose();
 
         NativeImage nativeImage = new NativeImage(sourceWidth, sourceHeight, false);
@@ -135,8 +191,8 @@ public final class SmoothTextRenderer {
                 nativeImage.setPixel(pixelX, pixelY, image.getRGB(pixelX, pixelY));
             }
         }
-        Identifier identifier = Identifier.fromNamespaceAndPath("itemglintrelight", "system_text/" + textureIndex++);
-        DynamicTexture texture = new DynamicTexture(() -> "itemglintrelight_system_text", nativeImage);
+        Identifier identifier = Identifier.fromNamespaceAndPath("itemglintrelight", "ui_text/" + textureIndex++);
+        DynamicTexture texture = new DynamicTexture(() -> "itemglintrelight_ui_text", nativeImage);
         Minecraft.getInstance().getTextureManager().register(identifier, texture);
         texture.upload();
         int inset = Math.round(padding / (float) sampling);
@@ -147,26 +203,17 @@ public final class SmoothTextRenderer {
     private static GradientTexture createGradientTexture(String text, float scale, int sampling) {
         int padding = sampling * 4;
         float fontSize = Math.max(9.0F, 18.0F * scale) * sampling;
-        java.awt.Font font = SYSTEM_FONT.deriveFont(fontSize);
-        BufferedImage measuringImage = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D measuringGraphics = measuringImage.createGraphics();
-        measuringGraphics.setFont(font);
-        measuringGraphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        measuringGraphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-        FontRenderContext context = measuringGraphics.getFontRenderContext();
-        TextLayout layout = new TextLayout(text, font, context);
-        Rectangle bounds = layout.getPixelBounds(context, 0.0F, 0.0F);
+        TextRaster raster = rasterize(text, fontSize);
+        Rectangle bounds = raster.bounds();
         int sourceWidth = Math.max(1, bounds.width + padding * 2);
         int sourceHeight = Math.max(1, bounds.height + padding * 2);
-        measuringGraphics.dispose();
 
         BufferedImage mask = new BufferedImage(sourceWidth, sourceHeight, BufferedImage.TYPE_INT_ARGB);
         Graphics2D maskGraphics = mask.createGraphics();
-        maskGraphics.setFont(font);
         maskGraphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         maskGraphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
         maskGraphics.setColor(Color.WHITE);
-        maskGraphics.drawString(text, padding - bounds.x, padding - bounds.y);
+        raster.layout().draw(maskGraphics, padding - bounds.x, padding - bounds.y);
         maskGraphics.dispose();
 
         NativeImage nativeImage = new NativeImage(sourceWidth, sourceHeight, false);
@@ -191,6 +238,9 @@ public final class SmoothTextRenderer {
     }
 
     private record GradientKey(String text, int scale, int sampling) {
+    }
+
+    private record TextRaster(TextLayout layout, Rectangle bounds) {
     }
 
     private record TextureEntry(Identifier identifier, int width, int height, int sourceWidth, int sourceHeight, int inset, int sampling) {

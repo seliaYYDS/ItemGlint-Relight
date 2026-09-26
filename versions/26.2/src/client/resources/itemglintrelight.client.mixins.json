@@ -5,7 +5,9 @@
   "compatibilityLevel": "JAVA_25",
   "client": [
     "GuiGraphicsAccessor",
-    "GuiRendererPreviewMixin"
+    "GuiRendererPreviewMixin",
+    "ItemInHandRendererOutlineMixin",
+    "ItemStackRenderStateOutlineMixin"
   ],
   "injectors": {
     "defaultRequire": 1
