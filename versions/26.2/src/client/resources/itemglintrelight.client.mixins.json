@@ -25,7 +25,8 @@
     "ItemInHandLayerMixin",
     "HumanoidArmorLayerMixin",
     "PlayerItemInHandLayerMixin",
-    "PunchyArmRendererMixin"
+    "PunchyArmRendererMixin",
+    "LevelRendererMainPassMixin"
   ],
   "injectors": {
     "defaultRequire": 1
