@@ -1242,6 +1242,22 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static long nextIrisCaptureProbeMillis;
+    private static long nextIrisHandRouteMillis;
+
+    /**
+     * Rate-limited report of which scene-depth route the first-person composite took under Iris, so a
+     * wrong-looking stroke can be told apart from a missing depthtex2 copy.
+     */
+    private static void irisHandRouteDiagnostic(String route) {
+        long now = System.currentTimeMillis();
+        if (now < nextIrisHandRouteMillis) {
+            return;
+        }
+        nextIrisHandRouteMillis = now + 1000L;
+        ItemGlintRelight.LOGGER.info(
+                "[IrisHandRoute] frame={} route={} sceneOcclusionSetting={} depthtex2={} framebuffer={}",
+                frameNumber, route, IRIS_HAND_SCENE_OCCLUSION_ENABLED, irisNoHandDepthStatus, framebufferLookupFailure);
+    }
 
     /**
      * Rate-limited probe for the Iris third-person path: reports the scissor, the projection the
@@ -1570,10 +1586,12 @@ public final class HeldItemOutlineRenderer {
         if (!"preview".equals(hand) && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
             if (IRIS_HAND_SCENE_OCCLUSION_ENABLED && copyHandSceneDepthFromIris(mainTarget, scissor)) {
                 sceneDepthView = irisHandSceneDepth.getDepthTextureView();
+                irisHandRouteDiagnostic("depthtex2");
             } else {
                 // Nothing comparable to test against: the shaders skip the scene-depth term entirely
                 // rather than compare two different depth spaces.
                 occlusionMode = OCCLUSION_OFF;
+                irisHandRouteDiagnostic(IRIS_HAND_SCENE_OCCLUSION_ENABLED ? "depthtex2_unavailable" : "scene_occlusion_disabled");
             }
         }
         submitComposite(minecraft, mainTarget, config, palette, hand, scissor, sceneDepthView, occlusionMode);
@@ -1631,8 +1649,13 @@ public final class HeldItemOutlineRenderer {
 
     private static boolean shouldRender(Minecraft minecraft) {
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
+        // Iris renders the level twice and the shadow pass uses the sun's view with an orthographic
+        // projection, so a hand capture or composite taken there would poison both the replay and the
+        // composite scissor. Every third-person capture guards the same way; the first-person hand
+        // needs it too, because GameRenderer.renderItemInHand runs inside renderLevel.
         return minecraft != null && minecraft.player != null && minecraft.level != null
                 && minecraft.options.getCameraType().isFirstPerson()
+                && !HeldItemOutlineCompat.isIrisShadowPass()
                 && config.outlineEnabled();
     }
 
