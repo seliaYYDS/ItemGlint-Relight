@@ -23,7 +23,7 @@ import net.minecraft.resources.Identifier;
 public final class SmoothTextRenderer {
     private static final int OPACITY_STEPS = 32;
     /** Fixed font bundled with the mod so the config UI never follows the operating system font. */
-    private static final String BUNDLED_FONT_PATH = "/assets/itemglintrelight/font/NotoSans-Light.ttf";
+    private static final String BUNDLED_FONT_PATH = "/assets/itemglintrelight/font/noto_sans_light.ttf";
     /** Only reached for code points the bundled font does not cover (CJK, full-width punctuation, math symbols). */
     private static final java.awt.Font FALLBACK_FONT = new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 18);
     private static java.awt.Font bundledFont;
