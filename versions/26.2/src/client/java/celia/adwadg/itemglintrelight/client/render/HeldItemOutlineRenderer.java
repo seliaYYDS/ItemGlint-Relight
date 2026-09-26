@@ -253,6 +253,8 @@ public final class HeldItemOutlineRenderer {
     private static boolean irisNoHandDepthReady;
     private static String irisNoHandDepthStatus = "not_attempted";
     private static boolean storageWrapped;
+    /** True while a first-person composite waits for the Iris render tail. */
+    private static boolean handCompositePending;
     private static int handPasses;
     /**
      * The matrix MC passes to {@code renderItemInHand} is the camera rotation, not a projection.
@@ -284,6 +286,7 @@ public final class HeldItemOutlineRenderer {
         itemSubmissionDepth = 0;
         externalSubmissionDepth = 0;
         storageWrapped = false;
+        handCompositePending = false;
         handPasses = 0;
         MAIN_HAND.reset();
         OFF_HAND.reset();
@@ -1243,6 +1246,7 @@ public final class HeldItemOutlineRenderer {
 
     private static long nextIrisCaptureProbeMillis;
     private static long nextIrisHandRouteMillis;
+    private static long nextIrisHandTailMillis;
 
     /**
      * Rate-limited report of which scene-depth route the first-person composite took under Iris, so a
@@ -1458,6 +1462,9 @@ public final class HeldItemOutlineRenderer {
      * pending third-person outlines on top of translucent terrain and clouds.
      */
     public static void compositeThirdPersonAfterLevel(Minecraft minecraft) {
+        // The first-person hands share this tail: it is the first point at which the frame's colour
+        // target is final under Iris.
+        compositeHandAfterLevel(minecraft);
         if (minecraft == null || THIRD_PERSON_CAPTURES.isEmpty() || !thirdPersonPipelineActive(minecraft)) {
             return;
         }
@@ -1493,6 +1500,39 @@ public final class HeldItemOutlineRenderer {
     }
 
     public static void composite(Minecraft minecraft) {
+        // Iris renders the level into its own colour targets and only composites the pack into
+        // minecraft:main at the very end of renderLevel. renderItemInHand runs inside that same
+        // renderLevel, so an outline drawn here would be erased by Iris' final pass before it ever
+        // reaches the screen. Defer to the render tail instead -- exactly the route the third-person
+        // outline already takes (see compositeThirdPersonAfterLevel and "iris_render_tail").
+        if (HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            handCompositePending = true;
+            return;
+        }
+        compositeHandNow(minecraft);
+    }
+
+    /** Iris render-tail entry: runs a first-person composite {@link #composite(Minecraft)} deferred. */
+    public static void compositeHandAfterLevel(Minecraft minecraft) {
+        if (!handCompositePending) {
+            return;
+        }
+        handCompositePending = false;
+        irisHandTailDiagnostic();
+        compositeHandNow(minecraft);
+    }
+
+    /** Confirms the deferred first-person composite really reached the Iris render tail. */
+    private static void irisHandTailDiagnostic() {
+        long now = System.currentTimeMillis();
+        if (now < nextIrisHandTailMillis) {
+            return;
+        }
+        nextIrisHandTailMillis = now + 1000L;
+        ItemGlintRelight.LOGGER.info("[IrisHandTail] frame={} first-person composite reached the render tail", frameNumber);
+    }
+
+    private static void compositeHandNow(Minecraft minecraft) {
         if (!shouldRender(minecraft)) {
             // Called every frame; only build the message when the log line is actually due.
             if (diagnosticDue()) {
