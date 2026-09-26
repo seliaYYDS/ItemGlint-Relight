@@ -15,6 +15,7 @@
     "GlTextureViewAccessor",
     "GlTextureAccessor",
     "GlDeviceAccessor",
+    "GpuDeviceAccessor",
     "ItemInHandRendererMixin",
     "ProjectionMatrixBufferMixin",
     "GameRendererFrameMixin"

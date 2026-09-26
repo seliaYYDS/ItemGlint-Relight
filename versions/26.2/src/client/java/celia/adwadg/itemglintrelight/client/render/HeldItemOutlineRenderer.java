@@ -3,6 +3,7 @@ package celia.adwadg.itemglintrelight.client.render;
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
 import celia.adwadg.itemglintrelight.mixin.client.GameRendererAccessor;
 import celia.adwadg.itemglintrelight.mixin.client.GlDeviceAccessor;
+import celia.adwadg.itemglintrelight.mixin.client.GpuDeviceAccessor;
 import celia.adwadg.itemglintrelight.mixin.client.GlTextureViewAccessor;
 import celia.adwadg.itemglintrelight.mixin.client.GlTextureAccessor;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
@@ -2730,14 +2731,22 @@ public final class HeldItemOutlineRenderer {
             return 0;
         }
         try {
+            // 26.2 wraps the GL backend in a GpuDevice, and only the backend can hand out the
+            // DirectStateAccess a framebuffer lookup needs. GlDevice is package-private, so the
+            // backend is reached through GpuDeviceAccessor and tested by interface.
+            com.mojang.blaze3d.opengl.DirectStateAccess directStateAccess = null;
+            if (RenderSystem.getDevice() instanceof GpuDeviceAccessor device
+                    && device.itemglintrelight$getBackend() instanceof GlDeviceAccessor glDevice) {
+                directStateAccess = glDevice.itemglintrelight$getDirectStateAccess();
+            }
             // 26.2 removed GlTextureView#getFbo and moved framebuffer lookup into a shared
             // FrameBufferCache that every view of the same texture holds; the vanilla framebuffer
             // bind in GlCommandEncoder calls it with (directStateAccess, colour views, depth view).
-            if (RenderSystem.getDevice() instanceof GlDeviceAccessor device
+            if (directStateAccess != null
                     && target.getColorTextureView() instanceof GlTextureView colorView
                     && target.getDepthTextureView() instanceof GlTextureView depthView) {
                 return ((GlTextureViewAccessor) (Object) colorView).itemglintrelight$getFrameBufferCache().getFbo(
-                        device.itemglintrelight$getDirectStateAccess(),
+                        directStateAccess,
                         java.util.List.of((com.mojang.blaze3d.opengl.FrameBufferAttachment) colorView),
                         depthView);
             }
