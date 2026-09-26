@@ -36,6 +36,26 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * submitted while Punchy owns the hand, not only the nodes that pass through {@code renderItem}.
  * <p>The class only exists while Punchy is installed, which is what the mixin plugin checks, so the
  * targets are resolved by name and left unremapped.
+ *
+ * <p>Verified against the real Punchy artifacts for 26.2 (`punchy-fpa` 2.5.6 and 2.8b, Modrinth),
+ * whose jar is built with unobfuscated Mojang names, so the descriptors compare directly with
+ * `javap -p -s punchy.client.render.PunchyArmRenderer`:
+ *
+ * <ul>
+ *   <li>{@code renderFirstPerson(ItemInHandRenderer, LocalPlayer, float, PoseStack,
+ *       SubmitNodeCollector, int)} -- the collector is the only argument of its type, so the
+ *       {@code argsOnly} {@code @ModifyVariable} at ordinal 0 still selects it, whatever the other
+ *       parameters are;</li>
+ *   <li>{@code renderArm(PlayerModel, AbstractClientPlayer, HumanoidArm, PoseStack,
+ *       SubmitNodeCollector, int, Identifier, boolean, float)} -- matches the handler exactly;</li>
+ *   <li>{@code renderItemInHand(ItemInHandRenderer, PlayerModel, AvatarRenderState, LocalPlayer,
+ *       HumanoidArm, PoseStack, SubmitNodeCollector, int, Matrix4f, ModelPart, ModelPart, ModelPart,
+ *       float)} -- matches the handler exactly.</li>
+ * </ul>
+ *
+ * <p>Each name is declared exactly once in the class, so the name-only selectors resolve
+ * unambiguously, and `renderFirstPerson` really does call both entry points. Both verified 26.2
+ * builds agree, so no Punchy version gate is needed.
  */
 @Pseudo
 @Mixin(targets = "punchy.client.render.PunchyArmRenderer", remap = false)

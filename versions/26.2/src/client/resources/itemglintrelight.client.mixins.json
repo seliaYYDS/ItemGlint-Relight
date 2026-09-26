@@ -24,7 +24,8 @@
     "FeatureRenderDispatcherFrameMixin",
     "ItemInHandLayerMixin",
     "HumanoidArmorLayerMixin",
-    "PlayerItemInHandLayerMixin"
+    "PlayerItemInHandLayerMixin",
+    "PunchyArmRendererMixin"
   ],
   "injectors": {
     "defaultRequire": 1
