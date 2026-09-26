@@ -1,0 +1,152 @@
+package celia.adwadg.itemglintrelight.client.render;
+
+import celia.adwadg.itemglintrelight.ItemGlintRelight;
+import com.mojang.blaze3d.pipeline.BlendFunction;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.platform.DepthTestFunction;
+import com.mojang.blaze3d.shaders.UniformType;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.resources.Identifier;
+
+public final class HeldItemOutlinePipelines {
+    private static final RenderPipeline OUTLINE = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/held_item_outline"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/held_item_outline"))
+            .withSampler("MaskSampler")
+            .withSampler("ItemDepthSampler")
+            .withSampler("SceneDepthSampler")
+            .withSampler("ArmOccluderSampler")
+            .withSampler("ArmOccluderDepthSampler")
+            .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
+            .withBlend(BlendFunction.TRANSLUCENT)
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    private static final RenderPipeline BLOOM_BLUR = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/held_item_bloom_blur"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/held_item_bloom_blur"))
+            .withSampler("InputSampler")
+            .withUniform("BlurInfo", UniformType.UNIFORM_BUFFER)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    /**
+     * Writes transparent black with blending disabled, so a scissored pass can clear exactly the
+     * region a bloom chain touches instead of the whole target.
+     */
+    private static final RenderPipeline REGION_CLEAR = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/outline_region_clear"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/outline_region_clear"))
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    private static final RenderPipeline BLOOM_COMPOSITE = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/held_item_bloom_composite"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/held_item_bloom_composite"))
+            .withSampler("BloomSampler")
+            .withSampler("MaskSampler")
+            .withSampler("ItemDepthSampler")
+            .withSampler("SceneDepthSampler")
+            .withSampler("ArmOccluderSampler")
+            .withSampler("ArmOccluderDepthSampler")
+            .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
+            .withBlend(BlendFunction.TRANSLUCENT)
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    /**
+     * GUI-only single-pass composite.
+     *
+     * <p>The GUI pins {@code scrollBounds.z} to the constant 1.0, so scene occlusion is off there and
+     * the scene-depth and arm-occluder terms of {@link #OUTLINE} / {@link #BLOOM_COMPOSITE} can never
+     * change a pixel. {@code held_item_gui_composite} drops them instead of sampling the 1x1
+     * placeholders, and folds the bloom composite and the outline into one pass that writes the
+     * already-composited colour with blending disabled -- exactly what the two blended passes left in
+     * the target. That removes a render pass, seven texture bindings and two 1x1 placeholder targets
+     * per GUI item per frame.
+     */
+    private static final RenderPipeline GUI_COMPOSITE = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/gui_item_outline_composite"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/held_item_gui_composite"))
+            .withSampler("MaskSampler")
+            .withSampler("BloomSampler")
+            .withSampler("ItemDepthSampler")
+            .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    private static final RenderPipeline THIRD_PERSON_BLOOM_SEED = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_seed"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/third_person_bloom_seed"))
+            .withSampler("MaskSampler")
+            .withSampler("ItemDepthSampler")
+            .withSampler("SceneDepthSampler")
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    private static final RenderPipeline THIRD_PERSON_BLOOM_BLUR = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_blur"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/third_person_bloom_blur"))
+            .withSampler("InputSampler")
+            .withUniform("BlurInfo", UniformType.UNIFORM_BUFFER)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+    private static final RenderPipeline THIRD_PERSON_BLOOM_COMPOSITE = RenderPipelines.register(RenderPipeline.builder()
+            .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_composite"))
+            .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
+            .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/third_person_bloom_composite"))
+            .withSampler("BloomSampler")
+            .withSampler("SeedSampler")
+            .withSampler("SceneDepthSampler")
+            .withUniform("OutlineInfo", UniformType.UNIFORM_BUFFER)
+            .withBlend(BlendFunction.TRANSLUCENT)
+            .withDepthWrite(false)
+            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+            .withVertexFormat(DefaultVertexFormat.EMPTY, VertexFormat.Mode.TRIANGLES)
+            .build());
+
+    private HeldItemOutlinePipelines() { }
+
+    public static RenderPipeline outline() {
+        return OUTLINE;
+    }
+
+    public static RenderPipeline bloomBlur() {
+        return BLOOM_BLUR;
+    }
+
+    public static RenderPipeline regionClear() {
+        return REGION_CLEAR;
+    }
+
+    public static RenderPipeline bloomComposite() {
+        return BLOOM_COMPOSITE;
+    }
+
+    public static RenderPipeline guiComposite() {
+        return GUI_COMPOSITE;
+    }
+
+    public static RenderPipeline thirdPersonBloomSeed() {
+        return THIRD_PERSON_BLOOM_SEED;
+    }
+
+    public static RenderPipeline thirdPersonBloomBlur() {
+        return THIRD_PERSON_BLOOM_BLUR;
+    }
+
+    public static RenderPipeline thirdPersonBloomComposite() {
+        return THIRD_PERSON_BLOOM_COMPOSITE;
+    }
+}

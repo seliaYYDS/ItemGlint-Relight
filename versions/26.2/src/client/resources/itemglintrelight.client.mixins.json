@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "package": "celia.adwadg.itemglintrelight.mixin.client",
+  "plugin": "celia.adwadg.itemglintrelight.mixin.ItemGlintRelightMixinPlugin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "FeatureRenderDispatcherAccessor",
+    "GuiGraphicsAccessor",
+    "SpriteContentsAccessor",
+    "ItemStackRenderStateAccessor",
+    "ItemStackLayerRenderStateAccessor",
+    "GameRendererAccessor",
+    "GlTextureViewAccessor",
+    "GlTextureAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

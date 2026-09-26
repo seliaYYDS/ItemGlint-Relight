@@ -9,8 +9,11 @@
   "license": "${mod_license}",
   "environment": "client",
   "entrypoints": {
-    "client": ["celia.adwadg.itemglintrelight.ItemGlintRelightClient"]
+    "main": ["celia.adwadg.itemglintrelight.ItemGlintRelight"],
+    "client": ["celia.adwadg.itemglintrelight.client.ItemGlintRelightClient"],
+    "modmenu": ["celia.adwadg.itemglintrelight.client.ItemGlintRelightModMenuApi"]
   },
+  "mixins": ["itemglintrelight.client.mixins.json"],
   "depends": {
     "fabricloader": ">=${loader_version}",
     "minecraft": "${minecraft_version}",

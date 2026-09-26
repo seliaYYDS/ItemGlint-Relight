@@ -20,7 +20,8 @@ repositories {
 }
 
 loom {
-    // Use a standard client source set in this no-remap target.
+    // No-remap Loom has no split environment source sets, so all shared and
+    // version-specific code compiles into the single main source set.
     mods {
         "${project.mod_id}" {
             sourceSet sourceSets.main
@@ -35,10 +36,14 @@ loom {
     }
 }
 
-// Compile the minimal client entrypoint while shared APIs are ported.
 sourceSets {
     main {
+        // 26.2-specific client code (forked from shared common/client and ported).
         java.srcDir("src/client/java")
+        // Config model and other environment-neutral code stays shared.
+        java.srcDir("../../common/src/main/java")
+        // 26.2 owns fabric.mod.json and the mixin config; shared assets are added
+        // in processResources with the overridden files excluded.
         resources.srcDir("src/client/resources")
     }
 }
@@ -51,16 +56,17 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-    // Development-environment only: ModMenu is not a dependency of this mod and is
-    // never published. localRuntime keeps it on the runClient classpath alone.
+    // ModMenu is optional at compile time and dev-environment only at runtime.
+    compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
     localRuntime "com.terraformersmc:modmenu:${project.modmenu_version}"
 }
 
 processResources {
-    // Reuse the shared mod icon without copying the binary or pulling in the
-    // common fabric.mod.json, which would collide with this module's metadata.
-    from("../../common/src/main/resources/assets/itemglintrelight/icon.png") {
-        into "assets/itemglintrelight"
+    // Shared assets (lang, shaders, icon) come from common, but 26.2 provides its own
+    // fabric.mod.json and mixin config, so those two are excluded to avoid duplicates.
+    from("../../common/src/main/resources") {
+        exclude "fabric.mod.json"
+        exclude "itemglintrelight.client.mixins.json"
     }
 
     inputs.properties([
@@ -75,6 +81,8 @@ processResources {
 tasks.withType(JavaCompile).configureEach {
     options.release = javaRelease
     options.encoding = "UTF-8"
+    // Report every error instead of stopping at javac's default cap of 100.
+    options.compilerArgs << "-Xmaxerrs" << "100000"
 }
 
 java {
