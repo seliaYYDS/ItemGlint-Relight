@@ -355,13 +355,15 @@ void main() {
         visible = thirdPersonOcclusion()
             ? (sceneDepth + 0.00015 < nearestDepth ? 0.0 : 1.0)
             : smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);
-        visible *= armOcclusion(nearestDepth, texCoord, texel);
         // Third-person occlusion is a binary visibility test. A soft depth
         // transition leaves fringe pixels that bloom into a false closed edge.
         if (sceneDepth + 0.00015 < nearestDepth) {
             discard;
         }
     }
+    // The arm occluder is the mod's own replay of the arm, in the same depth space as the item, so
+    // it stays authoritative even when the scene-depth test is unavailable (Iris without depthtex2).
+    visible *= armOcclusion(nearestDepth, texCoord, texel);
     float alpha = edge * primaryColor.a * visible;
     if (alpha <= 0.001) discard;
     vec3 outlineColor = resolveColor();

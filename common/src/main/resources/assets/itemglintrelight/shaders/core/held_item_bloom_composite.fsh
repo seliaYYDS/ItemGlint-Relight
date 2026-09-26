@@ -33,6 +33,14 @@ float normalDepth(float depth) {
     return bloomParameters.z > 0.5 ? 1.0 - depth : depth;
 }
 
+// scrollBounds.z selects the occlusion mode written by HeldItemOutlineRenderer.writeUniforms:
+// 0 = soft scene-depth test, 1 = no scene test at all, 2 = third person (hard visibility).
+// Mode 1 is used for the first-person hands while a shader pack renders without a usable scene
+// depth, where the main target's depth is not in the same space as the replay's item depth.
+bool sceneOcclusionEnabled() {
+    return scrollBounds.z < 0.5 || scrollBounds.z > 1.5;
+}
+
 bool thirdPersonOcclusion() {
     return scrollBounds.z > 1.5;
 }
@@ -208,7 +216,8 @@ void main() {
             // depthtex2 is the authoritative Iris scene depth, but it is generated in a
             // different pass from the replay target. Use it only for the final pixel clip:
             // comparing it here would reject every bloom source on small depth differences.
-            if (thirdPerson || normalDepth(texture(SceneDepthSampler, sampleUv).r) + 0.00015 >= sampleItemDepth) {
+            if (!sceneOcclusionEnabled() || thirdPerson
+                    || normalDepth(texture(SceneDepthSampler, sampleUv).r) + 0.00015 >= sampleItemDepth) {
                 itemDepth = min(itemDepth, sampleItemDepth);
                 hasVisibleItem = true;
             }
@@ -217,14 +226,18 @@ void main() {
     if (!hasVisibleItem) {
         discard;
     }
-    float sceneDepth = normalDepth(texture(SceneDepthSampler, texCoord).r);
-    float visible = thirdPerson
-        ? (sceneDepth + 0.00015 < itemDepth ? 0.0 : 1.0)
-        : smoothstep(itemDepth - 0.0004, itemDepth + 0.0003, sceneDepth);
-    visible *= armOcclusion(itemDepth, texCoord, texel);
-    if (sceneDepth + 0.00015 < itemDepth) {
-        discard;
+    float visible = 1.0;
+    if (sceneOcclusionEnabled()) {
+        float sceneDepth = normalDepth(texture(SceneDepthSampler, texCoord).r);
+        visible = thirdPerson
+            ? (sceneDepth + 0.00015 < itemDepth ? 0.0 : 1.0)
+            : smoothstep(itemDepth - 0.0004, itemDepth + 0.0003, sceneDepth);
+        if (sceneDepth + 0.00015 < itemDepth) {
+            discard;
+        }
     }
+    // See held_item_outline.fsh: the arm occluder is mod-owned and independent of the scene depth.
+    visible *= armOcclusion(itemDepth, texCoord, texel);
     // Bloom intensity owns bloom alpha independently of outline opacity: intensity 1 is fully
     // opaque wherever the softness curve has not reduced it.
     float alpha = bloom * effect.w * visible;

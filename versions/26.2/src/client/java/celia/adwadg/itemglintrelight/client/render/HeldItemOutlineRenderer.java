@@ -232,6 +232,23 @@ public final class HeldItemOutlineRenderer {
     private static long captureSequenceCounter;
     private static String framebufferLookupFailure = "none";
     private static Object irisNoHandDepthTexture;
+    /** Composite shaders' occlusion mode, carried in {@code OutlineInfo.scrollBounds.z}. */
+    private static final int OCCLUSION_SCENE = 0;
+    private static final int OCCLUSION_OFF = 1;
+    private static final int OCCLUSION_THIRD_PERSON = 2;
+    /**
+     * {@code -Ditemglintrelight.irisHandSceneOcclusion=false} turns the first-person scene-depth test
+     * off entirely under a pack instead of testing against Iris' {@code depthtex2}.
+     */
+    private static final boolean IRIS_HAND_SCENE_OCCLUSION_ENABLED =
+            !"false".equalsIgnoreCase(System.getProperty("itemglintrelight.irisHandSceneOcclusion", "true"));
+    /**
+     * Scene depth for the first-person composite while a shader pack renders. Iris' {@code depthtex2}
+     * (its "Depth / Before Hand" copy) is the level depth with the held item absent, which is exactly
+     * the term the occlusion test needs; the main target's depth is unusable there because Iris writes
+     * it with its own z-compressed hand projection and then runs full-screen passes over it.
+     */
+    private static TextureTarget irisHandSceneDepth;
     private static int irisNoHandDepthFbo;
     private static boolean irisNoHandDepthReady;
     private static String irisNoHandDepthStatus = "not_attempted";
@@ -1347,7 +1364,7 @@ public final class HeldItemOutlineRenderer {
                     captureFallbackTextureColors(minecraft, capture, null);
                 }
                 submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(capture, config), "third_person",
-                        scissor, thirdPersonSceneDepth.getDepthTextureView());
+                        scissor, thirdPersonSceneDepth.getDepthTextureView(), OCCLUSION_THIRD_PERSON);
                 thirdPersonDepthDiagnostic(source, "composite", mainTarget, capture);
             } finally {
                 capture.reset();
@@ -1544,14 +1561,42 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette, String hand, ScissorRect scissor) {
-        submitComposite(minecraft, mainTarget, config, palette, hand, scissor, mainTarget.getDepthTextureView());
+        GpuTextureView sceneDepthView = mainTarget.getDepthTextureView();
+        int occlusionMode = OCCLUSION_SCENE;
+        // "preview" composites the queued world preview, which is not a hand pass and keeps the main
+        // depth. The first-person hands need Iris' own scene depth once a pack renders: Iris writes the
+        // main depth with a z-compressed hand projection and runs full-screen passes over it, so it is
+        // no longer comparable with the item depth the mask replay produces.
+        if (!"preview".equals(hand) && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            if (IRIS_HAND_SCENE_OCCLUSION_ENABLED && copyHandSceneDepthFromIris(mainTarget, scissor)) {
+                sceneDepthView = irisHandSceneDepth.getDepthTextureView();
+            } else {
+                // Nothing comparable to test against: the shaders skip the scene-depth term entirely
+                // rather than compare two different depth spaces.
+                occlusionMode = OCCLUSION_OFF;
+            }
+        }
+        submitComposite(minecraft, mainTarget, config, palette, hand, scissor, sceneDepthView, occlusionMode);
+    }
+
+    /** Copies Iris' {@code depthtex2} into {@link #irisHandSceneDepth}; false when it is unavailable. */
+    private static boolean copyHandSceneDepthFromIris(RenderTarget mainTarget, ScissorRect scissor) {
+        int width = mainTarget.width;
+        int height = mainTarget.height;
+        if (irisHandSceneDepth == null) {
+            irisHandSceneDepth = new TextureTarget("itemglintrelight_iris_hand_depth", width, height, true,
+                    com.mojang.blaze3d.GpuFormat.RGBA8_UNORM);
+        } else if (irisHandSceneDepth.width != width || irisHandSceneDepth.height != height) {
+            irisHandSceneDepth.resize(width, height);
+        }
+        return copyIrisNoHandDepth(irisHandSceneDepth, mainTarget, scissor);
     }
 
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette,
-                                        String hand, ScissorRect scissor, GpuTextureView sceneDepthView) {
+                                        String hand, ScissorRect scissor, GpuTextureView sceneDepthView, int occlusionMode) {
         TextureTarget maskTarget = sceneDepth;
-        boolean thirdPerson = "third_person".equals(hand);
-        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor, thirdPerson));
+        boolean thirdPerson = occlusionMode == OCCLUSION_THIRD_PERSON;
+        GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor, occlusionMode));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler depthSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         if (config.outlineBloomEnabled()) {
@@ -2092,7 +2137,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void writeUniforms(ByteBuffer buffer, RenderTarget target, ItemGlintRelightConfig config, Minecraft minecraft, float[][] materialPalette,
-                                      ScissorRect scissor, boolean thirdPerson) {
+                                      ScissorRect scissor, int occlusionMode) {
         putColor(buffer, config.outlinePrimaryColor(), config.outlineOpacity());
         putColor(buffer, config.outlineSecondaryColor(), config.outlineOpacity());
         put(buffer, target.width, target.height, resolveOutlineRadius(target, config), config.outlineAlphaThreshold());
@@ -2108,9 +2153,10 @@ public final class HeldItemOutlineRenderer {
         float halfHeight = scissor == null ? target.height * 0.25F : Math.max(1.0F, scissor.height * 0.5F - padding);
         float pathRadius = ellipsePathRadius(halfWidth, halfHeight);
         put(buffer, scrollMode(config.outlineColorScrollMode()), centerX, centerY, Math.max(pathRadius, 1.0F));
-        // z=2 marks the third-person path. It retains scene occlusion but uses hard visibility
-        // in the composite shaders, avoiding sub-pixel depth-transition flicker with Iris.
-        put(buffer, halfWidth, halfHeight, thirdPerson ? 2.0F : 0.0F, 0.0F);
+        // z carries the composite shaders' occlusion mode: 0 = soft scene-depth test, 1 = no scene
+        // test at all (used when Iris' depthtex2 is unavailable), 2 = third person, which keeps scene
+        // occlusion but uses hard visibility, avoiding sub-pixel depth-transition flicker with Iris.
+        put(buffer, halfWidth, halfHeight, (float) occlusionMode, 0.0F);
         for (int index = 0; index < 8; index++) {
             float[] color = index < materialPalette.length ? materialPalette[index] : materialPalette[0];
             put(buffer, color[0], color[1], color[2], 1.0F);
