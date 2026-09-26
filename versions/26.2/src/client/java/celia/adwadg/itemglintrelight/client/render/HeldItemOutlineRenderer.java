@@ -83,6 +83,14 @@ public final class HeldItemOutlineRenderer {
     private static final int MASK_REGION_MARGIN = 16;
     /** 26.2 clear calls take a linear colour instead of the old packed ARGB int; this is ARGB 0. */
     private static final org.joml.Vector4fc CLEAR_COLOR = new Vector4f(0.0F, 0.0F, 0.0F, 0.0F);
+    /**
+     * 26.2 renders with reverse-Z ({@code glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE)} plus a reversed
+     * projection, near 1.0 / far 0.0, and every vanilla pipeline compares with
+     * {@code GREATER_THAN_OR_EQUAL}), while the shared shaders are written for the 1.21.11 convention
+     * (near 0.0 / far 1.0). {@code OutlineInfo.bloomParameters.z} carries this flag so the shaders can
+     * mirror the sampled depth back; 1.21.11 leaves it 0.0 and is unaffected.
+     */
+    private static final float REVERSE_Z_FLAG = 1.0F;
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
     private static final float THIRD_PERSON_BLOOM_REFERENCE_DISTANCE = 4.0F;
     /**
@@ -548,7 +556,7 @@ public final class HeldItemOutlineRenderer {
         previewDiagnostic("submitted orders=" + PREVIEW.storage.getSubmitsPerOrder().size()
                 + " nodes=" + PREVIEW.storage.getSubmitsPerOrder().values().stream().mapToInt(collection -> 1).sum());
 
-        RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(mainTarget.getDepthTexture(), 1.0D);
+        RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(mainTarget.getDepthTexture(), 0.0D);
         minecraft.gameRenderer.lighting().setupFor(itemState.usesBlockLight() ? Lighting.Entry.ITEMS_3D : Lighting.Entry.ITEMS_FLAT);
         PREVIEW.dispatcher.renderAllFeatures(PREVIEW.storage);
         // 26.2 replaced the three buffer soures with one staged vertex buffer; RenderBuffers#endFrame
@@ -1356,7 +1364,7 @@ public final class HeldItemOutlineRenderer {
         // region that is stale-near would reject the outline there, which is exactly how a
         // too-small snapshot region turns into a rectangular hole in the outline.
         RenderSystem.getDevice().createCommandEncoder()
-                .clearDepthTexture(thirdPersonSceneDepth.getDepthTexture(), 1.0D);
+                .clearDepthTexture(thirdPersonSceneDepth.getDepthTexture(), 0.0D);
         copyDepthRegion(thirdPersonSceneDepth, mainTarget, snapshotRect);
         thirdPersonSnapshotRect = snapshotRect == null ? "null"
                 : snapshotRect.x() + "," + snapshotRect.y() + " " + snapshotRect.width() + "x" + snapshotRect.height();
@@ -1543,6 +1551,7 @@ public final class HeldItemOutlineRenderer {
                     + " radius=" + resolveOutlineRadius(mainTarget, config));
         }
     }
+
 
     private static boolean shouldRender(Minecraft minecraft) {
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
@@ -1959,7 +1968,7 @@ public final class HeldItemOutlineRenderer {
 
     private static void clear(TextureTarget target) {
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
-                target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0D);
+                target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 0.0D);
     }
 
     /**
@@ -1969,11 +1978,11 @@ public final class HeldItemOutlineRenderer {
     private static void clearMask(TextureTarget target, ScissorRect scissor) {
         var encoder = RenderSystem.getDevice().createCommandEncoder();
         if (scissor == null) {
-            encoder.clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0D);
+            encoder.clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 0.0D);
             return;
         }
         ScissorRect region = scissor.expanded(MASK_REGION_MARGIN, target.width, target.height);
-        encoder.clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0D,
+        encoder.clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 0.0D,
                 region.x(), region.y(), region.width(), region.height());
     }
 
@@ -2075,7 +2084,7 @@ public final class HeldItemOutlineRenderer {
             float[] color = index < materialPalette.length ? materialPalette[index] : materialPalette[0];
             put(buffer, color[0], color[1], color[2], 1.0F);
         }
-        put(buffer, config.outlineBloomSoftness(), 0.0F, 0.0F, 0.0F);
+        put(buffer, config.outlineBloomSoftness(), 0.0F, REVERSE_Z_FLAG, 0.0F);
     }
 
     private static void writePreviewUniforms(ByteBuffer buffer, int width, int height, ItemGlintRelightConfig config, float[][] materialPalette,
@@ -2104,7 +2113,7 @@ public final class HeldItemOutlineRenderer {
         }
         // .y carries "bloom is on" for the GUI-only composite shader. Every other shader reads only
         // .x, so this leaves the shared hand, third-person and preview paths untouched.
-        put(buffer, config.outlineBloomSoftness(), config.outlineBloomEnabled() ? 1.0F : 0.0F, 0.0F, 0.0F);
+        put(buffer, config.outlineBloomSoftness(), config.outlineBloomEnabled() ? 1.0F : 0.0F, REVERSE_Z_FLAG, 0.0F);
     }
 
     public static float[][] resolvePreviewMaterialPalette(ItemStackRenderState renderState, ItemGlintRelightConfig config) {
@@ -2189,6 +2198,12 @@ public final class HeldItemOutlineRenderer {
         }
     }
 
+    /** 26.2 stores the particle icon as a baked material rather than a bare sprite. */
+    private static TextureAtlasSprite particleSprite(ItemStackLayerRenderStateAccessor layer) {
+        net.minecraft.client.resources.model.sprite.Material.Baked material = layer.itemglintrelight$getParticleMaterial();
+        return material == null ? null : material.sprite();
+    }
+
     private static void captureTextureColors(CaptureState state, TextureAtlasSprite sprite, int tint) {
         if (state == null || state.materialPalette != null || sprite == null || sprite.contents() == null) return;
         NativeImage[] mipLevels = ((SpriteContentsAccessor) (Object) sprite.contents()).itemglintrelight$getByMipLevel();
@@ -2252,12 +2267,12 @@ public final class HeldItemOutlineRenderer {
         for (int index = 0; index < layerCount; index++) {
             ItemStackLayerRenderStateAccessor layer = (ItemStackLayerRenderStateAccessor) (Object) layers[index];
             List<BakedQuad> quads = layer.itemglintrelight$getQuads();
-            int[] tints = layer.itemglintrelight$getTintLayers();
+            int[] tints = layer.itemglintrelight$getTintLayers().toIntArray();
             if (quads != null && !quads.isEmpty()) {
                 captureTextureColors(capture, quads, tints);
             }
             if (capture.materialColors.isEmpty()) {
-                captureTextureColors(capture, layer.itemglintrelight$getParticleIcon(), -1);
+                captureTextureColors(capture, particleSprite(layer), -1);
             }
         }
     }
@@ -2273,14 +2288,14 @@ public final class HeldItemOutlineRenderer {
         for (int index = 0; index < layerCount; index++) {
             ItemStackLayerRenderStateAccessor layer = (ItemStackLayerRenderStateAccessor) (Object) layers[index];
             List<BakedQuad> quads = layer.itemglintrelight$getQuads();
-            int[] tints = layer.itemglintrelight$getTintLayers();
+            int[] tints = layer.itemglintrelight$getTintLayers().toIntArray();
             if (quads != null && !quads.isEmpty()) {
                 for (BakedQuad quad : quads) {
                     if (quad != null) capturePreviewTextureColors(capture, quad.materialInfo().sprite(), resolveTint(quad, tints), config);
                 }
             }
             if (capture.materialColors.isEmpty()) {
-                capturePreviewTextureColors(capture, layer.itemglintrelight$getParticleIcon(), -1, config);
+                capturePreviewTextureColors(capture, particleSprite(layer), -1, config);
             }
         }
     }

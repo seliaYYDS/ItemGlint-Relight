@@ -40,6 +40,16 @@ layout(std140) uniform OutlineInfo {
 in vec2 texCoord;
 out vec4 fragColor;
 
+// 26.2 renders with reverse-Z: glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE) plus a reversed
+// projection puts the near plane at 1.0 and the far plane at 0.0, and every vanilla pipeline
+// compares with GREATER_THAN_OR_EQUAL. The depth comparisons below are written for the 1.21.11
+// convention (near 0.0, far 1.0), so sampled depth is mirrored back at the sampling boundary.
+// The mapping is exact -- a reversed projection stores exactly 1 - z -- and normalDepth is the
+// identity unless OutlineInfo.bloomParameters.z reports reverse-Z, which only 26.2 sets.
+float normalDepth(float depth) {
+    return bloomParameters.z > 0.5 ? 1.0 - depth : depth;
+}
+
 const int MAX_OUTLINE_SAMPLES = 48;
 const float TAU = 6.28318530718;
 // GuiItemOutlineManager.depthPlaceholderView() is a 1x1 depth attachment cleared to the far plane,
@@ -146,7 +156,7 @@ float bloomDepthGate(vec2 uv, vec2 texel) {
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
             vec2 sampleUv = clamp(uv + vec2(x, y) * texel, vec2(0.0), vec2(1.0));
-            nearestDepth = min(nearestDepth, texture(ItemDepthSampler, sampleUv).r);
+            nearestDepth = min(nearestDepth, normalDepth(texture(ItemDepthSampler, sampleUv).r));
         }
     }
     return smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, GUI_SCENE_DEPTH);

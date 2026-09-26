@@ -20,6 +20,16 @@ layout(std140) uniform OutlineInfo {
 in vec2 texCoord;
 out vec4 fragColor;
 
+// 26.2 renders with reverse-Z: glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE) plus a reversed
+// projection puts the near plane at 1.0 and the far plane at 0.0, and every vanilla pipeline
+// compares with GREATER_THAN_OR_EQUAL. The depth comparisons below are written for the 1.21.11
+// convention (near 0.0, far 1.0), so sampled depth is mirrored back at the sampling boundary.
+// The mapping is exact -- a reversed projection stores exactly 1 - z -- and normalDepth is the
+// identity unless OutlineInfo.bloomParameters.z reports reverse-Z, which only 26.2 sets.
+float normalDepth(float depth) {
+    return bloomParameters.z > 0.5 ? 1.0 - depth : depth;
+}
+
 float scrollPosition() {
     float normalizedInterval = clamp((colorScroll.z - 0.25) / 1.25, 0.0, 1.0);
     float segmentPixels = mix(72.0, 384.0, normalizedInterval);
@@ -84,8 +94,8 @@ void main() {
     if (blurredCoverage <= 0.001) discard;
     // The propagated depth belongs to a visible seed. Reject only when current scene geometry
     // is in front, exactly like the third-person outline's Iris-aware depth comparison.
-    float sceneDepth = texture(SceneDepthSampler, texCoord).r;
-    if (sceneDepth + 0.00015 < bloomSample.r) discard;
+    float sceneDepth = normalDepth(texture(SceneDepthSampler, texCoord).r);
+    if (sceneDepth + 0.00015 < normalDepth(bloomSample.r)) discard;
     float alpha = bloomAlpha(blurredCoverage) * effect.w;
     if (alpha <= 0.001) discard;
     fragColor = vec4(resolveColor(), min(alpha, 1.0));

@@ -14,7 +14,10 @@
     "GameRendererAccessor",
     "GlTextureViewAccessor",
     "GlTextureAccessor",
-    "GlDeviceAccessor"
+    "GlDeviceAccessor",
+    "ItemInHandRendererMixin",
+    "ProjectionMatrixBufferMixin",
+    "GameRendererFrameMixin"
   ],
   "injectors": {
     "require": 1

@@ -22,6 +22,16 @@ layout(std140) uniform OutlineInfo {
 in vec2 texCoord;
 out vec4 fragColor;
 
+// 26.2 renders with reverse-Z: glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE) plus a reversed
+// projection puts the near plane at 1.0 and the far plane at 0.0, and every vanilla pipeline
+// compares with GREATER_THAN_OR_EQUAL. The depth comparisons below are written for the 1.21.11
+// convention (near 0.0, far 1.0), so sampled depth is mirrored back at the sampling boundary.
+// The mapping is exact -- a reversed projection stores exactly 1 - z -- and normalDepth is the
+// identity unless OutlineInfo.bloomParameters.z reports reverse-Z, which only 26.2 sets.
+float normalDepth(float depth) {
+    return bloomParameters.z > 0.5 ? 1.0 - depth : depth;
+}
+
 const int MAX_OUTLINE_SAMPLES = 48;
 const float TAU = 6.28318530718;
 
@@ -45,8 +55,8 @@ float visibleCoverage(vec2 uv) {
     if (sampleCoverage <= 0.0 || !sceneOcclusionEnabled()) {
         return sampleCoverage;
     }
-    float itemDepth = texture(ItemDepthSampler, clamped).r;
-    float sceneDepth = texture(SceneDepthSampler, clamped).r;
+    float itemDepth = normalDepth(texture(ItemDepthSampler, clamped).r);
+    float sceneDepth = normalDepth(texture(SceneDepthSampler, clamped).r);
     return sceneDepth + 0.00015 < itemDepth ? 0.0 : sampleCoverage;
 }
 
@@ -130,7 +140,7 @@ bool cubicMode() {
 }
 
 float armDepthAt(vec2 uv) {
-    return texture(ArmOccluderDepthSampler, clamp(uv, vec2(0.0), vec2(1.0))).r;
+    return normalDepth(texture(ArmOccluderDepthSampler, clamp(uv, vec2(0.0), vec2(1.0))).r);
 }
 
 float armDepthPresence(float depth) {
@@ -290,7 +300,7 @@ void main() {
                 float sampleCoverage = visibleCoverage(sampleUv);
                 outer = max(outer, sampleCoverage);
                 if (sampleCoverage > 0.0) {
-                    nearestDepth = min(nearestDepth, texture(ItemDepthSampler, sampleUv).r);
+                    nearestDepth = min(nearestDepth, normalDepth(texture(ItemDepthSampler, sampleUv).r));
                 }
             }
         }
@@ -325,7 +335,7 @@ void main() {
                 float sampleCoverage = visibleCoverage(sampleUv);
                 outer = max(outer, sampleCoverage);
                 if (sampleCoverage > 0.0) {
-                    nearestDepth = min(nearestDepth, texture(ItemDepthSampler, clamp(sampleUv, vec2(0.0), vec2(1.0))).r);
+                    nearestDepth = min(nearestDepth, normalDepth(texture(ItemDepthSampler, clamp(sampleUv, vec2(0.0), vec2(1.0))).r));
                 }
                 if (cubic && sampleCoverage > geometry.w) {
                     // Only the outer ring sits at the stroke's edge, so the inner one votes with less
@@ -341,7 +351,7 @@ void main() {
     float edge = smoothstep(geometry.w, 1.0, outer) * (1.0 - center);
     float visible = 1.0;
     if (sceneOcclusionEnabled()) {
-        float sceneDepth = texture(SceneDepthSampler, texCoord).r;
+        float sceneDepth = normalDepth(texture(SceneDepthSampler, texCoord).r);
         visible = thirdPersonOcclusion()
             ? (sceneDepth + 0.00015 < nearestDepth ? 0.0 : 1.0)
             : smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);

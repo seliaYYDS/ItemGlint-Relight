@@ -23,6 +23,16 @@ layout(std140) uniform OutlineInfo {
 in vec2 texCoord;
 out vec4 fragColor;
 
+// 26.2 renders with reverse-Z: glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE) plus a reversed
+// projection puts the near plane at 1.0 and the far plane at 0.0, and every vanilla pipeline
+// compares with GREATER_THAN_OR_EQUAL. The depth comparisons below are written for the 1.21.11
+// convention (near 0.0, far 1.0), so sampled depth is mirrored back at the sampling boundary.
+// The mapping is exact -- a reversed projection stores exactly 1 - z -- and normalDepth is the
+// identity unless OutlineInfo.bloomParameters.z reports reverse-Z, which only 26.2 sets.
+float normalDepth(float depth) {
+    return bloomParameters.z > 0.5 ? 1.0 - depth : depth;
+}
+
 bool thirdPersonOcclusion() {
     return scrollBounds.z > 1.5;
 }
@@ -92,7 +102,7 @@ float bloomAlpha(float coverage) {
 }
 
 float armDepthAt(vec2 uv) {
-    return texture(ArmOccluderDepthSampler, clamp(uv, vec2(0.0), vec2(1.0))).r;
+    return normalDepth(texture(ArmOccluderDepthSampler, clamp(uv, vec2(0.0), vec2(1.0))).r);
 }
 
 float armDepthPresence(float depth) {
@@ -194,11 +204,11 @@ void main() {
             if (thirdPerson && texture(MaskSampler, sampleUv).a <= 0.01) {
                 continue;
             }
-            float sampleItemDepth = texture(ItemDepthSampler, sampleUv).r;
+            float sampleItemDepth = normalDepth(texture(ItemDepthSampler, sampleUv).r);
             // depthtex2 is the authoritative Iris scene depth, but it is generated in a
             // different pass from the replay target. Use it only for the final pixel clip:
             // comparing it here would reject every bloom source on small depth differences.
-            if (thirdPerson || texture(SceneDepthSampler, sampleUv).r + 0.00015 >= sampleItemDepth) {
+            if (thirdPerson || normalDepth(texture(SceneDepthSampler, sampleUv).r) + 0.00015 >= sampleItemDepth) {
                 itemDepth = min(itemDepth, sampleItemDepth);
                 hasVisibleItem = true;
             }
@@ -207,7 +217,7 @@ void main() {
     if (!hasVisibleItem) {
         discard;
     }
-    float sceneDepth = texture(SceneDepthSampler, texCoord).r;
+    float sceneDepth = normalDepth(texture(SceneDepthSampler, texCoord).r);
     float visible = thirdPerson
         ? (sceneDepth + 0.00015 < itemDepth ? 0.0 : 1.0)
         : smoothstep(itemDepth - 0.0004, itemDepth + 0.0003, sceneDepth);
