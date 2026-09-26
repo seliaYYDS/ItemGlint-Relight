@@ -18,6 +18,19 @@ public final class HeldItemOutlineCompat {
      * walk on every third-person capture, inside the render loop.
      */
     private static final Method GET_PIPELINE_MANAGER;
+    /**
+     * Iris' opt-out switch for its render-pipeline program substitution.
+     *
+     * <p>{@code GlDevice#getOrCompilePipeline} is redirected by Iris'
+     * {@code MixinShaderManager_Overrides} so every vanilla pipeline compiles to an Iris program while a
+     * pack renders, and {@code MixinGlCommandEncoder} then deliberately skips {@code glDrawBuffers} for
+     * those programs. A mod-created offscreen pass reusing a vanilla pipeline therefore never gets its
+     * draw buffers configured, and its fragments reach nothing -- which is exactly why the captured item
+     * replay left the outline mask empty. {@code net.irisshaders.iris.vertices.ImmediateState#bypass} is
+     * the public flag Iris itself checks in that guard, so holding it for the duration of the replay
+     * makes Iris leave the vanilla program (and its draw buffers) alone.
+     */
+    private static final Field IMMEDIATE_STATE_BYPASS;
     private static boolean pipelineHandlesResolved;
     private static Method getPipelineNullable;
     private static Field pipelineTargetsField;
@@ -34,6 +47,7 @@ public final class HeldItemOutlineCompat {
         Method shadowPass = null;
         Method packInUseQuick = null;
         Method pipelineManager = null;
+        Field immediateStateBypass = null;
         if (IRIS_LOADED) {
             try {
                 Class<?> api = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
@@ -52,12 +66,48 @@ public final class HeldItemOutlineCompat {
                 pipelineResolutionFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
                 ItemGlintRelight.LOGGER.warn("Unable to resolve Iris pipeline outline compatibility hook", exception);
             }
+            try {
+                Class<?> immediateState = Class.forName("net.irisshaders.iris.vertices.ImmediateState");
+                immediateStateBypass = immediateState.getField("bypass");
+            } catch (ReflectiveOperationException exception) {
+                pipelineResolutionFailure = "bypass " + exception.getClass().getSimpleName() + ": " + exception.getMessage();
+                ItemGlintRelight.LOGGER.warn("Unable to resolve Iris immediate-state bypass hook", exception);
+            }
         }
         IRIS_INSTANCE = instance;
         SHADER_PACK_IN_USE = shaderPackInUse;
         SHADOW_PASS = shadowPass;
         IRIS_PACK_IN_USE_QUICK = packInUseQuick;
         GET_PIPELINE_MANAGER = pipelineManager;
+        IMMEDIATE_STATE_BYPASS = immediateStateBypass;
+    }
+
+    /** Whether Iris' program substitution can be switched off, i.e. whether Iris exposes its flag. */
+    public static boolean canBypassIrisPrograms() {
+        return IMMEDIATE_STATE_BYPASS != null;
+    }
+
+    public static boolean isIrisProgramBypass() {
+        if (IMMEDIATE_STATE_BYPASS == null) {
+            return false;
+        }
+        try {
+            return IMMEDIATE_STATE_BYPASS.getBoolean(null);
+        } catch (IllegalAccessException exception) {
+            pipelineInvocationFailure = "bypass read " + exception.getClass().getSimpleName();
+            return false;
+        }
+    }
+
+    public static void setIrisProgramBypass(boolean bypass) {
+        if (IMMEDIATE_STATE_BYPASS == null) {
+            return;
+        }
+        try {
+            IMMEDIATE_STATE_BYPASS.setBoolean(null, bypass);
+        } catch (IllegalAccessException exception) {
+            pipelineInvocationFailure = "bypass write " + exception.getClass().getSimpleName();
+        }
     }
 
     private HeldItemOutlineCompat() { }

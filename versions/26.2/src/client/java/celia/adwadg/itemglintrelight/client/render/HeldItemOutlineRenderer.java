@@ -2162,11 +2162,24 @@ public final class HeldItemOutlineRenderer {
             RenderSystem.getModelViewStack().pushMatrix();
             RenderSystem.getModelViewStack().set(state.modelViewMatrix);
         }
+        // While a pack renders, Iris substitutes its own program for every vanilla pipeline and then
+        // skips glDrawBuffers for it, so a replay through the game's pipelines would configure no draw
+        // buffer at all and write nowhere. Iris' own bypass flag makes it leave the vanilla program
+        // alone for the duration of this offscreen replay.
+        boolean irisBypass = HeldItemOutlineCompat.canBypassIrisPrograms() && HeldItemOutlineCompat.isIrisShaderPackRendering();
+        boolean previousBypass = false;
+        if (irisBypass) {
+            previousBypass = HeldItemOutlineCompat.isIrisProgramBypass();
+            HeldItemOutlineCompat.setIrisProgramBypass(true);
+        }
         try {
             state.dispatcher.renderAllFeatures(state.storage);
             state.buffers.endFrame();
             state.replayed = true;
         } finally {
+            if (irisBypass) {
+                HeldItemOutlineCompat.setIrisProgramBypass(previousBypass);
+            }
             if (restoreModelView) {
                 RenderSystem.getModelViewStack().popMatrix();
             }
