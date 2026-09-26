@@ -27,8 +27,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * {@code ArmorStandRenderState}, the same narrowing {@link HumanoidArmorLayerMixin} uses: mobs keep
  * their vanilla path, and a stand that holds nothing opens no capture at all.
  *
- * <p>{@code PlayerItemInHandLayer} overrides {@code submitArmWithItem} without calling super, so the
- * local player's own capture in {@link PlayerItemInHandLayerMixin} is untouched by this bridge.
+ * <p>{@code PlayerItemInHandLayer} delegates to this method for every arm it does not hold to the
+ * eye, so both hooks do meet on the local player. Their order keeps them apart: the player's item
+ * capture in {@link PlayerItemInHandLayerMixin} is already open by the time this one runs, and
+ * {@link HeldItemOutlineRenderer#beginArmorStandItem} refuses to start while a third-person capture
+ * is recording. The bridge therefore never disturbs the local player's own capture.
  */
 @Mixin(ItemInHandLayer.class)
 public abstract class ItemInHandLayerMixin {

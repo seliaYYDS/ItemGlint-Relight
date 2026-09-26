@@ -4,18 +4,40 @@ uniform sampler2D MaskSampler;
 uniform sampler2D ItemDepthSampler;
 uniform sampler2D SceneDepthSampler;
 
+layout(std140) uniform OutlineInfo {
+    vec4 primaryColor;
+    vec4 secondaryColor;
+    vec4 geometry;
+    vec4 animation;
+    vec4 effect;
+    vec4 colorScroll;
+    vec4 scrollMode;
+    vec4 scrollBounds;
+    vec4 materialPalette[8];
+    vec4 bloomParameters;
+};
+
 in vec2 texCoord;
 out vec4 fragColor;
 
+// 26.2 renders with reverse-Z: glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE) plus a reversed
+// projection puts the near plane at 1.0 and the far plane at 0.0, and every vanilla pipeline
+// compares with GREATER_THAN_OR_EQUAL. The hard depth decision below is written for the 1.21.11
+// convention (near 0.0, far 1.0), so sampled depth is mirrored back at the sampling boundary. The
+// mapping is exact -- a reversed projection stores exactly 1 - z -- and normalDepth is the identity
+// unless OutlineInfo.bloomParameters.z reports reverse-Z, which only 26.2 sets.
+float normalDepth(float depth) {
+    return bloomParameters.z > 0.5 ? 1.0 - depth : depth;
+}
+
 void main() {
     float coverage = texture(MaskSampler, texCoord).a;
-    float itemDepth = texture(ItemDepthSampler, texCoord).r;
-    float sceneDepth = texture(SceneDepthSampler, texCoord).r;
+    // The depth this pass *stores* stays raw: third_person_bloom_composite mirrors it again when it
+    // reads the seed back, exactly like it mirrors the scene depth.
+    float rawItemDepth = texture(ItemDepthSampler, texCoord).r;
     // Match the third-person outline's hard depth decision. Iris supplies depthtex2 here.
-    // TODO(26.2 third person): this comparison is still the 1.21.11 normal-Z form, and this shader
-    // has no OutlineInfo uniform to carry the reverse-Z flag the other composites use. The stored
-    // depth stays raw either way, so third_person_bloom_composite already mirrors it on read; only
-    // this gate needs the flag once the third-person pass is wired up on 26.2.
+    float itemDepth = normalDepth(rawItemDepth);
+    float sceneDepth = normalDepth(texture(SceneDepthSampler, texCoord).r);
     if (coverage <= 0.01 || sceneDepth + 0.00015 < itemDepth) discard;
-    fragColor = vec4(itemDepth, 0.0, 0.0, coverage);
+    fragColor = vec4(rawItemDepth, 0.0, 0.0, coverage);
 }

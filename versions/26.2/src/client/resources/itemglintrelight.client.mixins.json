@@ -20,7 +20,11 @@
     "ProjectionMatrixBufferMixin",
     "GameRendererFrameMixin",
     "GuiGraphicsItemOutlineMixin",
-    "GuiRendererItemOutlineMixin"
+    "GuiRendererItemOutlineMixin",
+    "FeatureRenderDispatcherFrameMixin",
+    "ItemInHandLayerMixin",
+    "HumanoidArmorLayerMixin",
+    "PlayerItemInHandLayerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

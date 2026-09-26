@@ -1405,12 +1405,19 @@ public final class HeldItemOutlineRenderer {
     }
 
     /**
-     * Phase one, hooked after the main batch flush: snapshot the scene depth while it still holds
-     * opaque geometry only. Translucent terrain, clouds and weather are drawn after this point,
-     * so the snapshot lets the outline stay on top of them without ever showing through a wall.
+     * Phase one, hooked right after 26.2's solid feature batch inside the level's main pass -- the
+     * point that replaced {@code MultiBufferSource.BufferSource#endBatch}, which is where the
+     * entities and items the captures are taken from are actually drawn. The scene depth is
+     * snapshotted here, while it still holds opaque geometry only: translucent terrain, clouds and
+     * weather are drawn after this point, so the snapshot lets the outline stay on top of them
+     * without ever showing through a wall.
+     *
+     * <p>26.2 deleted {@code MultiBufferSource}, so the old "is this the level's own buffer source"
+     * identity check has no counterpart any more: {@code PreparedFrame#executeSolid} <em>is</em> the
+     * main batch, and the call site is the filter.
      */
-    public static void compositeThirdPersonAfterMainBatch(Minecraft minecraft, Object bufferSource) {
-        if (minecraft == null || minecraft.gameRenderer == null || bufferSource == null
+    public static void compositeThirdPersonAfterMainBatch(Minecraft minecraft) {
+        if (minecraft == null || minecraft.gameRenderer == null
                 || THIRD_PERSON_CAPTURES.isEmpty() || !thirdPersonPipelineActive(minecraft)) {
             return;
         }
@@ -1420,10 +1427,6 @@ public final class HeldItemOutlineRenderer {
         // the third-person shader test the outline against the scene instead of against Iris' own
         // copy of the item. Only the composite itself stays in phase two.
         if (!IRIS_OPAQUE_SNAPSHOT_ENABLED && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
-            return;
-        }
-        RenderBuffers renderBuffers = ((GameRendererAccessor) minecraft.gameRenderer).itemglintrelight$getRenderBuffers();
-        if (renderBuffers == null || bufferSource != renderBuffers.stagedVertexBuffer()) {
             return;
         }
         snapshotThirdPersonSceneDepth(minecraft);
@@ -2051,6 +2054,9 @@ public final class HeldItemOutlineRenderer {
                 () -> "itemglintrelight_third_person_bloom_seed", thirdPersonBloomSeed.getColorTextureView(), Optional.empty())) {
             if (scissor != null) pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
             pass.setPipeline(HeldItemOutlinePipelines.thirdPersonBloomSeed());
+            // Carries the reverse-Z flag the seed's hard depth gate needs; it is the same buffer the
+            // bloom composite pass below is handed.
+            pass.setUniform("OutlineInfo", info);
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), linear);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), nearest);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, nearest);

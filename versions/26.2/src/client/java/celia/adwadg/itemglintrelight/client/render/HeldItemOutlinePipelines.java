@@ -114,10 +114,10 @@ public final class HeldItemOutlinePipelines {
                     .withLocation(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "pipeline/third_person_bloom_seed"))
                     .withVertexShader(Identifier.fromNamespaceAndPath("minecraft", "core/screenquad"))
                     .withFragmentShader(Identifier.fromNamespaceAndPath(ItemGlintRelight.MOD_ID, "core/third_person_bloom_seed"))
-                    .withBindGroupLayout(layout()
+                    .withBindGroupLayout(outlineUniform(layout()
                             .withSampler("MaskSampler")
                             .withSampler("ItemDepthSampler")
-                            .withSampler("SceneDepthSampler").build())
+                            .withSampler("SceneDepthSampler")).build())
                     .withPrimitiveTopology(PrimitiveTopology.TRIANGLES)
                     .build());
 
