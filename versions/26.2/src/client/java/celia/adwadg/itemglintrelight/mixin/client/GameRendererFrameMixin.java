@@ -16,6 +16,17 @@ public abstract class GameRendererFrameMixin {
     @Inject(method = "render", at = @At("HEAD"))
     private void itemglintrelight$beginFrame(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         HeldItemOutlineRenderer.beginFrame();
+    }
+
+    /**
+     * 26.2 splits a frame into {@code extract} (build the render states) and {@code render} (consume
+     * them). GUI items are captured while {@code GuiGraphicsExtractor} runs during {@code extract}, and
+     * the GUI renderer submits them later in {@code render}, so the GUI manager's frame boundary has to
+     * sit in front of {@code extract}: resetting it at {@code render} would drop every capture made
+     * during that same frame's extraction, which is exactly what left the GUI outline with no masks.
+     */
+    @Inject(method = "extract", at = @At("HEAD"))
+    private void itemglintrelight$beginGuiFrame(DeltaTracker deltaTracker, boolean advanceGameTime, CallbackInfo ci) {
         GuiItemOutlineManager.beginFrame();
     }
 

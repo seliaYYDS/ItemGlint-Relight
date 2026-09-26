@@ -23,6 +23,6 @@
     "GuiRendererItemOutlineMixin"
   ],
   "injectors": {
-    "require": 1
+    "defaultRequire": 1
   }
 }
