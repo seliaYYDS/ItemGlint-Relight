@@ -1553,6 +1553,7 @@ public final class HeldItemOutlineRenderer {
     }
 
 
+
     private static boolean shouldRender(Minecraft minecraft) {
         ItemGlintRelightConfig config = ItemGlintRelightConfigManager.get();
         return minecraft != null && minecraft.player != null && minecraft.level != null
