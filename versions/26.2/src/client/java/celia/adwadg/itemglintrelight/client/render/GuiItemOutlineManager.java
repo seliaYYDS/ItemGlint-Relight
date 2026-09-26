@@ -173,6 +173,7 @@ public final class GuiItemOutlineManager {
     private static TextureTarget maskScratch;
     private static int tooltipRenderDepth;
     private static long frameIndex;
+    private static long nextFailureLogMillis;
 
     private GuiItemOutlineManager() { }
 
@@ -478,6 +479,13 @@ public final class GuiItemOutlineManager {
             }
             submitBlit(itemState, guiRenderState, outputRect, output);
         } catch (RuntimeException exception) {
+            // Reported instead of swallowed: a silently dropped GUI composite is exactly what left the
+            // outline invisible with every cache looking healthy.
+            long now = System.currentTimeMillis();
+            if (now >= nextFailureLogMillis) {
+                nextFailureLogMillis = now + 1000L;
+                ItemGlintRelight.LOGGER.warn("[GuiOutline] GUI item composite failed", exception);
+            }
             if (cacheableMask && cachedMask == null && mask != null) {
                 MASK_CACHE.remove(maskKey);
                 releaseTarget(mask, true);
