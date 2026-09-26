@@ -4,7 +4,8 @@
   "plugin": "celia.adwadg.itemglintrelight.mixin.ItemGlintRelightMixinPlugin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "GuiGraphicsAccessor"
+    "GuiGraphicsAccessor",
+    "GuiRendererPreviewMixin"
   ],
   "injectors": {
     "defaultRequire": 1
