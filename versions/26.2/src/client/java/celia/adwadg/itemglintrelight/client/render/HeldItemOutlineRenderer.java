@@ -23,7 +23,6 @@ import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
-import com.mojang.blaze3d.opengl.GlDevice;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTextureView;
 import com.mojang.blaze3d.systems.RenderPass;
@@ -718,7 +717,7 @@ public final class HeldItemOutlineRenderer {
             capture.materialPalette = MATERIAL_PALETTE_CACHE.get(capture.materialPaletteKey);
         }
         ensureDispatcher(minecraft, capture);
-        capture.storage.clear();
+        capture.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
         snapshotRenderContext(capture);
         if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
         recordingThirdPerson = capture;
@@ -815,7 +814,7 @@ public final class HeldItemOutlineRenderer {
             capture.materialPalette = MATERIAL_PALETTE_CACHE.get(capture.materialPaletteKey);
         }
         ensureDispatcher(minecraft, capture);
-        capture.storage.clear();
+        capture.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
         snapshotRenderContext(capture);
         if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
         // The composite region starts from the hitbox and is grown by accumulateArmorBounds as the
@@ -1044,7 +1043,7 @@ public final class HeldItemOutlineRenderer {
             capture.materialPalette = MATERIAL_PALETTE_CACHE.get(capture.materialPaletteKey);
         }
         ensureDispatcher(minecraft, capture);
-        capture.storage.clear();
+        capture.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
         snapshotRenderContext(capture);
         if (pose != null) capture.itemPoseMatrix = new Matrix4f(pose.last().pose());
         recordingThirdPerson = capture;
@@ -1399,8 +1398,8 @@ public final class HeldItemOutlineRenderer {
         }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        MAIN_HAND.storage.clear();
-        OFF_HAND.storage.clear();
+        MAIN_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
+        OFF_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
         storageWrapped = true;
         return new MirroringStorage(original, false);
     }
@@ -1414,8 +1413,8 @@ public final class HeldItemOutlineRenderer {
         }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        MAIN_HAND.storage.clear();
-        OFF_HAND.storage.clear();
+        MAIN_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
+        OFF_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
         storageWrapped = true;
         return new MirroringCollector(original, false);
     }
@@ -2684,10 +2683,10 @@ public final class HeldItemOutlineRenderer {
             // GlTextureView#getFbo(DirectStateAccess, GpuTexture). The old boolean-based
             // signature is absent. Use remapped mixin invokers rather than reflection: method
             // names become obfuscated in the production game JAR.
-            if (RenderSystem.getDevice() instanceof GlDevice device
+            if (RenderSystem.getDevice() instanceof GlDeviceAccessor device
                     && target.getColorTextureView() instanceof GlTextureView colorView) {
                 return ((GlTextureViewAccessor) (Object) colorView).itemglintrelight$getFbo(
-                        ((GlDeviceAccessor) (Object) device).itemglintrelight$getDirectStateAccess(),
+                        device.itemglintrelight$getDirectStateAccess(),
                         target.getDepthTexture());
             }
             framebufferLookupFailure = "unsupported backend=" + RenderSystem.getDevice().getClass().getName()
@@ -2845,7 +2844,7 @@ public final class HeldItemOutlineRenderer {
             externalSubmission = false;
             fullTargetRegion = false;
             lastCaptureSequence = 0L;
-            if (storage != null) storage.clear();
+            if (storage != null) storage = new net.minecraft.client.renderer.SubmitNodeStorage();
         }
 
         private String describe() {

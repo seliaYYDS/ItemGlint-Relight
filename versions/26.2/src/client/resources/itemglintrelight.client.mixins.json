@@ -13,7 +13,8 @@
     "ItemStackLayerRenderStateAccessor",
     "GameRendererAccessor",
     "GlTextureViewAccessor",
-    "GlTextureAccessor"
+    "GlTextureAccessor",
+    "GlDeviceAccessor"
   ],
   "injectors": {
     "require": 1
