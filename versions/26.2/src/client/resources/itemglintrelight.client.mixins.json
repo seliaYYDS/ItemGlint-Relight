@@ -4,14 +4,7 @@
   "plugin": "celia.adwadg.itemglintrelight.mixin.ItemGlintRelightMixinPlugin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "FeatureRenderDispatcherAccessor",
-    "GuiGraphicsAccessor",
-    "SpriteContentsAccessor",
-    "ItemStackRenderStateAccessor",
-    "ItemStackLayerRenderStateAccessor",
-    "GameRendererAccessor",
-    "GlTextureViewAccessor",
-    "GlTextureAccessor"
+    "GuiGraphicsAccessor"
   ],
   "injectors": {
     "defaultRequire": 1
