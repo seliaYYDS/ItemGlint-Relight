@@ -365,14 +365,9 @@ void main() {
     // it stays authoritative even when the scene-depth test is unavailable (Iris without depthtex2).
     visible *= armOcclusion(nearestDepth, texCoord, texel);
     float alpha = edge * primaryColor.a * visible;
-    // TEMP MASK DEBUG: keep every pixel so the mask is visible everywhere it was sampled.
-    // if (alpha <= 0.001) discard;
+    if (alpha <= 0.001) discard;
     vec3 outlineColor = resolveColor();
     float chromaSafeGain = 1.0 / max(max(outlineColor.r, outlineColor.g), max(outlineColor.b, 0.0001));
     float brightnessGain = min(1.0 + glow * 0.35, chromaSafeGain);
-    // TEMP MASK DEBUG: visualise the mask instead of the stroke. Red = MaskSampler coverage at this
-    // pixel, green = max coverage found on the sampling ring, blue = 1 as a constant marker. A uniform
-    // blue screen means the mask is empty; a red silhouette with a green fringe means the mask is fine
-    // and the problem lies downstream.
-    fragColor = vec4(center, outer, 1.0, 1.0);
+    fragColor = vec4(outlineColor * brightnessGain * cubicLight, alpha);
 }

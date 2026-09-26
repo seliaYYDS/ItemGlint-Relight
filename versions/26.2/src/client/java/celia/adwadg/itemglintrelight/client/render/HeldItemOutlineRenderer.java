@@ -1256,62 +1256,6 @@ public final class HeldItemOutlineRenderer {
 
     private static long nextIrisCaptureProbeMillis;
 
-    // TEMP diagnostic: reads the mask and the finished frame back through the same path so a zero on
-    // the mask can be told apart from a broken readback (the frame is never all-zero).
-    private static com.mojang.blaze3d.buffers.GpuBuffer maskProbeBuffer;
-    private static com.mojang.blaze3d.buffers.GpuBuffer frameProbeBuffer;
-    private static com.mojang.blaze3d.buffers.GpuBuffer armProbeBuffer;
-    private static int maskProbeBytes;
-    private static long nextMaskProbeMillis;
-
-    private static void probeMaskContent(RenderTarget mainTarget, TextureTarget mask, ScissorRect scissor) {
-        long now = System.currentTimeMillis();
-        if (now < nextMaskProbeMillis) {
-            return;
-        }
-        nextMaskProbeMillis = now + 2000L;
-        int bytes = mask.width * mask.height * 4;
-        if (maskProbeBuffer == null || maskProbeBytes != bytes) {
-            int usage = com.mojang.blaze3d.buffers.GpuBuffer.USAGE_COPY_DST | com.mojang.blaze3d.buffers.GpuBuffer.USAGE_MAP_READ;
-            maskProbeBuffer = RenderSystem.getDevice().createBuffer(() -> "igr_mask_probe", usage, bytes);
-            frameProbeBuffer = RenderSystem.getDevice().createBuffer(() -> "igr_frame_probe", usage, bytes);
-            armProbeBuffer = RenderSystem.getDevice().createBuffer(() -> "igr_arm_probe", usage, bytes);
-            maskProbeBytes = bytes;
-        }
-        final boolean[] done = {false, false};
-        com.mojang.blaze3d.systems.CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        encoder.copyTextureToBuffer(mask.getColorTexture(), maskProbeBuffer, 0L, () -> done[0] = true, 0);
-        encoder.copyTextureToBuffer(mainTarget.getColorTexture(), frameProbeBuffer, 0L, () -> done[1] = true, 0);
-        int armMax = -2;
-        if (armOccluderReady && armOccluderTarget != null && armOccluderTarget.width == mask.width
-                && armOccluderTarget.height == mask.height) {
-            encoder.copyTextureToBuffer(armOccluderTarget.getColorTexture(), armProbeBuffer, 0L, () -> done[1] = true, 0);
-            armMax = maxAlpha(armProbeBuffer, bytes);
-        }
-        ItemGlintRelight.LOGGER.info(
-                "[MaskProbe] callback={}/{} maskMaxAlpha={} frameMaxAlpha={} armMaxAlpha={} maskTarget={}x{} scissor={} armReady={} captured={}",
-                done[0], done[1], maxAlpha(maskProbeBuffer, bytes), maxAlpha(frameProbeBuffer, bytes), armMax,
-                mask.width, mask.height,
-                scissor == null ? "null" : scissor.x + "," + scissor.y + " " + scissor.width + "x" + scissor.height,
-                armOccluderReady, MAIN_HAND.captured || OFF_HAND.captured);
-    }
-
-    private static int maxAlpha(com.mojang.blaze3d.buffers.GpuBuffer buffer, int bytes) {
-        try (GpuBufferSlice.MappedView view = buffer.slice().map(true, false)) {
-            ByteBuffer data = view.data();
-            int base = data.position();
-            int max = 0;
-            for (int index = base + 3; index < base + bytes; index += 4) {
-                int value = data.get(index) & 255;
-                if (value > max) {
-                    max = value;
-                }
-            }
-            return max;
-        } catch (RuntimeException exception) {
-            return -1;
-        }
-    }
 
     private static long nextIrisHandRouteMillis;
     private static long nextIrisHandTailMillis;
@@ -1546,9 +1490,18 @@ public final class HeldItemOutlineRenderer {
         }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        MAIN_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
-        OFF_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
-        storageWrapped = true;
+        // Iris drives submitHandsWithItems once per hand pass -- solid first, then translucent -- so
+        // this runs more than once per frame. Allocating new storages on every call throws away
+        // everything the earlier pass mirrored, and because the capture counters live on the state
+        // rather than the storage the loss is invisible in diagnostics: the log still reports
+        // captured=true with a node, while the replay runs over an empty storage and the outline mask
+        // stays blank. beginFrame (and beginHandPass) already recycle the storages once per frame, so
+        // only this frame's first call allocates.
+        if (!storageWrapped) {
+            MAIN_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
+            OFF_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
+            storageWrapped = true;
+        }
         return new MirroringStorage(original, false);
     }
 
@@ -1561,9 +1514,18 @@ public final class HeldItemOutlineRenderer {
         }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        MAIN_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
-        OFF_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
-        storageWrapped = true;
+        // Iris drives submitHandsWithItems once per hand pass -- solid first, then translucent -- so
+        // this runs more than once per frame. Allocating new storages on every call throws away
+        // everything the earlier pass mirrored, and because the capture counters live on the state
+        // rather than the storage the loss is invisible in diagnostics: the log still reports
+        // captured=true with a node, while the replay runs over an empty storage and the outline mask
+        // stays blank. beginFrame (and beginHandPass) already recycle the storages once per frame, so
+        // only this frame's first call allocates.
+        if (!storageWrapped) {
+            MAIN_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
+            OFF_HAND.storage = new net.minecraft.client.renderer.SubmitNodeStorage();
+            storageWrapped = true;
+        }
         return new MirroringCollector(original, false);
     }
 
@@ -1721,11 +1683,6 @@ public final class HeldItemOutlineRenderer {
     private static void submitComposite(Minecraft minecraft, RenderTarget mainTarget, ItemGlintRelightConfig config, float[][] palette,
                                         String hand, ScissorRect scissor, GpuTextureView sceneDepthView, int occlusionMode) {
         TextureTarget maskTarget = sceneDepth;
-        try {
-            probeMaskContent(mainTarget, maskTarget, scissor);
-        } catch (RuntimeException exception) {
-            ItemGlintRelight.LOGGER.info("[MaskProbe] probe failed: {}", exception.toString());
-        }
         boolean thirdPerson = occlusionMode == OCCLUSION_THIRD_PERSON;
         GpuBufferSlice info = uniforms.write(buffer -> writeUniforms(buffer, mainTarget, config, minecraft, palette, scissor, occlusionMode));
         GpuSampler maskSampler = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
