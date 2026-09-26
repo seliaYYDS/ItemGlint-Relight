@@ -72,7 +72,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalInt;
+import java.util.Optional;
 import java.util.Set;
 
 public final class HeldItemOutlineRenderer {
@@ -81,6 +81,8 @@ public final class HeldItemOutlineRenderer {
     private static final int OUTLINE_UNIFORM_BYTES = 512;
     /** Extra slack for the mask clear and depth seed beyond the composite scissor. */
     private static final int MASK_REGION_MARGIN = 16;
+    /** 26.2 clear calls take a linear colour instead of the old packed ARGB int; this is ARGB 0. */
+    private static final org.joml.Vector4fc CLEAR_COLOR = new Vector4f(0.0F, 0.0F, 0.0F, 0.0F);
     private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
     private static final float THIRD_PERSON_BLOOM_REFERENCE_DISTANCE = 4.0F;
     /**
@@ -393,13 +395,13 @@ public final class HeldItemOutlineRenderer {
         // bloom texture; feeding it the mask keeps every declared sampler bound to a live view.
         GpuTextureView bloomSource = bloom == null ? mask.getColorTextureView() : bloom;
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_gui_item_composite", colorTarget, OptionalInt.empty())) {
+                () -> "itemglintrelight_gui_item_composite", colorTarget, Optional.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.guiComposite());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("MaskSampler", mask.getColorTextureView(), linear);
             pass.bindTexture("BloomSampler", bloomSource, linear);
             pass.bindTexture("ItemDepthSampler", mask.getDepthTextureView(), nearest);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -441,7 +443,7 @@ public final class HeldItemOutlineRenderer {
         // opens, because creating the stand-in on first use clears it.
         TextureTarget previewArmOccluder = armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_preview_outline", colorTarget, OptionalInt.empty())) {
+                () -> "itemglintrelight_preview_outline", colorTarget, Optional.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.outline());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("MaskSampler", mask.getColorTextureView(), linear);
@@ -449,7 +451,7 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("SceneDepthSampler", depthTarget, nearest);
             pass.bindTexture("ArmOccluderSampler", previewArmOccluder.getColorTextureView(), linear);
             pass.bindTexture("ArmOccluderDepthSampler", previewArmOccluder.getDepthTextureView(), nearest);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -488,11 +490,11 @@ public final class HeldItemOutlineRenderer {
                                                float directionX, float directionY, RenderQuality quality, GpuSampler sampler, String direction) {
         GpuBufferSlice blurInfo = blurUniforms.write(buffer -> put(buffer, directionX / width, directionY / height, radius, bloomSamples(quality)));
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_preview_bloom_blur_" + direction, destination.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_preview_bloom_blur_" + direction, destination.getColorTextureView(), Optional.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.bloomBlur());
             pass.setUniform("BlurInfo", blurInfo);
             pass.bindTexture("InputSampler", source, sampler);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -501,7 +503,7 @@ public final class HeldItemOutlineRenderer {
         // Resolved before the pass opens: the stand-in clears its 1x1 target when it is first created.
         TextureTarget previewArmOccluder = armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_preview_bloom_composite", colorTarget, OptionalInt.empty())) {
+                () -> "itemglintrelight_preview_bloom_composite", colorTarget, Optional.empty())) {
             pass.setPipeline(HeldItemOutlinePipelines.bloomComposite());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("BloomSampler", bloom, sampler);
@@ -510,7 +512,7 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("SceneDepthSampler", sceneDepth, RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
             pass.bindTexture("ArmOccluderSampler", previewArmOccluder.getColorTextureView(), sampler);
             pass.bindTexture("ArmOccluderDepthSampler", previewArmOccluder.getDepthTextureView(), RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST));
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -548,10 +550,10 @@ public final class HeldItemOutlineRenderer {
 
         RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(mainTarget.getDepthTexture(), 1.0D);
         minecraft.gameRenderer.lighting().setupFor(itemState.usesBlockLight() ? Lighting.Entry.ITEMS_3D : Lighting.Entry.ITEMS_FLAT);
-        PREVIEW.dispatcher.renderAllFeatures();
-        PREVIEW.buffers.bufferSource().endBatch();
-        PREVIEW.buffers.outlineBufferSource().endOutlineBatch();
-        PREVIEW.buffers.crumblingBufferSource().endBatch();
+        PREVIEW.dispatcher.renderAllFeatures(PREVIEW.storage);
+        // 26.2 replaced the three buffer soures with one staged vertex buffer; RenderBuffers#endFrame
+        // is the single flush point that uploads and executes everything the dispatcher just staged.
+        PREVIEW.buffers.endFrame();
         previewDiagnostic("screen replay complete captured=" + PREVIEW.captured + " replayed=" + PREVIEW.replayed);
 
         // copyDepthFrom overwrites the whole depth attachment, so only the mask colour needs
@@ -874,7 +876,7 @@ public final class HeldItemOutlineRenderer {
         Minecraft minecraft = Minecraft.getInstance();
         Matrix4f modelToView = capture.modelViewMatrix;
         if (minecraft == null || minecraft.gameRenderer == null || modelToView == null) return;
-        Vec3 camera = minecraft.gameRenderer.getMainCamera().position();
+        Vec3 camera = minecraft.gameRenderer.mainCamera().position();
         float centerX = (float) (x - camera.x);
         float centerY = (float) (y - camera.y);
         float centerZ = (float) (z - camera.z);
@@ -1104,7 +1106,7 @@ public final class HeldItemOutlineRenderer {
     private static boolean thirdPersonViewActive(Minecraft minecraft) {
         return minecraft != null && minecraft.player != null && minecraft.level != null
                 && !minecraft.options.getCameraType().isFirstPerson()
-                && minecraft.screen == null
+                && minecraft.gui.screen() == null
                 && !HeldItemOutlineCompat.isIrisShadowPass();
     }
 
@@ -1334,7 +1336,7 @@ public final class HeldItemOutlineRenderer {
             return;
         }
         RenderBuffers renderBuffers = ((GameRendererAccessor) minecraft.gameRenderer).itemglintrelight$getRenderBuffers();
-        if (renderBuffers == null || bufferSource != renderBuffers.bufferSource()) {
+        if (renderBuffers == null || bufferSource != renderBuffers.stagedVertexBuffer()) {
             return;
         }
         snapshotThirdPersonSceneDepth(minecraft);
@@ -1525,7 +1527,7 @@ public final class HeldItemOutlineRenderer {
         // Resolved before the pass opens: the stand-in clears its 1x1 target when it is first created.
         TextureTarget outlineArmOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_held_outline_" + hand, mainTarget.getColorTextureView(), Optional.empty())) {
             if (scissor != null) {
                 pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
             }
@@ -1536,7 +1538,7 @@ public final class HeldItemOutlineRenderer {
             pass.bindTexture("SceneDepthSampler", sceneDepthView, depthSampler);
             pass.bindTexture("ArmOccluderSampler", outlineArmOccluder.getColorTextureView(), maskSampler);
             pass.bindTexture("ArmOccluderDepthSampler", outlineArmOccluder.getDepthTextureView(), depthSampler);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
             diagnostic("composite " + hand + " submitted target=" + mainTarget.width + "x" + mainTarget.height
                     + " radius=" + resolveOutlineRadius(mainTarget, config));
         }
@@ -1642,7 +1644,7 @@ public final class HeldItemOutlineRenderer {
         // The renderer's own transform is ModelViewMat * pose, so accumulate the bounds in
         // exactly that space and let the capture's projection finish the job.
         Matrix4f modelToView = capture.modelViewMatrix != null
-                ? new Matrix4f(capture.modelViewMatrix) : new Matrix4f(RenderSystem.getModelViewMatrix());
+                ? new Matrix4f(capture.modelViewMatrix) : new Matrix4f(RenderSystem.getModelViewMatrixCopy());
         if (pose != null) {
             modelToView.mul(pose.last().pose());
         }
@@ -1675,7 +1677,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void snapshotRenderContext(CaptureState state) {
-        state.modelViewMatrix = new Matrix4f(RenderSystem.getModelViewMatrix());
+        state.modelViewMatrix = new Matrix4f(RenderSystem.getModelViewMatrixCopy());
         state.projectionMatrix = RenderSystem.getProjectionMatrixBuffer();
         state.projectionType = RenderSystem.getProjectionType();
         // The hand pass and the world pass use different projections; record the one that is
@@ -1760,17 +1762,17 @@ public final class HeldItemOutlineRenderer {
         if (state.dispatcher != null) {
             return;
         }
+        // 26.2's dispatcher no longer owns the target storage: renderAllFeatures(storage) renders any
+        // storage, so each capture keeps its own SubmitNodeStorage and its own RenderBuffers while the
+        // shared ModelManager / AtlasManager / Font / GameRenderState come from the running client.
         state.buffers = new RenderBuffers(1);
         state.storage = new SubmitNodeStorage();
-        FeatureRenderDispatcher source = minecraft.gameRenderer.getFeatureRenderDispatcher();
         state.dispatcher = new FeatureRenderDispatcher(
-                state.storage,
-                minecraft.getBlockRenderer(),
-                state.buffers.bufferSource(),
-                ((FeatureRenderDispatcherAccessor) source).itemglintrelight$getAtlasManager(),
-                state.buffers.outlineBufferSource(),
-                state.buffers.crumblingBufferSource(),
-                minecraft.font
+                state.buffers,
+                minecraft.getModelManager(),
+                minecraft.getAtlasManager(),
+                minecraft.font,
+                minecraft.gameRenderer.gameRenderState()
         );
     }
 
@@ -1821,14 +1823,14 @@ public final class HeldItemOutlineRenderer {
         GpuBufferSlice blurInfo = blurUniforms.write(buffer -> put(buffer, directionX / mainTarget.width, directionY / mainTarget.height,
                 radius, bloomSamples(quality)));
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_held_bloom_blur_" + direction, destination.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_held_bloom_blur_" + direction, destination.getColorTextureView(), Optional.empty())) {
             if (scissor != null) {
                 pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
             }
             pass.setPipeline(HeldItemOutlinePipelines.bloomBlur());
             pass.setUniform("BlurInfo", blurInfo);
             pass.bindTexture("InputSampler", source, sampler);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -1837,7 +1839,7 @@ public final class HeldItemOutlineRenderer {
         // Resolved before the pass opens: the stand-in clears its 1x1 target when it is first created.
         TextureTarget bloomArmOccluder = armOccluderReady ? armOccluderTarget : armOccluderStandIn();
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_held_bloom_composite_" + hand, mainTarget.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_held_bloom_composite_" + hand, mainTarget.getColorTextureView(), Optional.empty())) {
             if (scissor != null) {
                 pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
             }
@@ -1850,7 +1852,7 @@ public final class HeldItemOutlineRenderer {
             // The halo is cut by the arm exactly like the stroke, so it does not glow through it.
             pass.bindTexture("ArmOccluderSampler", bloomArmOccluder.getColorTextureView(), sampler);
             pass.bindTexture("ArmOccluderDepthSampler", bloomArmOccluder.getDepthTextureView(), depthSampler);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -1868,13 +1870,13 @@ public final class HeldItemOutlineRenderer {
         GpuSampler linear = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.LINEAR);
         GpuSampler nearest = RenderSystem.getSamplerCache().getClampToEdge(FilterMode.NEAREST);
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_third_person_bloom_seed", thirdPersonBloomSeed.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_third_person_bloom_seed", thirdPersonBloomSeed.getColorTextureView(), Optional.empty())) {
             if (scissor != null) pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
             pass.setPipeline(HeldItemOutlinePipelines.thirdPersonBloomSeed());
             pass.bindTexture("MaskSampler", maskTarget.getColorTextureView(), linear);
             pass.bindTexture("ItemDepthSampler", maskTarget.getDepthTextureView(), nearest);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, nearest);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
 
         int passes = config.outlineBloomBlurPasses();
@@ -1891,14 +1893,14 @@ public final class HeldItemOutlineRenderer {
         }
 
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_third_person_bloom_composite", mainTarget.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_third_person_bloom_composite", mainTarget.getColorTextureView(), Optional.empty())) {
             if (scissor != null) pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
             pass.setPipeline(HeldItemOutlinePipelines.thirdPersonBloomComposite());
             pass.setUniform("OutlineInfo", info);
             pass.bindTexture("BloomSampler", source, nearest);
             pass.bindTexture("SeedSampler", thirdPersonBloomSeed.getColorTextureView(), nearest);
             pass.bindTexture("SceneDepthSampler", sceneDepthView, nearest);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -1908,12 +1910,12 @@ public final class HeldItemOutlineRenderer {
         GpuBufferSlice blurInfo = blurUniforms.write(buffer -> put(buffer, directionX / mainTarget.width, directionY / mainTarget.height,
                 radius, bloomSamples(quality)));
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_third_person_bloom_blur_" + direction, destination.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_third_person_bloom_blur_" + direction, destination.getColorTextureView(), Optional.empty())) {
             if (scissor != null) pass.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
             pass.setPipeline(HeldItemOutlinePipelines.thirdPersonBloomBlur());
             pass.setUniform("BlurInfo", blurInfo);
             pass.bindTexture("InputSampler", source, sampler);
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -1940,10 +1942,8 @@ public final class HeldItemOutlineRenderer {
             RenderSystem.getModelViewStack().set(state.modelViewMatrix);
         }
         try {
-            state.dispatcher.renderAllFeatures();
-            state.buffers.bufferSource().endBatch();
-            state.buffers.outlineBufferSource().endOutlineBatch();
-            state.buffers.crumblingBufferSource().endBatch();
+            state.dispatcher.renderAllFeatures(state.storage);
+            state.buffers.endFrame();
             state.replayed = true;
         } finally {
             if (restoreModelView) {
@@ -1959,7 +1959,7 @@ public final class HeldItemOutlineRenderer {
 
     private static void clear(TextureTarget target) {
         RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(
-                target.getColorTexture(), 0, target.getDepthTexture(), 1.0D);
+                target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0D);
     }
 
     /**
@@ -1969,11 +1969,11 @@ public final class HeldItemOutlineRenderer {
     private static void clearMask(TextureTarget target, ScissorRect scissor) {
         var encoder = RenderSystem.getDevice().createCommandEncoder();
         if (scissor == null) {
-            encoder.clearColorAndDepthTextures(target.getColorTexture(), 0, target.getDepthTexture(), 1.0D);
+            encoder.clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0D);
             return;
         }
         ScissorRect region = scissor.expanded(MASK_REGION_MARGIN, target.width, target.height);
-        encoder.clearColorAndDepthTextures(target.getColorTexture(), 0, target.getDepthTexture(), 1.0D,
+        encoder.clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0D,
                 region.x(), region.y(), region.width(), region.height());
     }
 
@@ -2020,7 +2020,7 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void clearColor(TextureTarget target) {
-        RenderSystem.getDevice().createCommandEncoder().clearColorTexture(target.getColorTexture(), 0);
+        RenderSystem.getDevice().createCommandEncoder().clearColorTexture(target.getColorTexture(), CLEAR_COLOR);
     }
 
     /**
@@ -2034,10 +2034,10 @@ public final class HeldItemOutlineRenderer {
             return;
         }
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "itemglintrelight_bloom_region_clear", target.getColorTextureView(), OptionalInt.empty())) {
+                () -> "itemglintrelight_bloom_region_clear", target.getColorTextureView(), Optional.empty())) {
             pass.enableScissor(region.x(), region.y(), region.width(), region.height());
             pass.setPipeline(HeldItemOutlinePipelines.regionClear());
-            pass.draw(0, 3);
+            pass.draw(3, 1, 0, 0);
         }
     }
 
@@ -2185,7 +2185,7 @@ public final class HeldItemOutlineRenderer {
             return;
         }
         for (BakedQuad quad : quads) {
-            if (quad != null) captureTextureColors(state, quad.sprite(), resolveTint(quad, tints));
+            if (quad != null) captureTextureColors(state, quad.materialInfo().sprite(), resolveTint(quad, tints));
         }
     }
 
@@ -2276,7 +2276,7 @@ public final class HeldItemOutlineRenderer {
             int[] tints = layer.itemglintrelight$getTintLayers();
             if (quads != null && !quads.isEmpty()) {
                 for (BakedQuad quad : quads) {
-                    if (quad != null) capturePreviewTextureColors(capture, quad.sprite(), resolveTint(quad, tints), config);
+                    if (quad != null) capturePreviewTextureColors(capture, quad.materialInfo().sprite(), resolveTint(quad, tints), config);
                 }
             }
             if (capture.materialColors.isEmpty()) {
@@ -2307,7 +2307,7 @@ public final class HeldItemOutlineRenderer {
 
     private static void captureTextureColors(CaptureState state, List<BakedQuad> quads, int[] tints) {
         for (BakedQuad quad : quads) {
-            if (quad != null) captureTextureColors(state, quad.sprite(), resolveTint(quad, tints));
+            if (quad != null) captureTextureColors(state, quad.materialInfo().sprite(), resolveTint(quad, tints));
         }
     }
 
@@ -2373,10 +2373,10 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static int resolveTint(BakedQuad quad, int[] tints) {
-        if (!quad.isTinted() || tints == null || quad.tintIndex() < 0 || quad.tintIndex() >= tints.length) {
+        if (!quad.materialInfo().isTinted() || tints == null || quad.materialInfo().tintIndex() < 0 || quad.materialInfo().tintIndex() >= tints.length) {
             return -1;
         }
-        return tints[quad.tintIndex()] == -1 ? -1 : 0xFF000000 | tints[quad.tintIndex()];
+        return tints[quad.materialInfo().tintIndex()] == -1 ? -1 : 0xFF000000 | tints[quad.materialInfo().tintIndex()];
     }
 
     private static int applyTint(int argb, int tint) {
@@ -2679,15 +2679,16 @@ public final class HeldItemOutlineRenderer {
             return 0;
         }
         try {
-            // 1.21.11's OpenGL backend moved FBO lookup behind DirectStateAccess:
-            // GlTextureView#getFbo(DirectStateAccess, GpuTexture). The old boolean-based
-            // signature is absent. Use remapped mixin invokers rather than reflection: method
-            // names become obfuscated in the production game JAR.
+            // 26.2 removed GlTextureView#getFbo and moved framebuffer lookup into a shared
+            // FrameBufferCache that every view of the same texture holds; the vanilla framebuffer
+            // bind in GlCommandEncoder calls it with (directStateAccess, colour views, depth view).
             if (RenderSystem.getDevice() instanceof GlDeviceAccessor device
-                    && target.getColorTextureView() instanceof GlTextureView colorView) {
-                return ((GlTextureViewAccessor) (Object) colorView).itemglintrelight$getFbo(
+                    && target.getColorTextureView() instanceof GlTextureView colorView
+                    && target.getDepthTextureView() instanceof GlTextureView depthView) {
+                return ((GlTextureViewAccessor) (Object) colorView).itemglintrelight$getFrameBufferCache().getFbo(
                         device.itemglintrelight$getDirectStateAccess(),
-                        target.getDepthTexture());
+                        java.util.List.of((com.mojang.blaze3d.opengl.FrameBufferAttachment) colorView),
+                        depthView);
             }
             framebufferLookupFailure = "unsupported backend=" + RenderSystem.getDevice().getClass().getName()
                     + " colorView=" + target.getColorTextureView().getClass().getName();
@@ -2873,19 +2874,20 @@ public final class HeldItemOutlineRenderer {
             // captured: skip the wrapper (and its allocations) for everyone else.
             return thirdPersonOnly && recordingThirdPerson == null ? ordered : new MirroringOrderedCollector(ordered, order);
         }
+        @Override public <S> void submitModel(Model<? super S> model, S state, PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
         @Override public void submitShadow(PoseStack pose, float radius, java.util.List<net.minecraft.client.renderer.entity.state.EntityRenderState.ShadowPiece> pieces) { delegate.submitShadow(pose, radius, pieces); }
-        @Override public void submitNameTag(PoseStack pose, net.minecraft.world.phys.Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, double scale, net.minecraft.client.renderer.state.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, scale, camera); }
+        @Override public void submitNameTag(PoseStack pose, Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, net.minecraft.client.renderer.state.level.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, camera); }
         @Override public void submitText(PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
         @Override public void submitFlame(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
         @Override public void submitLeash(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
-        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
-        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
-        @Override public void submitBlock(PoseStack pose, net.minecraft.world.level.block.state.BlockState state, int light, int overlay, int color) { delegate.submitBlock(pose, state, light, overlay, color); }
-        @Override public void submitMovingBlock(PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state) { delegate.submitMovingBlock(pose, state); }
-        @Override public void submitBlockModel(PoseStack pose, RenderType type, net.minecraft.client.renderer.block.model.BlockStateModel model, float red, float green, float blue, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, model, red, green, blue, light, overlay, color); }
-        @Override public void submitItem(PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints, java.util.List<BakedQuad> quads, RenderType type, ItemStackRenderState.FoilType foil) { delegate.submitItem(pose, context, light, overlay, color, tints, quads, type, foil); mirrorDirectItem(0, pose, context, light, overlay, color, tints, quads, type, foil); }
+        @Override public void submitMovingBlock(PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state, int outlineColor) { delegate.submitMovingBlock(pose, state, outlineColor); }
+        @Override public void submitBlockModel(PoseStack pose, RenderType type, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int[] tints, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, parts, tints, light, overlay, color); }
+        @Override public void submitBreakingBlockModel(PoseStack pose, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int progress) { delegate.submitBreakingBlockModel(pose, parts, progress); }
+        @Override public void submitShapeOutline(PoseStack pose, net.minecraft.world.phys.shapes.VoxelShape shape, RenderType type, int color, float width, boolean afterTranslucent) { delegate.submitShapeOutline(pose, shape, type, color, width, afterTranslucent); }
+        @Override public void submitQuadParticleGroup(net.minecraft.client.renderer.state.level.QuadParticleRenderState renderState) { delegate.submitQuadParticleGroup(renderState); }
+        @Override public void submitGizmoPrimitives(net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives.Group group, net.minecraft.client.renderer.state.level.CameraRenderState camera, boolean afterTranslucent) { delegate.submitGizmoPrimitives(group, camera, afterTranslucent); }
         @Override public void submitCustomGeometry(PoseStack pose, RenderType type, SubmitNodeCollector.CustomGeometryRenderer renderer) { delegate.submitCustomGeometry(pose, type, renderer); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitCustomGeometry(pose, type, renderer); }
-        @Override public void submitParticleGroup(SubmitNodeCollector.ParticleGroupRenderer renderer) { delegate.submitParticleGroup(renderer); }
+        @Override public void submitItem(PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints, java.util.List<BakedQuad> quads, ItemStackRenderState.FoilType foil) { delegate.submitItem(pose, context, light, overlay, color, tints, quads, foil); mirrorDirectItem(0, pose, context, light, overlay, color, tints, quads, foil); }
     }
 
     private static final class MirroringOrderedCollector implements OrderedSubmitNodeCollector {
@@ -2897,32 +2899,33 @@ public final class HeldItemOutlineRenderer {
             this.order = order;
         }
 
+        @Override public <S> void submitModel(Model<? super S> model, S state, PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
         @Override public void submitShadow(PoseStack pose, float radius, java.util.List<net.minecraft.client.renderer.entity.state.EntityRenderState.ShadowPiece> pieces) { delegate.submitShadow(pose, radius, pieces); }
-        @Override public void submitNameTag(PoseStack pose, net.minecraft.world.phys.Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, double scale, net.minecraft.client.renderer.state.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, scale, camera); }
+        @Override public void submitNameTag(PoseStack pose, Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, net.minecraft.client.renderer.state.level.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, camera); }
         @Override public void submitText(PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
         @Override public void submitFlame(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
         @Override public void submitLeash(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
-        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
-        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
-        @Override public void submitBlock(PoseStack pose, net.minecraft.world.level.block.state.BlockState state, int light, int overlay, int color) { delegate.submitBlock(pose, state, light, overlay, color); }
-        @Override public void submitMovingBlock(PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state) { delegate.submitMovingBlock(pose, state); }
-        @Override public void submitBlockModel(PoseStack pose, RenderType type, net.minecraft.client.renderer.block.model.BlockStateModel model, float red, float green, float blue, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, model, red, green, blue, light, overlay, color); }
-        @Override public void submitItem(PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints, java.util.List<BakedQuad> quads, RenderType type, ItemStackRenderState.FoilType foil) { delegate.submitItem(pose, context, light, overlay, color, tints, quads, type, foil); mirrorDirectItem(order, pose, context, light, overlay, color, tints, quads, type, foil); }
+        @Override public void submitMovingBlock(PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state, int outlineColor) { delegate.submitMovingBlock(pose, state, outlineColor); }
+        @Override public void submitBlockModel(PoseStack pose, RenderType type, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int[] tints, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, parts, tints, light, overlay, color); }
+        @Override public void submitBreakingBlockModel(PoseStack pose, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int progress) { delegate.submitBreakingBlockModel(pose, parts, progress); }
+        @Override public void submitShapeOutline(PoseStack pose, net.minecraft.world.phys.shapes.VoxelShape shape, RenderType type, int color, float width, boolean afterTranslucent) { delegate.submitShapeOutline(pose, shape, type, color, width, afterTranslucent); }
+        @Override public void submitQuadParticleGroup(net.minecraft.client.renderer.state.level.QuadParticleRenderState renderState) { delegate.submitQuadParticleGroup(renderState); }
+        @Override public void submitGizmoPrimitives(net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives.Group group, net.minecraft.client.renderer.state.level.CameraRenderState camera, boolean afterTranslucent) { delegate.submitGizmoPrimitives(group, camera, afterTranslucent); }
         @Override public void submitCustomGeometry(PoseStack pose, RenderType type, SubmitNodeCollector.CustomGeometryRenderer renderer) { delegate.submitCustomGeometry(pose, type, renderer); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitCustomGeometry(pose, type, renderer); }
-        @Override public void submitParticleGroup(SubmitNodeCollector.ParticleGroupRenderer renderer) { delegate.submitParticleGroup(renderer); }
+        @Override public void submitItem(PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints, java.util.List<BakedQuad> quads, ItemStackRenderState.FoilType foil) { delegate.submitItem(pose, context, light, overlay, color, tints, quads, foil); MirroringCollection.mirrorItem(order, pose, context, light, overlay, color, tints, quads, foil); }
     }
 
     private static void mirrorDirectItem(int order, PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints,
-                                         java.util.List<BakedQuad> quads, RenderType type, ItemStackRenderState.FoilType foil) {
+                                         java.util.List<BakedQuad> quads, ItemStackRenderState.FoilType foil) {
         if (isThirdPersonContext(context) && recordingThirdPerson != null) {
-            recordingThirdPerson.renderTypes.add(String.valueOf(type));
+            recordingThirdPerson.renderTypes.add(itemRenderTypeName(quads));
             recordingThirdPerson.itemPoseMatrix = new Matrix4f(pose.last().pose());
             accumulateItemBounds(recordingThirdPerson, pose, quads);
             if (recordingThirdPerson.config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE) {
                 captureTextureColors(recordingThirdPerson, quads, tints);
             }
             SubmitNodeCollection capture = captureCollection(order, null);
-            if (capture != null) capture.submitItem(pose, context, light, overlay, color, tints, quads, type, foil);
+            if (capture != null) capture.submitItem(pose, context, light, overlay, color, tints, quads, foil);
             return;
         }
         if (!isFirstPersonContext(context) && externalSubmissionDepth <= 0) return;
@@ -2939,7 +2942,19 @@ public final class HeldItemOutlineRenderer {
             captureTextureColors(stateFor(hand), quads, tints);
         }
         SubmitNodeCollection capture = captureCollection(order, hand);
-        if (capture != null) capture.submitItem(pose, context, light, overlay, color, tints, quads, type, foil);
+        if (capture != null) capture.submitItem(pose, context, light, overlay, color, tints, quads, foil);
+    }
+
+    /**
+     * 26.2 dropped the {@code RenderType} parameter from {@code submitItem}; the per-quad
+     * {@code MaterialInfo#itemRenderType} is the equivalent source for the diagnostic log.
+     */
+    private static String itemRenderTypeName(java.util.List<BakedQuad> quads) {
+        for (BakedQuad quad : quads) {
+            RenderType type = quad.materialInfo().itemRenderType();
+            if (type != null) return String.valueOf(type);
+        }
+        return "none";
     }
 
     private static final class MirroringStorage extends SubmitNodeStorage {
@@ -2959,29 +2974,21 @@ public final class HeldItemOutlineRenderer {
             return thirdPersonOnly && recordingThirdPerson == null ? collection : new MirroringCollection(collection, order);
         }
 
-        @Override public void clear() { delegate.clear(); }
-        @Override public void endFrame() { delegate.endFrame(); }
         @Override public it.unimi.dsi.fastutil.ints.Int2ObjectAVLTreeMap<SubmitNodeCollection> getSubmitsPerOrder() { return delegate.getSubmitsPerOrder(); }
-        @Override public void submitShadow(com.mojang.blaze3d.vertex.PoseStack pose, float radius, java.util.List<net.minecraft.client.renderer.entity.state.EntityRenderState.ShadowPiece> pieces) { delegate.submitShadow(pose, radius, pieces); }
-        @Override public void submitNameTag(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.world.phys.Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, double scale, net.minecraft.client.renderer.state.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, scale, camera); }
-        @Override public void submitText(com.mojang.blaze3d.vertex.PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
-        @Override public void submitFlame(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
-        @Override public void submitLeash(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
-        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); accumulateArmorBounds(model, pose); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
-        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
-        @Override public void submitBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.world.level.block.state.BlockState state, int light, int overlay, int color) { delegate.submitBlock(pose, state, light, overlay, color); }
-        @Override public void submitMovingBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state) { delegate.submitMovingBlock(pose, state); }
-        @Override public void submitBlockModel(com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, net.minecraft.client.renderer.block.model.BlockStateModel model, float red, float green, float blue, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, model, red, green, blue, light, overlay, color); }
-        @Override public void submitCustomGeometry(com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, net.minecraft.client.renderer.SubmitNodeCollector.CustomGeometryRenderer renderer) { delegate.submitCustomGeometry(pose, type, renderer); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitCustomGeometry(pose, type, renderer); }
-        @Override public void submitParticleGroup(net.minecraft.client.renderer.SubmitNodeCollector.ParticleGroupRenderer renderer) { delegate.submitParticleGroup(renderer); }
-
-        @Override
-        public void submitItem(com.mojang.blaze3d.vertex.PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints,
-                               java.util.List<net.minecraft.client.resources.model.geometry.BakedQuad> quads, RenderType type,
-                               net.minecraft.client.renderer.item.ItemStackRenderState.FoilType foil) {
-            delegate.submitItem(pose, context, light, overlay, color, tints, quads, type, foil);
-            MirroringCollection.mirrorItem(0, pose, context, light, overlay, color, tints, quads, type, foil);
-        }
+        @Override public <S> void submitModel(Model<? super S> model, S state, PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); accumulateArmorBounds(model, pose); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
+        @Override public void submitShadow(PoseStack pose, float radius, java.util.List<net.minecraft.client.renderer.entity.state.EntityRenderState.ShadowPiece> pieces) { delegate.submitShadow(pose, radius, pieces); }
+        @Override public void submitNameTag(PoseStack pose, Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, net.minecraft.client.renderer.state.level.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, camera); }
+        @Override public void submitText(PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
+        @Override public void submitFlame(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
+        @Override public void submitLeash(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
+        @Override public void submitMovingBlock(PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state, int outlineColor) { delegate.submitMovingBlock(pose, state, outlineColor); }
+        @Override public void submitBlockModel(PoseStack pose, RenderType type, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int[] tints, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, parts, tints, light, overlay, color); }
+        @Override public void submitBreakingBlockModel(PoseStack pose, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int progress) { delegate.submitBreakingBlockModel(pose, parts, progress); }
+        @Override public void submitShapeOutline(PoseStack pose, net.minecraft.world.phys.shapes.VoxelShape shape, RenderType type, int color, float width, boolean afterTranslucent) { delegate.submitShapeOutline(pose, shape, type, color, width, afterTranslucent); }
+        @Override public void submitQuadParticleGroup(net.minecraft.client.renderer.state.level.QuadParticleRenderState renderState) { delegate.submitQuadParticleGroup(renderState); }
+        @Override public void submitGizmoPrimitives(net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives.Group group, net.minecraft.client.renderer.state.level.CameraRenderState camera, boolean afterTranslucent) { delegate.submitGizmoPrimitives(group, camera, afterTranslucent); }
+        @Override public void submitCustomGeometry(PoseStack pose, RenderType type, SubmitNodeCollector.CustomGeometryRenderer renderer) { delegate.submitCustomGeometry(pose, type, renderer); SubmitNodeCollection capture = captureCollection(0); if (capture != null) capture.submitCustomGeometry(pose, type, renderer); }
+        @Override public void submitItem(PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints, java.util.List<BakedQuad> quads, ItemStackRenderState.FoilType foil) { delegate.submitItem(pose, context, light, overlay, color, tints, quads, foil); mirrorDirectItem(0, pose, context, light, overlay, color, tints, quads, foil); }
     }
 
     private static final class MirroringCollection extends SubmitNodeCollection {
@@ -2989,36 +2996,29 @@ public final class HeldItemOutlineRenderer {
         private final int order;
 
         private MirroringCollection(SubmitNodeCollection delegate, int order) {
-            super(new SubmitNodeStorage());
+            super();
             this.delegate = delegate;
             this.order = order;
         }
 
-        @Override public void submitShadow(com.mojang.blaze3d.vertex.PoseStack pose, float radius, java.util.List<net.minecraft.client.renderer.entity.state.EntityRenderState.ShadowPiece> pieces) { delegate.submitShadow(pose, radius, pieces); }
-        @Override public void submitNameTag(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.world.phys.Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, double scale, net.minecraft.client.renderer.state.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, scale, camera); }
-        @Override public void submitText(com.mojang.blaze3d.vertex.PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
-        @Override public void submitFlame(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
-        @Override public void submitLeash(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
-        @Override public <S> void submitModel(net.minecraft.client.model.Model<? super S> model, S state, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); accumulateArmorBounds(model, pose); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
-        @Override public void submitModelPart(net.minecraft.client.model.geom.ModelPart part, com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, int light, int overlay, TextureAtlasSprite sprite, boolean outline, boolean translucent, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState, int color) { delegate.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModelPart(part, pose, type, light, overlay, sprite, outline, translucent, crumbling, overlayState, color); }
-        @Override public void submitBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.world.level.block.state.BlockState state, int light, int overlay, int color) { delegate.submitBlock(pose, state, light, overlay, color); }
-        @Override public void submitMovingBlock(com.mojang.blaze3d.vertex.PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state) { delegate.submitMovingBlock(pose, state); }
-        @Override public void submitBlockModel(com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, net.minecraft.client.renderer.block.model.BlockStateModel model, float red, float green, float blue, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, model, red, green, blue, light, overlay, color); }
-        @Override public void submitCustomGeometry(com.mojang.blaze3d.vertex.PoseStack pose, RenderType type, net.minecraft.client.renderer.SubmitNodeCollector.CustomGeometryRenderer renderer) { delegate.submitCustomGeometry(pose, type, renderer); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitCustomGeometry(pose, type, renderer); }
-        @Override public void submitParticleGroup(net.minecraft.client.renderer.SubmitNodeCollector.ParticleGroupRenderer renderer) { delegate.submitParticleGroup(renderer); }
+        @Override public <S> void submitModel(Model<? super S> model, S state, PoseStack pose, RenderType type, int light, int overlay, int color, TextureAtlasSprite sprite, int crumbling, ModelFeatureRenderer.CrumblingOverlay overlayState) { delegate.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); accumulateArmorBounds(model, pose); mirrorModelTextureColors(sprite, color); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitModel(model, state, pose, type, light, overlay, color, sprite, crumbling, overlayState); }
+        @Override public void submitShadow(PoseStack pose, float radius, java.util.List<net.minecraft.client.renderer.entity.state.EntityRenderState.ShadowPiece> pieces) { delegate.submitShadow(pose, radius, pieces); }
+        @Override public void submitNameTag(PoseStack pose, Vec3 pos, int light, net.minecraft.network.chat.Component text, boolean seeThrough, int background, net.minecraft.client.renderer.state.level.CameraRenderState camera) { delegate.submitNameTag(pose, pos, light, text, seeThrough, background, camera); }
+        @Override public void submitText(PoseStack pose, float x, float y, net.minecraft.util.FormattedCharSequence text, boolean shadow, net.minecraft.client.gui.Font.DisplayMode mode, int color, int background, int light, int overlay) { delegate.submitText(pose, x, y, text, shadow, mode, color, background, light, overlay); }
+        @Override public void submitFlame(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState state, org.joml.Quaternionf rotation) { delegate.submitFlame(pose, state, rotation); }
+        @Override public void submitLeash(PoseStack pose, net.minecraft.client.renderer.entity.state.EntityRenderState.LeashState state) { delegate.submitLeash(pose, state); }
+        @Override public void submitMovingBlock(PoseStack pose, net.minecraft.client.renderer.block.MovingBlockRenderState state, int outlineColor) { delegate.submitMovingBlock(pose, state, outlineColor); }
+        @Override public void submitBlockModel(PoseStack pose, RenderType type, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int[] tints, int light, int overlay, int color) { delegate.submitBlockModel(pose, type, parts, tints, light, overlay, color); }
+        @Override public void submitBreakingBlockModel(PoseStack pose, java.util.List<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts, int progress) { delegate.submitBreakingBlockModel(pose, parts, progress); }
+        @Override public void submitShapeOutline(PoseStack pose, net.minecraft.world.phys.shapes.VoxelShape shape, RenderType type, int color, float width, boolean afterTranslucent) { delegate.submitShapeOutline(pose, shape, type, color, width, afterTranslucent); }
+        @Override public void submitQuadParticleGroup(net.minecraft.client.renderer.state.level.QuadParticleRenderState renderState) { delegate.submitQuadParticleGroup(renderState); }
+        @Override public void submitGizmoPrimitives(net.minecraft.client.renderer.gizmos.DrawableGizmoPrimitives.Group group, net.minecraft.client.renderer.state.level.CameraRenderState camera, boolean afterTranslucent) { delegate.submitGizmoPrimitives(group, camera, afterTranslucent); }
+        @Override public void submitCustomGeometry(PoseStack pose, RenderType type, SubmitNodeCollector.CustomGeometryRenderer renderer) { delegate.submitCustomGeometry(pose, type, renderer); SubmitNodeCollection capture = captureCollection(order); if (capture != null) capture.submitCustomGeometry(pose, type, renderer); }
+        @Override public void submitItem(PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints, java.util.List<BakedQuad> quads, ItemStackRenderState.FoilType foil) { delegate.submitItem(pose, context, light, overlay, color, tints, quads, foil); MirroringCollection.mirrorItem(order, pose, context, light, overlay, color, tints, quads, foil); }
 
-        @Override
-        public void submitItem(com.mojang.blaze3d.vertex.PoseStack pose, ItemDisplayContext context, int light, int overlay, int color, int[] tints,
-                               java.util.List<net.minecraft.client.resources.model.geometry.BakedQuad> quads, RenderType type,
-                               net.minecraft.client.renderer.item.ItemStackRenderState.FoilType foil) {
-            delegate.submitItem(pose, context, light, overlay, color, tints, quads, type, foil);
-            mirrorItem(order, pose, context, light, overlay, color, tints, quads, type, foil);
-        }
-
-        private static void mirrorItem(int order, com.mojang.blaze3d.vertex.PoseStack pose, ItemDisplayContext context, int light, int overlay, int color,
-                                       int[] tints, java.util.List<net.minecraft.client.resources.model.geometry.BakedQuad> quads, RenderType type,
-                                       net.minecraft.client.renderer.item.ItemStackRenderState.FoilType foil) {
-            mirrorDirectItem(order, pose, context, light, overlay, color, tints, quads, type, foil);
+        private static void mirrorItem(int order, PoseStack pose, ItemDisplayContext context, int light, int overlay, int color,
+                                       int[] tints, java.util.List<BakedQuad> quads, ItemStackRenderState.FoilType foil) {
+            mirrorDirectItem(order, pose, context, light, overlay, color, tints, quads, foil);
         }
     }
 
@@ -3037,7 +3037,7 @@ public final class HeldItemOutlineRenderer {
             if (buffer == null) buffer = RenderSystem.getDevice().createBuffer(() -> label, GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_MAP_WRITE, bytes * blocks);
             int offset = (cursor++ % blocks) * bytes;
             GpuBufferSlice slice = new GpuBufferSlice(buffer, offset, bytes);
-            try (GpuBuffer.MappedView mapped = RenderSystem.getDevice().createCommandEncoder().mapBuffer(slice, false, true)) {
+            try (GpuBufferSlice.MappedView mapped = slice.map(false, true)) {
                 ByteBuffer data = mapped.data(); data.position(0); writer.write(data); data.position(0);
             }
             return slice;

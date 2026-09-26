@@ -31,3 +31,4 @@ out/
 # Porting scratch (migration primers, captured compiler output)
 research/
 compile-errors.txt
+build-out.txt
