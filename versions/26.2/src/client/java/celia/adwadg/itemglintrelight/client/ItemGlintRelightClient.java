@@ -3,7 +3,6 @@ package celia.adwadg.itemglintrelight.client;
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineCompat;
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlinePunchyCompat;
-import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;

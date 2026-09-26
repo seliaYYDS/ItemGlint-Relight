@@ -127,7 +127,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private boolean draggingPreview;
     private boolean panningPreview;
     private boolean rollingPreview;
-    private ItemStack previewItem = new ItemStack(Items.DIAMOND_SWORD);
+    // 26.2 binds item data components only once a world is available. Constructing an
+    // ItemStack before that throws "Components not bound yet" -- which happens when ModMenu
+    // opens this screen on the title screen. Fall back to EMPTY so the screen still opens.
+    private ItemStack previewItem = itemsBound() ? new ItemStack(Items.DIAMOND_SWORD) : ItemStack.EMPTY;
     private final List<ItemChoice> allItemChoices = new ArrayList<>();
     private List<ItemChoice> filteredItemChoices = List.of();
     private boolean itemPickerOpen;
@@ -138,7 +141,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private float itemPickerScrollTarget;
     private float previewItemNameHover;
     private long lastPreviewNameFrame;
-    private ItemStack quickPreviewItem = new ItemStack(Items.DIAMOND_SWORD);
+    private ItemStack quickPreviewItem = itemsBound() ? new ItemStack(Items.DIAMOND_SWORD) : ItemStack.EMPTY;
     private float quickPreviewPitch;
     private float quickPreviewYaw;
     private float quickPreviewRoll = 45.0F;
@@ -1925,11 +1928,20 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         filterItemChoices();
     }
 
+    /**
+     * 26.2 resolves an item's data components lazily; before a world exists
+     * {@code Holder$Reference#components()} throws "Components not bound yet".
+     */
+    private static boolean itemsBound() {
+        return Items.DIAMOND_SWORD.builtInRegistryHolder().areComponentsBound();
+    }
+
     private void rebuildItemChoices() {
         allItemChoices.clear();
         for (var entry : BuiltInRegistries.ITEM.entrySet()) {
             Identifier id = entry.getKey().identifier();
             if (entry.getValue() == Items.AIR) continue;
+            if (!itemsBound()) continue;
             ItemStack stack = new ItemStack(entry.getValue());
             String name = stack.getHoverName().getString();
             String modName = FabricLoader.getInstance().getModContainer(id.getNamespace())
@@ -1946,6 +1958,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         for (var entry : BuiltInRegistries.ITEM.entrySet()) {
             Identifier id = entry.getKey().identifier();
             if (entry.getValue() == Items.AIR) continue;
+            if (!itemsBound()) continue;
             ItemStack stack = new ItemStack(entry.getValue());
             allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.ITEM, stack, stack.getHoverName().getString(), id.toString(), id.toString()));
         }
