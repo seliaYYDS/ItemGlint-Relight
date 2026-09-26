@@ -2267,7 +2267,10 @@ public final class HeldItemOutlineRenderer {
         for (int index = 0; index < layerCount; index++) {
             ItemStackLayerRenderStateAccessor layer = (ItemStackLayerRenderStateAccessor) (Object) layers[index];
             List<BakedQuad> quads = layer.itemglintrelight$getQuads();
-            int[] tints = layer.itemglintrelight$getTintLayers().toIntArray();
+            // 26.2 made the tint field private and lazily built: LayerRenderState#tintLayers() is the
+            // public accessor and returns an empty (never null) list, so special-model items whose
+            // tint list was never assigned no longer NPE here.
+            int[] tints = layers[index].tintLayers().toIntArray();
             if (quads != null && !quads.isEmpty()) {
                 captureTextureColors(capture, quads, tints);
             }
@@ -2288,7 +2291,10 @@ public final class HeldItemOutlineRenderer {
         for (int index = 0; index < layerCount; index++) {
             ItemStackLayerRenderStateAccessor layer = (ItemStackLayerRenderStateAccessor) (Object) layers[index];
             List<BakedQuad> quads = layer.itemglintrelight$getQuads();
-            int[] tints = layer.itemglintrelight$getTintLayers().toIntArray();
+            // 26.2 made the tint field private and lazily built: LayerRenderState#tintLayers() is the
+            // public accessor and returns an empty (never null) list, so special-model items whose
+            // tint list was never assigned no longer NPE here.
+            int[] tints = layers[index].tintLayers().toIntArray();
             if (quads != null && !quads.isEmpty()) {
                 for (BakedQuad quad : quads) {
                     if (quad != null) capturePreviewTextureColors(capture, quad.materialInfo().sprite(), resolveTint(quad, tints), config);
