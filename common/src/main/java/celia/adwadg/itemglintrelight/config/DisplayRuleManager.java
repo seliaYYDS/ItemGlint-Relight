@@ -26,6 +26,7 @@ public final class DisplayRuleManager {
     private static final List<DisplayRule> RULES = new ArrayList<>();
     private static Path rulesFile;
     private static long nextMatchDiagnosticMillis;
+    private static long nextComponentPathDiagnosticMillis;
     private static List<DisplayRule> orderedRuleCache;
     private static int orderedRuleCacheVersion = -1;
     private static int rulesVersion;
@@ -107,21 +108,56 @@ public final class DisplayRuleManager {
     private static boolean matchesNbtCondition(ItemStack stack, DisplayRule.NbtCondition condition) {
         Object component = componentValue(stack, condition.path());
         boolean empty = isEmptyComponent(component);
-        boolean contains = condition.value().isBlank() ? empty : component != null && component.toString().contains(condition.value());
+        String text = component == null ? "" : component.toString();
+        boolean contains = condition.value().isBlank() ? empty : component != null && text.contains(condition.value());
+        // The mirror of "contains", and a mode of its own in the rule editor on both supported
+        // versions. Folding it into "contains" made four of the ten match modes indistinguishable.
+        boolean containedBy = !condition.value().isBlank() && condition.value().contains(text);
         return switch (condition.matchMode()) {
-            case "!=", "!~", "!in", "!⊃", "!⊂" -> !contains;
-            case ">", "<", ">=", "<=" -> matchesNumericCondition(component == null ? "" : component.toString(), condition, contains);
+            case "!=", "!~", "!in", "!⊃" -> !contains;
+            case "!⊂" -> !containedBy;
+            case "⊂" -> containedBy;
+            case ">", "<", ">=", "<=" -> matchesNumericCondition(component, condition, contains);
             default -> contains;
         };
     }
 
+    /**
+     * Resolves the rule editor's "NBT path" against the item's data.
+     *
+     * <p>Both supported versions store item data as <em>components</em>, so the field takes a component
+     * id ({@code minecraft:enchantments}, {@code minecraft:damage}, ...) and not a legacy NBT path --
+     * the label is a leftover from the NBT era. A bare name is accepted as {@code minecraft:<name>}
+     * because that is what the field invites people to type, and a path that resolves to no component
+     * at all is reported (rate limited) instead of silently never matching.
+     */
     private static Object componentValue(ItemStack stack, String path) {
+        DataComponentType<?> type = componentType(path);
+        return type == null ? null : stack.get(type);
+    }
+
+    private static DataComponentType<?> componentType(String path) {
+        if (path == null || path.isBlank()) return null;
+        DataComponentType<?> type = lookupComponent(path);
+        if (type == null) type = lookupComponent("minecraft:" + path);
+        if (type == null) reportUnresolvedComponentPath(path);
+        return type;
+    }
+
+    private static DataComponentType<?> lookupComponent(String id) {
         try {
-            DataComponentType<?> type = BuiltInRegistries.DATA_COMPONENT_TYPE.getValue(Identifier.parse(path));
-            return type == null ? null : stack.get(type);
+            return BuiltInRegistries.DATA_COMPONENT_TYPE.getValue(Identifier.parse(id));
         } catch (RuntimeException ignored) {
             return null;
         }
+    }
+
+    private static void reportUnresolvedComponentPath(String path) {
+        long now = System.currentTimeMillis();
+        if (now < nextComponentPathDiagnosticMillis) return;
+        nextComponentPathDiagnosticMillis = now + 5000L;
+        ItemGlintRelight.LOGGER.warn("[DisplayRule] no data component matches NBT path '{}'; the field takes a component id such as minecraft:enchantments",
+                path);
     }
 
     private static boolean isEmptyComponent(Object component) {
@@ -133,27 +169,51 @@ public final class DisplayRuleManager {
         return value.isBlank() || value.equals("{}") || value.equals("[]") || value.equals("\"\"") || value.equals("null");
     }
 
-    private static boolean matchesNumericCondition(String components, DisplayRule.NbtCondition condition, boolean fallback) {
-        int pathIndex = components.indexOf(condition.path());
-        if (pathIndex < 0) return false;
-        int valueStart = components.indexOf('=', pathIndex);
-        if (valueStart < 0) valueStart = components.indexOf(':', pathIndex);
-        if (valueStart < 0) return fallback;
-        int valueEnd = valueStart + 1;
-        while (valueEnd < components.length() && "0123456789+-.".indexOf(components.charAt(valueEnd)) >= 0) valueEnd++;
+    /**
+     * Compares a component numerically.
+     *
+     * <p>A scalar component prints as the number itself ({@code 5} for {@code minecraft:damage}), while a
+     * map-like one prints {@code key=value} entries; the entry the path names is tried first and the
+     * plain value is the fallback, so both shapes compare. The previous version required the path to
+     * appear inside the component's own text and otherwise failed outright, which made every numeric
+     * condition on a scalar component silently never match.
+     */
+    private static boolean matchesNumericCondition(Object component, DisplayRule.NbtCondition condition, boolean fallback) {
+        if (component == null) return false;
+        String text = component.toString();
+        int pathIndex = text.indexOf(condition.path());
+        Double actual = firstNumber(text, pathIndex < 0 ? 0 : pathIndex);
+        if (actual == null) actual = firstNumber(text, 0);
+        if (actual == null) return false;
+        double expected;
         try {
-            double actual = Double.parseDouble(components.substring(valueStart + 1, valueEnd));
-            double expected = Double.parseDouble(condition.value());
-            return switch (condition.matchMode()) {
-                case ">" -> actual > expected;
-                case "<" -> actual < expected;
-                case ">=" -> actual >= expected;
-                case "<=" -> actual <= expected;
-                default -> fallback;
-            };
+            expected = Double.parseDouble(condition.value().trim());
         } catch (NumberFormatException ignored) {
             return fallback;
         }
+        return switch (condition.matchMode()) {
+            case ">" -> actual > expected;
+            case "<" -> actual < expected;
+            case ">=" -> actual >= expected;
+            case "<=" -> actual <= expected;
+            default -> fallback;
+        };
+    }
+
+    /** First number at or after {@code from}; null when the text holds none. */
+    private static Double firstNumber(String text, int from) {
+        for (int index = Math.max(0, from); index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character != '-' && character != '+' && character != '.' && !Character.isDigit(character)) continue;
+            int end = index + 1;
+            while (end < text.length() && "0123456789+-.eE".indexOf(text.charAt(end)) >= 0) end++;
+            try {
+                return Double.parseDouble(text.substring(index, end));
+            } catch (NumberFormatException ignored) {
+                // A lone sign or a word such as "ResourceKey" -- keep looking.
+            }
+        }
+        return null;
     }
 
     private static void logMatch(ItemStack stack, DisplayRule rule) {
