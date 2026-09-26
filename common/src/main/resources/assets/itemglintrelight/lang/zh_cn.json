@@ -82,6 +82,7 @@
   "ui.itemglintrelight.color_picker_demo": "颜色选择器",
   "ui.itemglintrelight.preview.title": "描边预览",
   "ui.itemglintrelight.preview.item": "钻石剑",
+  "ui.itemglintrelight.preview.unavailable": "物品数据需载入世界后才可用，请进入世界后再打开此界面",
   "ui.itemglintrelight.rules.add": "添加规则",
   "ui.itemglintrelight.rules.empty": "尚未添加显示规则。",
   "ui.itemglintrelight.rules.create": "添加显示规则",

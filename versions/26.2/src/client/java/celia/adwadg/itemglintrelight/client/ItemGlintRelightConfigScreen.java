@@ -1803,6 +1803,11 @@ public final class ItemGlintRelightConfigScreen extends Screen {
 
     private void renderPreview(GuiGraphicsExtractor graphics, int mouseX, int mouseY) {
         renderPreviewGrid(graphics);
+        if (!previewAvailable()) {
+            SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.preview.unavailable"),
+                    PREVIEW_X + 14, PREVIEW_Y + 12, 0.88F, UiPalette.MUTED_TEXT);
+            return;
+        }
         String itemName = previewItem.getHoverName().getString();
         boolean hovered = isPreviewItemLabel(mouseX, mouseY);
         previewItemNameHover = UiMath.approach(previewItemNameHover, hovered ? 1.0F : 0.0F, previewDeltaSeconds(), 12.0F);
@@ -1869,7 +1874,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 graphics.fill(canvasLeft, y, canvasRight, y + 1, quickPreviewColor((y - canvasTop) % 48 == 0 ? 0x4A1D4664 : 0x261D4664));
             }
             graphics.disableScissor();
-            if (page != Page.PREVIEW) {
+            if (page != Page.PREVIEW && !quickPreviewItem.isEmpty()) {
                 int previewLeft = Math.round(originX + canvasLeft * uiScale);
                 int previewTop = Math.round(originY + canvasTop * uiScale);
                 int previewRight = Math.round(originX + canvasRight * uiScale);
@@ -1912,6 +1917,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private boolean isPreviewItemLabel(double mouseX, double mouseY) {
+        if (!previewAvailable()) return false;
         int labelWidth = Math.max(96, Math.round(SmoothTextRenderer.width(previewItem.getHoverName().getString(), 0.88F, UiPalette.BRIGHT_BLUE)));
         return mouseX >= PREVIEW_X + 10 && mouseX < PREVIEW_X + 16 + labelWidth
                 && mouseY >= PREVIEW_Y + 8 && mouseY < PREVIEW_Y + 29;
@@ -1934,6 +1940,16 @@ public final class ItemGlintRelightConfigScreen extends Screen {
      */
     private static boolean itemsBound() {
         return Items.DIAMOND_SWORD.builtInRegistryHolder().areComponentsBound();
+    }
+
+    /**
+     * Whether the preview can be built at all. 26.2 binds item data components only once a world's
+     * registries are loaded, so from the title screen -- which is where ModMenu opens this screen --
+     * no {@code ItemStack} can even be constructed. The preview then has nothing to show and says so
+     * instead of rendering an empty item.
+     */
+    private boolean previewAvailable() {
+        return itemsBound() && !previewItem.isEmpty();
     }
 
     private void rebuildItemChoices() {
