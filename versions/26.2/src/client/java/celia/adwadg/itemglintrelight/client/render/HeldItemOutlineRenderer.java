@@ -237,11 +237,21 @@ public final class HeldItemOutlineRenderer {
     private static final int OCCLUSION_OFF = 1;
     private static final int OCCLUSION_THIRD_PERSON = 2;
     /**
-     * {@code -Ditemglintrelight.irisHandSceneOcclusion=false} turns the first-person scene-depth test
-     * off entirely under a pack instead of testing against Iris' {@code depthtex2}.
+     * Whether the first-person composite may test the stroke against the scene depth while a shader
+     * pack renders. Off by default, because that test cannot work under Iris: the depth the mask
+     * replay writes is not usable there (the bloom shader already documents Iris' replay producing a
+     * blank depth attachment), so the item depth reads as the far plane while the scene depth reads
+     * near -- every stroke pixel then fails {@code sceneDepth + eps < itemDepth} and is discarded,
+     * which is exactly "the outline vanishes under a pack". Third-person hits the same wall and
+     * documents a "scene_occlusion_disabled" mode for it; without a scene snapshot to fall back on,
+     * the hand path simply leaves the scene term out. The arm occluder is unaffected either way, as
+     * it is the mod's own replay of the arm.
+     *
+     * <p>{@code -Ditemglintrelight.irisHandSceneOcclusion=true} opts back in to testing against Iris'
+     * {@code depthtex2} for experiments.
      */
     private static final boolean IRIS_HAND_SCENE_OCCLUSION_ENABLED =
-            !"false".equalsIgnoreCase(System.getProperty("itemglintrelight.irisHandSceneOcclusion", "true"));
+            "true".equalsIgnoreCase(System.getProperty("itemglintrelight.irisHandSceneOcclusion", "false"));
     /**
      * Scene depth for the first-person composite while a shader pack renders. Iris' {@code depthtex2}
      * (its "Depth / Before Hand" copy) is the level depth with the held item absent, which is exactly
