@@ -6,8 +6,7 @@
   "client": [
     "GuiGraphicsAccessor",
     "GuiRendererPreviewMixin",
-    "ItemInHandRendererOutlineMixin",
-    "ItemStackRenderStateOutlineMixin"
+    "RenderPipelinesAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

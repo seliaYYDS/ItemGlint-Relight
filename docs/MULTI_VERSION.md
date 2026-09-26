@@ -137,6 +137,21 @@ CI 也使用同一入口，在版本矩阵 job 中注入 `ITEMGLINT_JDK_<major>`
 
 新增版本时直接复制这个独立 build，并替换它自己的 Wrapper、`settings.gradle`、Loom 和 `toolchain.properties`；不应重新加入根工程的 `include`。
 
+#### 客户端资源目录
+
+1.21.11 的 `build.gradle` 为两个 source set 分别指定了共享资源：
+
+- `main`：`../../common/src/main/resources`（lang、shaders、图标，26.2 也通过 `processResources` 复用）
+- `client`：`../../common/src/client/resources`（仅 1.21.11 打包）
+
+版本专属的资源放在该版本自己的默认目录里，不要放进 `common/src/main/resources`，否则 26.2 也会一并打包：
+
+- `versions/1.21.11/src/client/resources/` —— 仅 1.21.11 客户端
+- `versions/1.21.11/src/main/resources/` —— 仅 1.21.11 两环境
+
+例：配置界面的内置字体 `versions/1.21.11/src/client/resources/assets/itemglintrelight/font/NotoSans-Light.ttf`，
+代码里用 `SmoothTextRenderer.class.getResourceAsStream("/assets/itemglintrelight/font/NotoSans-Light.ttf")` 读取。
+
 ### IDEA 导入独立版本
 
 独立 build 不使用 Gradle composite，否则 IDE 会再次让不同版本共享同一个 Gradle runtime。每个版本都应作为单独的 **Linked Gradle Project** 附加到同一个 IDEA 窗口：
