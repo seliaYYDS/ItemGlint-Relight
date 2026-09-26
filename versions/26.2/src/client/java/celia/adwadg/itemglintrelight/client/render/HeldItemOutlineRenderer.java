@@ -253,6 +253,18 @@ public final class HeldItemOutlineRenderer {
     private static final boolean IRIS_HAND_SCENE_OCCLUSION_ENABLED =
             "true".equalsIgnoreCase(System.getProperty("itemglintrelight.irisHandSceneOcclusion", "false"));
     /**
+     * Diagnostic route for the third-person scene depth: test against the live frame depth instead of
+     * the opaque snapshot taken inside the level pass.
+     *
+     * <p>{@code -Ditemglintrelight.thirdPersonLiveDepth=true} is the escape hatch if the snapshot
+     * route ever misbehaves again. The snapshot is a <em>copy</em> of the main depth taken at a fixed
+     * point in the level pass, so it inherits whatever that point and that copy do; the live depth is
+     * read where it is bound and cannot be wrong about what the frame has drawn. The cost is that
+     * translucent terrain then occludes too, and a stroke behind water disappears with it.
+     */
+    private static final boolean THIRD_PERSON_LIVE_DEPTH =
+            "true".equalsIgnoreCase(System.getProperty("itemglintrelight.thirdPersonLiveDepth", "false"));
+    /**
      * Scene depth for the first-person composite while a shader pack renders. Iris' {@code depthtex2}
      * (its "Depth / Before Hand" copy) is the level depth with the held item absent, which is exactly
      * the term the occlusion test needs; the main target's depth is unusable there because Iris writes
@@ -1352,18 +1364,32 @@ public final class HeldItemOutlineRenderer {
             try {
                 ItemGlintRelightConfig config = thirdPersonConfig(capture);
                 ScissorRect scissor = resolveThirdPersonScissor(mainTarget, capture, config);
-                if (iris) {
+                // The depth the composite's occlusion test reads. Every route hands the shader the
+                // level's own depth in the level's own projection space -- that is what makes the
+                // comparison against the replayed item meaningful -- so they differ only in *when*
+                // that depth is taken and how it is moved into a sampleable target.
+                GpuTextureView sceneDepthView;
+                if (THIRD_PERSON_LIVE_DEPTH) {
+                    // Diagnostic route: the live frame depth, read where it is bound. Nothing can be
+                    // missing from it, translucent terrain included.
+                    irisNoHandDepthStatus = "live_depth";
+                    clearMask(sceneDepth, scissor);
+                    copyDepthRegion(sceneDepth, mainTarget, null);
+                    sceneDepthView = mainTarget.getDepthTextureView();
+                } else if (iris) {
+                    sceneDepthView = thirdPersonSceneDepth.getDepthTextureView();
                     if (!IRIS_SCENE_OCCLUSION_ENABLED) {
                         // Diagnostic only: an all-far scene depth makes the shader's occlusion
                         // test a no-op, so the outline survives everywhere it can rasterise.
                         irisNoHandDepthStatus = "scene_occlusion_disabled";
                         clearMask(thirdPersonSceneDepth, scissor);
                     } else if (capture.sceneDepthReady) {
-                        // Preferred: the opaque snapshot from the first main-batch flush is item
-                        // free, so the shader's depth rejection compares the outline against the
-                        // scene. Iris' depthtex2 is the finished frame depth and therefore holds
-                        // the third-person item itself; testing against it eats the parts of the
-                        // outline where the replayed silhouette differs from Iris' own render.
+                        // Preferred: the snapshot is taken after the level's feature phases but
+                        // before translucent terrain, so the shader's depth rejection compares the
+                        // outline against the scene as the frame drew it. Iris' depthtex2 is the
+                        // finished frame depth and therefore holds the third-person item itself;
+                        // testing against it eats the parts of the outline where the replayed
+                        // silhouette differs from Iris' own render.
                         irisNoHandDepthStatus = "opaque_snapshot";
                     } else if (!copyIrisNoHandDepth(thirdPersonSceneDepth, mainTarget, scissor)) {
                         thirdPersonDepthDiagnostic(source, "iris_depth_unavailable", mainTarget, capture);
@@ -1380,12 +1406,15 @@ public final class HeldItemOutlineRenderer {
                         // This capture was submitted after the opaque snapshot (or no snapshot
                         // happened at all): fall back to the current depth, which may already
                         // include translucent geometry.
-                        copyDepthRegion(thirdPersonSceneDepth, mainTarget, scissor);
+                        copyDepthRegion(thirdPersonSceneDepth, mainTarget, null);
                     }
                     // The mask only needs clearing and seeding where the item can rasterise; the
-                    // shaders never read outside that region.
+                    // shaders never read outside that region. The seed is a full copy on purpose: it
+                    // has to be the very same depth the shader tests against, and a full depth copy
+                    // is both cheaper than a second code path and the path 1.21.11 used.
                     clearMask(sceneDepth, scissor);
-                    copyDepthRegion(sceneDepth, thirdPersonSceneDepth, scissor);
+                    copyDepthRegion(sceneDepth, thirdPersonSceneDepth, null);
+                    sceneDepthView = thirdPersonSceneDepth.getDepthTextureView();
                 }
                 thirdPersonCompositeSequence++;
                 thirdPersonDepthDiagnostic(source, "preload", mainTarget, capture);
@@ -1396,7 +1425,7 @@ public final class HeldItemOutlineRenderer {
                     captureFallbackTextureColors(minecraft, capture, null);
                 }
                 submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(capture, config), "third_person",
-                        scissor, thirdPersonSceneDepth.getDepthTextureView(), OCCLUSION_THIRD_PERSON);
+                        scissor, sceneDepthView, OCCLUSION_THIRD_PERSON);
                 thirdPersonDepthDiagnostic(source, "composite", mainTarget, capture);
             } finally {
                 capture.reset();
@@ -1405,16 +1434,22 @@ public final class HeldItemOutlineRenderer {
     }
 
     /**
-     * Phase one, hooked right after 26.2's solid feature batch inside the level's main pass -- the
-     * point that replaced {@code MultiBufferSource.BufferSource#endBatch}, which is where the
-     * entities and items the captures are taken from are actually drawn. The scene depth is
-     * snapshotted here, while it still holds opaque geometry only: translucent terrain, clouds and
-     * weather are drawn after this point, so the snapshot lets the outline stay on top of them
-     * without ever showing through a wall.
+     * Phase one, hooked after the last feature batch of the level's main pass but before translucent
+     * terrain -- 26.2's replacement for the flushed {@code MultiBufferSource.BufferSource} 1.21.11
+     * hooked.
+     *
+     * <p>The exact call site matters and is documented on
+     * {@code FeatureRenderDispatcherFrameMixin}: {@code executeSolid} alone is <em>not</em> the main
+     * batch, because the player's body is submitted with the translucent model render type and is
+     * therefore drawn later, by {@code executeTranslucent}. Snapshotting at {@code executeSolid} left
+     * the scene depth without the player and the stroke was composited through the body. The hook now
+     * sits on {@code executeOutline}, the first unconditional point after every feature phase and
+     * still before translucent terrain, clouds and weather -- so the snapshot holds the player, the
+     * other entities and the level, and the stroke stays visible over translucent geometry without
+     * ever showing through a wall.
      *
      * <p>26.2 deleted {@code MultiBufferSource}, so the old "is this the level's own buffer source"
-     * identity check has no counterpart any more: {@code PreparedFrame#executeSolid} <em>is</em> the
-     * main batch, and the call site is the filter.
+     * identity check has no counterpart any more: the call site is the filter.
      */
     public static void compositeThirdPersonAfterMainBatch(Minecraft minecraft) {
         if (minecraft == null || minecraft.gameRenderer == null
@@ -1441,13 +1476,16 @@ public final class HeldItemOutlineRenderer {
         RenderTarget mainTarget = minecraft.gameRenderer.mainRenderTarget();
         ensureTarget(mainTarget);
         ScissorRect snapshotRect = thirdPersonUnionScissor(mainTarget);
-        // Reset to "no geometry" first: whatever the snapshot region does not cover must read as
-        // the far plane (no occluder) instead of last frame's depth or a cleared near plane. A
-        // region that is stale-near would reject the outline there, which is exactly how a
-        // too-small snapshot region turns into a rectangular hole in the outline.
-        RenderSystem.getDevice().createCommandEncoder()
-                .clearDepthTexture(thirdPersonSceneDepth.getDepthTexture(), 0.0D);
-        copyDepthRegion(thirdPersonSceneDepth, mainTarget, snapshotRect);
+        // A full-extent copy, deliberately. 1.21.11 only ever produced this depth through the
+        // engine's own RenderTarget#copyDepthFrom: its framebuffer lookup never resolved, so the raw
+        // region blit below was unreachable and every snapshot was full. 26.2 is the first version
+        // where this mod's framebuffer lookup works, which silently moved the snapshot onto that raw
+        // region blit. The region only ever saved a copy of a depth attachment, and an empty or
+        // partial scene depth reads as the far plane, which turns the shader's occlusion test into a
+        // no-op -- exactly the failure this snapshot was meant to prevent. The full copy keeps the
+        // snapshot on the vanilla-proven path; thirdPersonSnapshotRect below still reports the region
+        // the composite cares about.
+        copyDepthRegion(thirdPersonSceneDepth, mainTarget, null);
         thirdPersonSnapshotRect = snapshotRect == null ? "null"
                 : snapshotRect.x() + "," + snapshotRect.y() + " " + snapshotRect.width() + "x" + snapshotRect.height();
         thirdPersonSceneDepthFrame = frameNumber;
