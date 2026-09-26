@@ -6,9 +6,16 @@
   "client": [
     "GuiGraphicsAccessor",
     "GuiRendererPreviewMixin",
-    "RenderPipelinesAccessor"
+    "RenderPipelinesAccessor",
+    "FeatureRenderDispatcherAccessor",
+    "SpriteContentsAccessor",
+    "ItemStackRenderStateAccessor",
+    "ItemStackLayerRenderStateAccessor",
+    "GameRendererAccessor",
+    "GlTextureViewAccessor",
+    "GlTextureAccessor"
   ],
   "injectors": {
-    "defaultRequire": 1
+    "require": 1
   }
 }
