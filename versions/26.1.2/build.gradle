@@ -1,0 +1,106 @@
+plugins {
+    id "net.fabricmc.fabric-loom" version "${loom_version}"
+    id "maven-publish"
+}
+
+version = project.mod_version
+
+def toolchainProperties = new Properties()
+file("toolchain.properties").withInputStream { toolchainProperties.load(it) }
+def javaRelease = toolchainProperties.getProperty("java_release", "25").toInteger()
+
+base { archivesName = project.archives_base_name }
+
+repositories {
+    maven { url = "https://repo.huaweicloud.com/repository/maven/" }
+    maven { url = "https://api.modrinth.com/maven" }
+    maven { url = "https://maven.fabricmc.net/" }
+    maven { url = "https://maven.terraformersmc.com/releases/" }
+    mavenCentral()
+}
+
+loom {
+    // No-remap Loom has no split environment source sets, so all shared and
+    // version-specific code compiles into the single main source set.
+    mods {
+        "${project.mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+    runs {
+        client {
+            client()
+            name = "26.1.2 Client"
+            runDir = "run"
+        }
+    }
+}
+
+sourceSets {
+    main {
+        // 26.1.2-specific client code (forked from shared common/client and ported).
+        java.srcDir("src/client/java")
+        // Config model and other environment-neutral code stays shared.
+        java.srcDir("../../common/src/main/java")
+        // 26.1.2 owns fabric.mod.json and the mixin config; shared assets are added
+        // in processResources with the overridden files excluded.
+        resources.srcDir("src/client/resources")
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+
+    // Unobfuscated 26.1.2 has no remap configurations, so regular scopes are used.
+    // The loader must be on the runtime classpath: it provides the Knot launch classes.
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // ModMenu is optional at compile time and dev-environment only at runtime.
+    compileOnly "com.terraformersmc:modmenu:${project.modmenu_version}"
+    localRuntime "com.terraformersmc:modmenu:${project.modmenu_version}"
+}
+
+processResources {
+    // Shared assets (lang, shaders, icon) come from common, but 26.1.2 provides its own
+    // fabric.mod.json and mixin config, so those two are excluded to avoid duplicates.
+    from("../../common/src/main/resources") {
+        exclude "fabric.mod.json"
+        exclude "itemglintrelight.client.mixins.json"
+    }
+
+    inputs.properties([
+        version: project.version, mod_id: project.mod_id, mod_name: project.mod_name,
+        mod_description: project.mod_description, mod_author: project.mod_author,
+        mod_license: project.mod_license, loader_version: project.loader_version,
+        minecraft_version: project.minecraft_version
+    ])
+    filesMatching("fabric.mod.json") { expand(inputs.properties) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = javaRelease
+    options.encoding = "UTF-8"
+    // Report every error instead of stopping at javac's default cap of 100.
+    options.compilerArgs << "-Xmaxerrs" << "100000"
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(javaRelease) }
+    withSourcesJar()
+}
+
+jar {
+    from(file("../../LICENSE")) {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}
