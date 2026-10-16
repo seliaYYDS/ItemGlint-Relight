@@ -10,6 +10,6 @@ tasks.register("listTargets") {
     group = "help"
     description = "Lists maintained Minecraft targets."
     doLast {
-        println "Fabric targets: 1.21.11, 26.1.2, 26.2"
+        println "Fabric targets: 1.21.11, 26.1.2, 26.2, 26.3"
     }
 }
