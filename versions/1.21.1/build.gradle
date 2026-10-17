@@ -1,0 +1,93 @@
+plugins {
+    id "fabric-loom" version "${loom_version}"
+    id "maven-publish"
+}
+
+version = project.mod_version
+def toolchainProperties = new Properties()
+file("toolchain.properties").withInputStream { toolchainProperties.load(it) }
+def javaRelease = toolchainProperties.getProperty("java_release", "21").toInteger()
+
+base {
+    archivesName = project.archives_base_name
+}
+
+repositories {
+    maven { url = "https://repo.huaweicloud.com/repository/maven/" }
+    maven { url = "https://api.modrinth.com/maven" }
+    maven { url = "https://maven.fabricmc.net/" }
+    maven { url = "https://maven.terraformersmc.com/releases/" }
+    mavenCentral()
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "${project.mod_id}" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+}
+
+// Source sets come from Loom's splitEnvironmentSourceSets():
+// main -> src/main/{java,resources}, client -> src/client/{java,resources}.
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // ModMenu is optional at compile time and dev-environment only at runtime.
+    modCompileOnly "maven.modrinth:modmenu:${project.modmenu_version}"
+    modLocalRuntime "maven.modrinth:modmenu:${project.modmenu_version}"
+}
+
+processResources {
+    // Shared assets (lang, icon, bundled font) come from common/. fabric.mod.json,
+    // the mixin config and the shaders belong to this version.
+    from("../../common/src/main/resources") {
+        exclude "fabric.mod.json"
+        exclude "itemglintrelight.client.mixins.json"
+        exclude "assets/itemglintrelight/shaders/**"
+    }
+
+    inputs.properties([
+        version: project.version, mod_id: project.mod_id, mod_name: project.mod_name,
+        mod_description: project.mod_description, mod_author: project.mod_author,
+        mod_license: project.mod_license, loader_version: project.loader_version,
+        minecraft_version: project.minecraft_version
+    ])
+    filesMatching("fabric.mod.json") { expand(inputs.properties) }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = javaRelease
+    options.encoding = "UTF-8"
+    // Report every error instead of stopping at javac's default cap of 100.
+    options.compilerArgs << "-Xmaxerrs" << "100000"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(javaRelease)
+    }
+    withSourcesJar()
+}
+
+jar {
+    from(file("../../LICENSE")) {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}
