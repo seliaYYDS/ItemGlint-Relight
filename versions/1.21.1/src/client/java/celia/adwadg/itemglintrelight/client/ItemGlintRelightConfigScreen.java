@@ -1806,7 +1806,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private void renderPreview(GuiGraphics graphics, int mouseX, int mouseY) {
         renderPreviewGrid(graphics);
         UiScissor.enable(graphics, PREVIEW_X + 1, PREVIEW_Y + 1, PREVIEW_X + PREVIEW_WIDTH - 1, PREVIEW_Y + PREVIEW_HEIGHT - 1);
-        ItemPreviewRenderer.render(graphics, previewItem.copy(), PREVIEW_X, PREVIEW_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT,
+        ItemPreviewRenderer.render(graphics, previewItem.copy(), model.draft(), PREVIEW_X, PREVIEW_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT,
                 previewZoom, previewPitch, previewYaw, previewRoll, previewOffsetX, previewOffsetY);
         UiScissor.disable(graphics);
         String itemName = previewItem.getHoverName().getString();
@@ -1866,7 +1866,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             }
             if (page != Page.PREVIEW) {
                 UiScissor.enable(graphics, canvasLeft, canvasTop, canvasRight, canvasBottom);
-                ItemPreviewRenderer.render(graphics, quickPreviewItem.copy(), canvasLeft, canvasTop,
+                ItemPreviewRenderer.render(graphics, quickPreviewItem.copy(), model.draft(), canvasLeft, canvasTop,
                         canvasRight - canvasLeft, canvasBottom - canvasTop,
                         quickPreviewZoom * 16.0F, quickPreviewPitch, quickPreviewYaw, quickPreviewRoll, 0.0F, 0.0F);
                 UiScissor.disable(graphics);

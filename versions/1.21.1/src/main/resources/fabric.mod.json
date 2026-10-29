@@ -8,6 +8,7 @@
   "authors": ["${mod_author}"],
   "license": "${mod_license}",
   "environment": "client",
+  "mixins": ["itemglintrelight.client.mixins.json"],
   "entrypoints": {
     "main": ["celia.adwadg.itemglintrelight.ItemGlintRelight"],
     "client": ["celia.adwadg.itemglintrelight.client.ItemGlintRelightClient"],

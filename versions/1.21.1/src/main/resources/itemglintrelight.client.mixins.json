@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "package": "celia.adwadg.itemglintrelight.mixin.client",
+  "refmap": "itemglintrelight.refmap.json",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "GameRendererMixin",
+    "ItemInHandRendererMixin",
+    "ItemInHandRendererInvoker",
+    "ItemRendererAccessor",
+    "SpriteContentsAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

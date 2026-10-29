@@ -13,6 +13,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexSorting;
+import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.GameRenderer;
@@ -54,13 +55,15 @@ public final class ItemPreviewRenderer {
     private static final ByteBufferBuilder MODEL_BUFFER = new ByteBufferBuilder(786432);
 
     private static TextureTarget target;
+    private static TextureTarget maskTarget;
     private static int targetWidth;
     private static int targetHeight;
 
     private ItemPreviewRenderer() {
     }
 
-    public static void render(GuiGraphics graphics, ItemStack stack, int left, int top, int width, int height,
+    public static void render(GuiGraphics graphics, ItemStack stack, ItemGlintRelightConfig config,
+                              int left, int top, int width, int height,
                               float zoom, float pitch, float yaw, float roll, float offsetX, float offsetY) {
         if (stack.isEmpty() || width <= 0 || height <= 0) {
             return;
@@ -69,7 +72,7 @@ public final class ItemPreviewRenderer {
         double guiScale = Math.max(1.0D, minecraft.getWindow().getGuiScale());
         ensureTarget(Math.max(1, (int) Math.round(width * guiScale)), Math.max(1, (int) Math.round(height * guiScale)));
 
-        renderModel(minecraft, stack, width, height, zoom, pitch, yaw, roll, offsetX, offsetY);
+        renderModel(minecraft, stack, config, width, height, zoom, pitch, yaw, roll, offsetX, offsetY);
         blit(graphics, left, top, width, height);
     }
 
@@ -79,13 +82,29 @@ public final class ItemPreviewRenderer {
         }
         if (target != null) {
             target.destroyBuffers();
+            maskTarget.destroyBuffers();
         }
         target = new TextureTarget(pixelWidth, pixelHeight, true, false);
+        maskTarget = new TextureTarget(pixelWidth, pixelHeight, true, false);
+        // 1:1 blit, so linear filtering never blurs the item; it only antialiases the outline's
+        // mask sampling.
+        target.setFilterMode(GL11C.GL_LINEAR);
+        maskTarget.setFilterMode(GL11C.GL_LINEAR);
         targetWidth = pixelWidth;
         targetHeight = pixelHeight;
     }
 
-    private static void renderModel(Minecraft minecraft, ItemStack stack, int width, int height,
+    /** Draws the item into whichever target is currently bound. */
+    private static void drawItem(Minecraft minecraft, ItemStack stack, BakedModel model, PoseStack pose) {
+        MultiBufferSource.BufferSource source = MultiBufferSource.immediate(MODEL_BUFFER);
+        minecraft.getItemRenderer().render(stack, ItemDisplayContext.GUI, false, pose, source,
+                FULL_BRIGHT, OverlayTexture.NO_OVERLAY, model);
+        source.endBatch();
+        MODEL_BUFFER.clear();
+    }
+
+    private static void renderModel(Minecraft minecraft, ItemStack stack, ItemGlintRelightConfig config,
+                                    int width, int height,
                                     float zoom, float pitch, float yaw, float roll, float offsetX, float offsetY) {
         // 1.21.1 keeps scissor/cull in global GL state; the caller is drawing inside the preview
         // canvas scissor, which would clip this offscreen pass away entirely.
@@ -98,6 +117,11 @@ public final class ItemPreviewRenderer {
         RenderSystem.disableScissor();
         RenderSystem.disableCull();
 
+        // glClear honours the write masks. The GUI pass leaves alpha writes disabled in places, and
+        // the outline reads this texture's alpha as its mask -- a stale alpha channel would keep the
+        // previous frames' silhouettes and make the stroke grow and fray every frame.
+        RenderSystem.depthMask(true);
+        RenderSystem.colorMask(true, true, true, true);
         target.setClearColor(0.0F, 0.0F, 0.0F, 0.0F);
         target.clear(true);
         target.bindWrite(true);
@@ -136,14 +160,28 @@ public final class ItemPreviewRenderer {
         if (flat) {
             Lighting.setupForFlatItems();
         }
-        MultiBufferSource.BufferSource source = MultiBufferSource.immediate(MODEL_BUFFER);
-        minecraft.getItemRenderer().render(stack, ItemDisplayContext.GUI, false, pose, source,
-                FULL_BRIGHT, OverlayTexture.NO_OVERLAY, model);
-        source.endBatch();
-        MODEL_BUFFER.clear();
+        drawItem(minecraft, stack, model, pose);
+        // The stroke must not sample the texture it writes to: neighbouring fragments would read the
+        // stroke that was just drawn and the outline frays along the coverage boundary -- worse the
+        // larger the radius, i.e. the larger the zoom. The reference re-renders the item into a
+        // dedicated mask target for exactly this reason.
+        RenderSystem.depthMask(true);
+        RenderSystem.colorMask(true, true, true, true);
+        maskTarget.setClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+        maskTarget.clear(true);
+        maskTarget.bindWrite(true);
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthFunc(GL11C.GL_LEQUAL);
+        RenderSystem.depthMask(true);
+        RenderSystem.enableBlend();
+        RenderSystem.defaultBlendFunc();
+        drawItem(minecraft, stack, model, pose);
+        target.bindWrite(true);
         if (flat) {
             Lighting.setupFor3DItems();
         }
+        // The reference passes previewZoom / 72 as the preview's outline scale.
+        HeldItemOutlineRenderer.drawPreviewOutline(target, maskTarget, stack, config, zoom / 72.0F);
 
         modelView.popMatrix();
         RenderSystem.applyModelViewMatrix();
