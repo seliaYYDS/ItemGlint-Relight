@@ -73,6 +73,7 @@ public final class HeldItemOutlineRenderer {
 
     private static InteractionHand recordingHand;
     private static boolean recordingEnabled;
+    private static boolean implicitWindowLogged;
 
     private static TextureTarget maskTarget;
     private static TextureTarget armTarget;
@@ -132,9 +133,24 @@ public final class HeldItemOutlineRenderer {
 
     /** Called at the head of {@code ItemInHandRenderer#renderItem}. */
     public static void captureItem(ItemStack stack, ItemDisplayContext context, PoseStack poseStack, int light) {
-        HandCapture capture = recording();
-        if (capture == null || stack == null || stack.isEmpty() || !isFirstPerson(context)) {
+        if (stack == null || stack.isEmpty() || !isFirstPerson(context)) {
             return;
+        }
+        InteractionHand hand = context == ItemDisplayContext.FIRST_PERSON_LEFT_HAND
+                ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+        HandCapture capture = recordingHand == hand && recordingEnabled ? captureFor(hand) : null;
+        if (capture == null) {
+            // Mods such as Punchy draw the first-person hand through their own renderer and never call
+            // renderArmWithItem, so no window is open. The item draw itself is enough to start one.
+            beginHand(hand, stack);
+            capture = recordingHand == hand && recordingEnabled ? captureFor(hand) : null;
+            if (capture == null) {
+                return;
+            }
+            if (!implicitWindowLogged) {
+                implicitWindowLogged = true;
+                ItemGlintRelight.LOGGER.info("[HeldOutline] implicit hand window started from the item draw (hand={})", hand);
+            }
         }
         capture.item = stack;
         capture.itemContext = context;
@@ -166,9 +182,25 @@ public final class HeldItemOutlineRenderer {
 
     /** Called at the head of {@code ItemInHandRenderer#renderMap}. */
     public static void captureMap(PoseStack poseStack, int light, ItemStack stack) {
-        HandCapture capture = recording();
-        if (capture == null || stack == null || stack.isEmpty()) {
+        if (stack == null || stack.isEmpty()) {
             return;
+        }
+        HandCapture capture = recording();
+        if (capture == null) {
+            // Same fallback as captureItem: resolve the hand from the live stacks when a mod owns the
+            // hand pass and never opens the window.
+            Minecraft minecraft = Minecraft.getInstance();
+            InteractionHand hand = minecraft.player == null ? null
+                    : stack == minecraft.player.getMainHandItem() ? InteractionHand.MAIN_HAND
+                    : stack == minecraft.player.getOffhandItem() ? InteractionHand.OFF_HAND : null;
+            if (hand == null) {
+                return;
+            }
+            beginHand(hand, stack);
+            capture = recordingHand == hand && recordingEnabled ? captureFor(hand) : null;
+            if (capture == null) {
+                return;
+            }
         }
         capture.map = stack;
         capture.mapLight = light;
