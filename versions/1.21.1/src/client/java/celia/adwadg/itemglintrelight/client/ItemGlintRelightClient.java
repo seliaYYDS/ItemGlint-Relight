@@ -5,6 +5,7 @@ import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineCompat;
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlinePunchyCompat;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.KeyMapping;
@@ -37,9 +38,43 @@ public final class ItemGlintRelightClient implements ClientModInitializer {
                 client.setScreen(new ItemGlintRelightConfigScreen(client.screen));
             }
         });
-        ItemGlintRelight.LOGGER.info("[Compat] punchy={} punchyHooksReady={} iris={}",
-                HeldItemOutlinePunchyCompat.isLoaded(), HeldItemOutlinePunchyCompat.hooksAvailable(),
-                HeldItemOutlineCompat.isIrisLoaded());
+        ItemGlintRelight.LOGGER.info("[Build] jar={} built={} punchy={} punchyClasses={} punchyHooks={} iris={} sodium={}",
+                buildJar(), buildTime(), HeldItemOutlinePunchyCompat.isLoaded(), hasPunchyClasses(),
+                HeldItemOutlinePunchyCompat.hooksAvailable(), HeldItemOutlineCompat.isIrisLoaded(), isLoaded("sodium"));
         ItemGlintRelight.LOGGER.info("ItemGlintRelight client initialized");
+    }
+
+    private static boolean isLoaded(String modId) {
+        return FabricLoader.getInstance().isModLoaded(modId);
+    }
+
+    /** True when Punchy's renderer class can actually be resolved, i.e. the reflection targets exist. */
+    private static boolean hasPunchyClasses() {
+        try {
+            Class.forName("punchy.client.render.PunchyArmRenderer", false,
+                    ItemGlintRelightClient.class.getClassLoader());
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static String buildJar() {
+        try {
+            java.security.CodeSource source = ItemGlintRelightClient.class.getProtectionDomain().getCodeSource();
+            return source == null ? "unknown" : new java.io.File(source.getLocation().toURI()).getName();
+        } catch (Exception ignored) {
+            return "unknown";
+        }
+    }
+
+    private static String buildTime() {
+        try {
+            java.security.CodeSource source = ItemGlintRelightClient.class.getProtectionDomain().getCodeSource();
+            return source == null ? "unknown"
+                    : java.time.Instant.ofEpochMilli(new java.io.File(source.getLocation().toURI()).lastModified()).toString();
+        } catch (Exception ignored) {
+            return "unknown";
+        }
     }
 }
