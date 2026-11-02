@@ -9,6 +9,7 @@
     "PlayerItemInHandLayerMixin",
     "ItemInHandLayerMixin",
     "HumanoidArmorLayerMixin",
+    "LevelRendererTranslucentMixin",
     "BufferSourceMixin",
     "ItemInHandRendererMixin",
     "ItemInHandRendererInvoker",

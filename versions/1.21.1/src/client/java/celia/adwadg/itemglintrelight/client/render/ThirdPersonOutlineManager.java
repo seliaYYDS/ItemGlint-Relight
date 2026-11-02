@@ -305,6 +305,33 @@ public final class ThirdPersonOutlineManager {
      * a shader pack is active. {@code depthtex2} is copied right before the hand pass, which makes it
      * this frame's scene depth at composite time.
      */
+    /**
+     * Last point in the frame where the main target still holds the level's depth.
+     *
+     * <p>Iris' batched-entity mixin replaces {@code RenderBuffers#bufferSource()} for the whole level
+     * (with or without a shader pack) with a source that overrides {@code endBatch}, so the
+     * {@code BufferSource} snapshot hook never runs there. The translucent layer boundary is a plain
+     * {@code LevelRenderer} method that always runs, and by then opaque terrain and flushed entities
+     * are already in the depth buffer.
+     */
+    public static void beforeTranslucentLayer() {
+        if (QUEUE.isEmpty() || depthReady || HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.level == null) {
+            return;
+        }
+        try {
+            RenderTarget mainTarget = minecraft.getMainRenderTarget();
+            ensureTargets(mainTarget);
+            sceneDepth.copyDepthFrom(mainTarget);
+            depthReady = true;
+        } catch (RuntimeException exception) {
+            fail("translucent snapshot", exception);
+        }
+    }
+
     private static boolean copyIrisSceneDepth(RenderTarget mainTarget) {
         int textureId = HeldItemOutlineCompat.getIrisNoHandDepthTextureId();
         if (textureId <= 0) {
