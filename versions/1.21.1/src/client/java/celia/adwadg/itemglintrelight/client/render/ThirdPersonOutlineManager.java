@@ -9,7 +9,6 @@ import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
 import celia.adwadg.itemglintrelight.config.RenderQuality;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
-import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexSorting;
@@ -20,8 +19,8 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
-import org.joml.Vector4f;
 import org.joml.Matrix4fStack;
+import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11;
 
 
@@ -214,16 +213,7 @@ public final class ThirdPersonOutlineManager {
         try {
             RenderTarget mainTarget = minecraft.getMainRenderTarget();
             ensureTargets(mainTarget);
-            sceneDepth.bindWrite(true);
-            RenderSystem.depthMask(true);
-            RenderSystem.colorMask(false, false, false, false);
-            RenderSystem.clearDepth(1.0D);
-            RenderSystem.clear(GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
-            RenderSystem.colorMask(true, true, true, true);
-            mainTarget.bindRead();
-            sceneDepth.bindWrite(false);
-            GlStateManager._glBlitFrameBuffer(0, 0, mainTarget.width, mainTarget.height,
-                    0, 0, sceneDepth.width, sceneDepth.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+            sceneDepth.copyDepthFrom(mainTarget);
             depthReady = true;
         } catch (RuntimeException exception) {
             fail("depth snapshot", exception);
@@ -249,6 +239,8 @@ public final class ThirdPersonOutlineManager {
         RenderTarget mainTarget = minecraft.getMainRenderTarget();
         try {
             ensureTargets(mainTarget);
+            // renderLevel clears the depth buffer before the hand pass, so the finished depth is
+            // empty by now; the scene snapshot must come from the main batch flush instead.
             if (!depthReady) {
                 snapshotCurrentDepth(mainTarget);
             }
@@ -259,7 +251,7 @@ public final class ThirdPersonOutlineManager {
             }
             GuiGlState state = GuiGlState.capture();
             try {
-                        while (!QUEUE.isEmpty()) {
+                while (!QUEUE.isEmpty()) {
                     Capture capture = QUEUE.poll();
                     try {
                         compositeOne(minecraft, mainTarget, capture);
@@ -278,10 +270,9 @@ public final class ThirdPersonOutlineManager {
     }
 
     private static void snapshotCurrentDepth(RenderTarget mainTarget) {
-        sceneDepth.bindWrite(false);
-        mainTarget.bindRead();
-        GlStateManager._glBlitFrameBuffer(0, 0, mainTarget.width, mainTarget.height,
-                0, 0, sceneDepth.width, sceneDepth.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+        // RenderTarget#bindRead() binds the colour texture, not GL_READ_FRAMEBUFFER, so the depth copy
+        // has to go through the engine helper that owns both bindings.
+        sceneDepth.copyDepthFrom(mainTarget);
         depthReady = true;
     }
 
@@ -300,11 +291,8 @@ public final class ThirdPersonOutlineManager {
         RenderSystem.clearDepth(1.0D);
         RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
 
-        // Seed the mask depth from the opaque scene snapshot so the replay is occluded by walls.
-        sceneDepth.bindRead();
-        mask.bindWrite(false);
-        GlStateManager._glBlitFrameBuffer(0, 0, sceneDepth.width, sceneDepth.height,
-                0, 0, mask.width, mask.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+        // Seed the mask depth from the scene snapshot so the replay is occluded by walls.
+        mask.copyDepthFrom(sceneDepth);
 
         replay(capture);
 
@@ -716,9 +704,6 @@ public final class ThirdPersonOutlineManager {
         RenderSystem.clearDepth(1.0D);
         RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
     }
-
-
-
 
     private static void fail(String stage, RuntimeException exception) {
         if (failures++ < 3) {
