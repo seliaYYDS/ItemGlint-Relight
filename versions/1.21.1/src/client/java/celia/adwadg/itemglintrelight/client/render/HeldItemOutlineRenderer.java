@@ -36,8 +36,10 @@ import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 
@@ -86,6 +88,7 @@ public final class HeldItemOutlineRenderer {
     private static final Program OUTLINE = new Program(SHADER_NAME);
     private static final Program BLOOM = new Program("itemglintrelight_bloom_composite");
     private static final Program BLUR = new Program("itemglintrelight_bloom_blur");
+    private static final Program GUI_COMPOSITE = new Program("itemglintrelight_gui_composite");
 
     private HeldItemOutlineRenderer() { }
 
@@ -348,6 +351,7 @@ public final class HeldItemOutlineRenderer {
             return new float[][]{rgb(config.outlinePrimaryColor())};
         }
         PREVIEW.reset();
+        PREVIEW.config = config;
         sampleItemColors(PREVIEW, stack, ItemDisplayContext.GUI);
         float[][] palette = resolvePalette(config, PREVIEW);
         PREVIEW.reset();
@@ -482,7 +486,7 @@ public final class HeldItemOutlineRenderer {
         return destination.getColorTextureId();
     }
 
-    private static void drawFullscreenQuad() {
+    static void drawFullscreenQuad() {
         BufferBuilder buffer = Tesselator.getInstance().begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION);
         buffer.addVertex(0.0F, 0.0F, 0.0F);
         buffer.addVertex(1.0F, 0.0F, 0.0F);
@@ -726,6 +730,80 @@ public final class HeldItemOutlineRenderer {
         return maximum < 0.0001F ? 0.0F : (maximum - Math.min(red, Math.min(green, blue))) / maximum;
     }
 
+    static ShaderInstance guiCompositeShader(Minecraft minecraft) {
+        return GUI_COMPOSITE.get(minecraft);
+    }
+
+    static ShaderInstance bloomBlurShader(Minecraft minecraft) {
+        return BLUR.get(minecraft);
+    }
+
+    /**
+     * Uniform packing for the GUI-only composite shader.
+     *
+     * <p>Same layout as the reference {@code writePreviewUniforms}, with two GUI-specific values:
+     * {@code scrollBounds.z} is pinned to 1.0 (scene occlusion off), and the colour-scroll scale moves
+     * with the mask precision so a higher precision does not change the scroll speed in GUI units.
+     */
+    static void writeGuiUniforms(ShaderInstance shader, int width, int height, ItemGlintRelightConfig config,
+                                 float[][] palette, float outlineScale, float colorScrollScale, boolean bloom) {
+        putColor(shader, "primaryColor", config.outlinePrimaryColor(), config.outlineOpacity());
+        putColor(shader, "secondaryColor", config.outlineSecondaryColor(), config.outlineOpacity());
+        float radius = config.outlineWidth() * 0.4F * height / REFERENCE_RENDER_HEIGHT * Math.max(0.01F, outlineScale)
+                * (config.outlineRenderMode() == OutlineRenderMode.CUBIC ? 1.2F : 1.0F);
+        put(shader, "geometry", width, height, radius, config.outlineAlphaThreshold());
+        float time = (System.nanoTime() % 3_600_000_000_000L) / 1_000_000_000.0F;
+        put(shader, "animation", colorMode(config.outlineColorMode()), time,
+                config.outlineColorScrollSpeed() * 9.0F, config.outlineSoftness());
+        float[][] colors = palette == null || palette.length == 0 ? new float[][]{rgb(config.outlinePrimaryColor())} : palette;
+        put(shader, "effect", sampleCount(config.outlineQuality()), config.outlineGlowIntensity(), colors.length,
+                config.outlineBloomIntensity());
+        float directionRadians = (float) Math.toRadians(config.outlineColorScrollDirection());
+        put(shader, "colorScroll", (float) Math.cos(directionRadians), -(float) Math.sin(directionRadians),
+                config.outlineColorScrollInterval(), renderMode(config.outlineRenderMode()));
+        float halfWidth = Math.max(1.0F, width * 0.25F);
+        float halfHeight = Math.max(1.0F, height * 0.25F);
+        put(shader, "scrollMode", scrollMode(config.outlineColorScrollMode()), width * 0.5F, height * 0.5F,
+                Math.max(ellipsePathRadius(halfWidth, halfHeight), 1.0F));
+        put(shader, "scrollBounds", halfWidth, halfHeight, 1.0F, Math.max(1.0F, colorScrollScale));
+        for (int index = 0; index < 8; index++) {
+            float[] color = config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE
+                    ? colors[index % colors.length]
+                    : ((index & 1) == 0 ? rgb(config.outlinePrimaryColor()) : rgb(config.outlineSecondaryColor()));
+            put(shader, "palette" + index, color[0], color[1], color[2], 1.0F);
+        }
+        put(shader, "bloomParameters", config.outlineBloomSoftness(), bloom ? 1.0F : 0.0F, 0.0F, 0.0F);
+    }
+
+    /**
+     * Texture-sample palette for a GUI slot. 1.21.1 has no submitted {@code ItemStackRenderState}, so
+     * the colours are read from the same model (and the same seed) the GUI item itself is drawn with.
+     */
+    static float[][] resolveGuiMaterialPalette(ItemStack stack, Level level, LivingEntity entity, int seed,
+                                               ItemGlintRelightConfig config) {
+        if (config == null || stack == null || stack.isEmpty()
+                || config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
+            return null;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        BakedModel model = minecraft.getItemRenderer().getModel(stack, level, entity, seed);
+        HandCapture capture = new HandCapture();
+        capture.config = config;
+        sampleQuads(capture, model.getQuads(null, null, RandomSource.create(42L)), stack);
+        if (capture.materialColors.isEmpty()) {
+            // Builtin/entity models (trident, chest, bed, banner, shield, ...) bake no quads; fall back
+            // to the inventory model and finally to the particle sprite, exactly like the hand path.
+            BakedModel icon = minecraft.getItemRenderer().getItemModelShaper().getItemModel(stack);
+            if (icon != null) {
+                sampleQuads(capture, icon.getQuads(null, null, RandomSource.create(42L)), stack);
+            }
+        }
+        if (capture.materialColors.isEmpty()) {
+            sampleSprite(capture, model.getParticleIcon(), -1, Math.max(1, config.outlineSampleSize()));
+        }
+        return resolvePalette(config, capture);
+    }
+
     private static float resolveOutlineRadius(RenderTarget target, ItemGlintRelightConfig config) {
         float width = config.outlineWidth();
         if (config.outlineRenderMode() == OutlineRenderMode.CUBIC) {
@@ -738,7 +816,7 @@ public final class HeldItemOutlineRenderer {
         return config.outlineBloomRadius() * 3.0F * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
     }
 
-    private static float colorMode(OutlineColorMode mode) {
+    static float colorMode(OutlineColorMode mode) {
         return switch (mode) {
             case SINGLE -> 0.0F;
             case DUAL -> 1.0F;
@@ -747,7 +825,7 @@ public final class HeldItemOutlineRenderer {
         };
     }
 
-    private static int sampleCount(RenderQuality quality) {
+    static int sampleCount(RenderQuality quality) {
         return switch (quality) {
             case LOW -> 12;
             case MEDIUM -> 24;
@@ -755,7 +833,7 @@ public final class HeldItemOutlineRenderer {
         };
     }
 
-    private static int bloomSamples(RenderQuality quality) {
+    static int bloomSamples(RenderQuality quality) {
         return switch (quality) {
             case LOW -> 2;
             case MEDIUM -> 4;
@@ -763,29 +841,29 @@ public final class HeldItemOutlineRenderer {
         };
     }
 
-    private static float renderMode(OutlineRenderMode mode) {
+    static float renderMode(OutlineRenderMode mode) {
         return mode == OutlineRenderMode.CUBIC ? 1.0F : 0.0F;
     }
 
-    private static float scrollMode(ColorScrollMode mode) {
+    static float scrollMode(ColorScrollMode mode) {
         return mode == ColorScrollMode.OUTLINE ? 1.0F : 0.0F;
     }
 
-    private static float ellipsePathRadius(float halfWidth, float halfHeight) {
+    static float ellipsePathRadius(float halfWidth, float halfHeight) {
         float sum = halfWidth + halfHeight;
         return (3.0F * sum - (float) Math.sqrt(Math.max(0.0F, (3.0F * halfWidth + halfHeight) * (halfWidth + 3.0F * halfHeight)))) / 2.0F;
     }
 
-    private static float[] rgb(int color) {
+    static float[] rgb(int color) {
         return new float[]{((color >>> 16) & 255) / 255.0F, ((color >>> 8) & 255) / 255.0F, (color & 255) / 255.0F};
     }
 
-    private static void putColor(ShaderInstance shader, String name, int color, float opacity) {
+    static void putColor(ShaderInstance shader, String name, int color, float opacity) {
         put(shader, name, ((color >>> 16) & 255) / 255.0F, ((color >>> 8) & 255) / 255.0F,
                 (color & 255) / 255.0F, ((color >>> 24) & 255) / 255.0F * opacity);
     }
 
-    private static void put(ShaderInstance shader, String name, float x, float y, float z, float w) {
+    static void put(ShaderInstance shader, String name, float x, float y, float z, float w) {
         Uniform uniform = shader.getUniform(name);
         if (uniform != null) {
             uniform.set(x, y, z, w);
