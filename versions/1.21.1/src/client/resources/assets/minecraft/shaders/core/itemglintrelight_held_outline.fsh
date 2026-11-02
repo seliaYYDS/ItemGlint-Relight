@@ -22,6 +22,7 @@ uniform vec4 effect;        // sample count, glow intensity, palette size, unuse
 uniform vec4 colorScroll;   // scroll direction x, y, interval, render mode (cubic)
 uniform vec4 scrollMode;    // scroll mode, centre x, centre y, path radius
 uniform vec4 scrollBounds;  // half width, half height, occlusion mode, colour scroll scale
+uniform vec4 clipRect;      // x, y, width, height in framebuffer pixels; width <= 0 disables
 uniform vec4 palette0;
 uniform vec4 palette1;
 uniform vec4 palette2;
@@ -278,7 +279,16 @@ int cubicSampleCount() {
     return clamp(int(ceil(geometry.z * 4.0)), 6, MAX_OUTLINE_SAMPLES);
 }
 
+bool outsideClipRect() {
+    return clipRect.z > 0.0
+            && (gl_FragCoord.x < clipRect.x || gl_FragCoord.y < clipRect.y
+                || gl_FragCoord.x >= clipRect.x + clipRect.z || gl_FragCoord.y >= clipRect.y + clipRect.w);
+}
+
 void main() {
+    if (outsideClipRect()) {
+        discard;
+    }
     vec2 texel = 1.0 / max(geometry.xy, vec2(1.0));
     float softness = cornerSoftness();
     ivec2 maskSize = textureSize(MaskSampler, 0);

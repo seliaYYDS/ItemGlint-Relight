@@ -521,6 +521,7 @@ public final class HeldItemOutlineRenderer {
         put(shader, "scrollBounds", halfWidth, halfHeight, occlusionMode, 0.0F);
         // Only the bloom composite declares this one; the outline shader drops it.
         put(shader, "bloomParameters", config.outlineBloomSoftness(), 0.0F, 0.0F, 0.0F);
+        put(shader, "clipRect", 0.0F, 0.0F, 0.0F, 0.0F);
         for (int index = 0; index < 8; index++) {
             float[] color = index < palette.length ? palette[index] : palette[0];
             put(shader, "palette" + index, color[0], color[1], color[2], 1.0F);
@@ -787,6 +788,7 @@ public final class HeldItemOutlineRenderer {
             put(shader, "palette" + index, color[0], color[1], color[2], 1.0F);
         }
         put(shader, "bloomParameters", config.outlineBloomSoftness(), bloom ? 1.0F : 0.0F, 0.0F, 0.0F);
+        put(shader, "clipRect", 0.0F, 0.0F, 0.0F, 0.0F);
     }
 
     /**

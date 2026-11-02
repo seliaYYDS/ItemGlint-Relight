@@ -16,6 +16,7 @@ uniform vec4 colorScroll;
 uniform vec4 scrollMode;
 uniform vec4 scrollBounds;
 uniform vec4 bloomParameters;
+uniform vec4 clipRect;
 uniform vec4 palette0;
 uniform vec4 palette1;
 uniform vec4 palette2;
@@ -99,7 +100,16 @@ float bloomAlpha(float coverage) {
     return pow(normalizedCoverage, alphaExponent);
 }
 
+bool outsideClipRect() {
+    return clipRect.z > 0.0
+            && (gl_FragCoord.x < clipRect.x || gl_FragCoord.y < clipRect.y
+                || gl_FragCoord.x >= clipRect.x + clipRect.z || gl_FragCoord.y >= clipRect.y + clipRect.w);
+}
+
 void main() {
+    if (outsideClipRect()) {
+        discard;
+    }
     vec4 bloomSample = texture(BloomSampler, texCoord);
     float blurredCoverage = max(bloomSample.a - texture(SeedSampler, texCoord).a, 0.0);
     if (blurredCoverage <= 0.001) discard;

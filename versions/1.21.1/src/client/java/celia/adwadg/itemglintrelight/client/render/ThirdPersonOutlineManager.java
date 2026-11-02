@@ -20,6 +20,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
+import org.joml.Vector4f;
 import org.joml.Matrix4fStack;
 import org.lwjgl.opengl.GL11;
 
@@ -258,7 +259,7 @@ public final class ThirdPersonOutlineManager {
             }
             GuiGlState state = GuiGlState.capture();
             try {
-                    while (!QUEUE.isEmpty()) {
+                        while (!QUEUE.isEmpty()) {
                     Capture capture = QUEUE.poll();
                     try {
                         compositeOne(minecraft, mainTarget, capture);
@@ -286,11 +287,13 @@ public final class ThirdPersonOutlineManager {
 
     private static void compositeOne(Minecraft minecraft, RenderTarget mainTarget, Capture capture) {
         ItemGlintRelightConfig config = thirdPersonConfig(capture);
-        ScissorRect scissor = scissorFor(mainTarget, capture, config);
+        ScissorRect region = scissorFor(mainTarget, capture, config);
         float[][] palette = paletteFor(capture, config);
 
+        // The whole mask is cleared per capture, and the capture rectangle is enforced by the
+        // shaders' clipRect, so the off-screen passes must not inherit a stale GUI scissor.
+        RenderSystem.disableScissor();
         mask.bindWrite(true);
-        applyScissor(scissor);
         RenderSystem.colorMask(true, true, true, true);
         RenderSystem.depthMask(true);
         RenderSystem.clearColor(0.0F, 0.0F, 0.0F, 0.0F);
@@ -303,17 +306,16 @@ public final class ThirdPersonOutlineManager {
         GlStateManager._glBlitFrameBuffer(0, 0, sceneDepth.width, sceneDepth.height,
                 0, 0, mask.width, mask.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
 
-        replay(capture, scissor);
+        replay(capture);
 
         if (config.outlineBloomEnabled()) {
-            drawBloom(minecraft, mainTarget, capture, config, scissor);
+            drawBloom(minecraft, mainTarget, capture, config, region);
         }
-        drawOutline(minecraft, mainTarget, capture, config, palette, scissor);
+        drawOutline(minecraft, mainTarget, capture, config, palette, region);
     }
 
-    private static void replay(Capture capture, ScissorRect scissor) {
+    private static void replay(Capture capture) {
         mask.bindWrite(true);
-        applyScissor(scissor);
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL11.GL_LEQUAL);
         RenderSystem.depthMask(true);
@@ -338,7 +340,7 @@ public final class ThirdPersonOutlineManager {
     }
 
     private static void drawBloom(Minecraft minecraft, RenderTarget mainTarget, Capture capture,
-                                  ItemGlintRelightConfig config, ScissorRect scissor) {
+                                  ItemGlintRelightConfig config, ScissorRect region) {
         ShaderInstance seedShader = HeldItemOutlineRenderer.thirdPersonBloomSeedShader(minecraft);
         ShaderInstance blurShader = HeldItemOutlineRenderer.bloomBlurShader(minecraft);
         ShaderInstance compositeShader = HeldItemOutlineRenderer.thirdPersonBloomCompositeShader(minecraft);
@@ -349,7 +351,6 @@ public final class ThirdPersonOutlineManager {
         int height = mainTarget.height;
 
         bloomSeed.bindWrite(true);
-        applyScissor(scissor);
         RenderSystem.clearColor(0.0F, 0.0F, 0.0F, 0.0F);
         RenderSystem.disableBlend();
         RenderSystem.depthMask(false);
@@ -367,18 +368,18 @@ public final class ThirdPersonOutlineManager {
         int source = bloomSeed.getColorTextureId();
         for (int pass = 0; pass < passes; pass++) {
             source = blurPass(width, height, bloomFirst, source, radius, 1.0F, 0.0F,
-                    config.outlineBloomQuality(), blurShader, scissor);
+                    config.outlineBloomQuality(), blurShader);
             source = blurPass(width, height, bloomSecond, source, radius, 0.0F, 1.0F,
-                    config.outlineBloomQuality(), blurShader, scissor);
+                    config.outlineBloomQuality(), blurShader);
         }
 
         mainTarget.bindWrite(true);
-        applyScissor(scissor);
+        RenderSystem.disableScissor();
         RenderSystem.setShader(() -> compositeShader);
         compositeShader.setSampler("BloomSampler", source);
         compositeShader.setSampler("SeedSampler", bloomSeed.getColorTextureId());
         compositeShader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
-        writeUniforms(compositeShader, mainTarget, config, UNIT_PALETTE, scissor, 1.0F);
+        writeUniforms(compositeShader, mainTarget, config, UNIT_PALETTE, region, 1.0F);
         RenderSystem.enableBlend();
         RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                 GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -390,10 +391,8 @@ public final class ThirdPersonOutlineManager {
     }
 
     private static int blurPass(int width, int height, TextureTarget destination, int source, float radius,
-                                float directionX, float directionY, RenderQuality quality, ShaderInstance blur,
-                                ScissorRect scissor) {
+                                float directionX, float directionY, RenderQuality quality, ShaderInstance blur) {
         destination.bindWrite(true);
-        applyScissor(scissor);
         RenderSystem.clearColor(0.0F, 0.0F, 0.0F, 0.0F);
         RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT, Minecraft.ON_OSX);
         RenderSystem.setShader(() -> blur);
@@ -410,21 +409,22 @@ public final class ThirdPersonOutlineManager {
     }
 
     private static void drawOutline(Minecraft minecraft, RenderTarget mainTarget, Capture capture,
-                                    ItemGlintRelightConfig config, float[][] palette, ScissorRect scissor) {
+                                    ItemGlintRelightConfig config, float[][] palette, ScissorRect region) {
         ShaderInstance shader = HeldItemOutlineRenderer.outlineShader(minecraft);
         if (shader == null) {
             return;
         }
         ensureArmStandIn();
         mainTarget.bindWrite(true);
-        applyScissor(scissor);
+        // The outline shader owns the capture rectangle (clipRect).
+        RenderSystem.disableScissor();
         RenderSystem.setShader(() -> shader);
         shader.setSampler("MaskSampler", mask.getColorTextureId());
         shader.setSampler("ItemDepthSampler", mask.getDepthTextureId());
         shader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
         shader.setSampler("ArmOccluderSampler", armStandIn.getColorTextureId());
         shader.setSampler("ArmOccluderDepthSampler", armStandIn.getDepthTextureId());
-        writeUniforms(shader, mainTarget, config, palette, scissor, distanceScale(capture));
+        writeUniforms(shader, mainTarget, config, palette, region, distanceScale(capture));
         RenderSystem.enableBlend();
         RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                 GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -438,12 +438,16 @@ public final class ThirdPersonOutlineManager {
 
 
 
+
+
+
+
     // ---------------------------------------------------------------------------------------------
     // Uniforms
     // ---------------------------------------------------------------------------------------------
 
     private static void writeUniforms(ShaderInstance shader, RenderTarget target, ItemGlintRelightConfig config,
-                                      float[][] palette, ScissorRect scissor, float distanceScale) {
+                                      float[][] palette, ScissorRect region, float distanceScale) {
         HeldItemOutlineRenderer.putColor(shader, "primaryColor", config.outlinePrimaryColor(), config.outlineOpacity());
         HeldItemOutlineRenderer.putColor(shader, "secondaryColor", config.outlineSecondaryColor(), config.outlineOpacity());
         float radius = outlineRadius(target, config) * distanceScale;
@@ -460,10 +464,10 @@ public final class ThirdPersonOutlineManager {
                 HeldItemOutlineRenderer.renderMode(config.outlineRenderMode()));
         float padding = outlineRadius(target, config) + (config.outlineBloomEnabled()
                 ? bloomRadius(target, config) * config.outlineBloomBlurPasses() : 0.0F) + 8.0F;
-        float centerX = scissor == null ? target.width * 0.5F : scissor.x + scissor.width * 0.5F;
-        float centerY = scissor == null ? target.height * 0.5F : scissor.y + scissor.height * 0.5F;
-        float halfWidth = scissor == null ? target.width * 0.25F : Math.max(1.0F, scissor.width * 0.5F - padding);
-        float halfHeight = scissor == null ? target.height * 0.25F : Math.max(1.0F, scissor.height * 0.5F - padding);
+        float centerX = region == null ? target.width * 0.5F : region.x + region.width * 0.5F;
+        float centerY = region == null ? target.height * 0.5F : region.y + region.height * 0.5F;
+        float halfWidth = region == null ? target.width * 0.25F : Math.max(1.0F, region.width * 0.5F - padding);
+        float halfHeight = region == null ? target.height * 0.25F : Math.max(1.0F, region.height * 0.5F - padding);
         float pathRadius = HeldItemOutlineRenderer.ellipsePathRadius(halfWidth, halfHeight);
         HeldItemOutlineRenderer.put(shader, "scrollMode", HeldItemOutlineRenderer.scrollMode(config.outlineColorScrollMode()),
                 centerX, centerY, Math.max(pathRadius, 1.0F));
@@ -477,6 +481,9 @@ public final class ThirdPersonOutlineManager {
             HeldItemOutlineRenderer.put(shader, "palette" + index, color[0], color[1], color[2], 1.0F);
         }
         HeldItemOutlineRenderer.put(shader, "bloomParameters", config.outlineBloomSoftness(), 0.0F, 0.0F, 0.0F);
+        HeldItemOutlineRenderer.put(shader, "clipRect",
+                region == null ? 0.0F : region.x, region == null ? 0.0F : region.y,
+                region == null ? 0.0F : region.width, region == null ? 0.0F : region.height);
     }
 
     private static float outlineRadius(RenderTarget target, ItemGlintRelightConfig config) {
@@ -547,16 +554,52 @@ public final class ThirdPersonOutlineManager {
      * so the correct (if slower) full-target region is used until that is resolved.
      */
     private static ScissorRect scissorFor(RenderTarget target, Capture capture, ItemGlintRelightConfig config) {
-        return null;
+        float[] bounds = capture.mask.bounds();
+        if (bounds == null || capture.projection == null || capture.modelView == null) {
+            return null;
+        }
+        // The replay installs exactly capture.projection and capture.modelView, so the same pair maps
+        // the mirrored vertices to clip space; the composite region is that projection of the bounds.
+        Matrix4f transform = new Matrix4f(capture.projection).mul(capture.modelView);
+        float padding = outlineRadius(target, config) + (config.outlineBloomEnabled()
+                ? bloomRadius(target, config) * config.outlineBloomBlurPasses() : 0.0F) + 8.0F;
+        float minX = Float.POSITIVE_INFINITY;
+        float minY = Float.POSITIVE_INFINITY;
+        float maxX = Float.NEGATIVE_INFINITY;
+        float maxY = Float.NEGATIVE_INFINITY;
+        Vector4f clip = new Vector4f();
+        for (int index = 0; index < 8; index++) {
+            clip.set((index & 1) == 0 ? bounds[0] : bounds[3], (index & 2) == 0 ? bounds[1] : bounds[4],
+                    (index & 4) == 0 ? bounds[2] : bounds[5], 1.0F).mul(transform);
+            if (!Float.isFinite(clip.w) || clip.w <= 0.0001F) {
+                return null;
+            }
+            float x = clip.x / clip.w;
+            float y = clip.y / clip.w;
+            if (!Float.isFinite(x) || !Float.isFinite(y)) {
+                return null;
+            }
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+        }
+        int x0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, minX)) * 0.5F + 0.5F) * target.width);
+        int y0 = (int) Math.floor((Math.max(-1.5F, Math.min(1.5F, minY)) * 0.5F + 0.5F) * target.height);
+        int x1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxX)) * 0.5F + 0.5F) * target.width);
+        int y1 = (int) Math.ceil((Math.max(-1.5F, Math.min(1.5F, maxY)) * 0.5F + 0.5F) * target.height);
+        int marginX = (int) ((x1 - x0) * 0.1F);
+        int marginY = (int) ((y1 - y0) * 0.1F);
+        int left = Math.max(0, x0 - (int) padding - marginX);
+        int bottom = Math.max(0, y0 - (int) padding - marginY);
+        int right = Math.min(target.width, x1 + (int) padding + marginX);
+        int top = Math.min(target.height, y1 + (int) padding + marginY);
+        if (right - left < 1 || top - bottom < 1) {
+            return null;
+        }
+        return new ScissorRect(left, bottom, right - left, top - bottom);
     }
 
-    private static void applyScissor(ScissorRect scissor) {
-        if (scissor == null) {
-            RenderSystem.disableScissor();
-        } else {
-            RenderSystem.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
-        }
-    }
 
     private record ScissorRect(int x, int y, int width, int height) {
     }
@@ -673,6 +716,7 @@ public final class ThirdPersonOutlineManager {
         RenderSystem.clearDepth(1.0D);
         RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
     }
+
 
 
 
