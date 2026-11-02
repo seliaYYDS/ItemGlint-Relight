@@ -24,10 +24,12 @@ import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
 import org.joml.Vector4f;
+import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
 
+import java.nio.FloatBuffer;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedHashMap;
@@ -125,6 +127,9 @@ public final class ThirdPersonOutlineManager {
         if (config == null) {
             return;
         }
+        if (!levelProjectionIsPerspective()) {
+            return;
+        }
         if (armorStand && QUEUE.size() >= MAX_CAPTURES) {
             return;
         }
@@ -162,6 +167,9 @@ public final class ThirdPersonOutlineManager {
         }
         if (armorGroup) {
             closeArmorGroup();
+        }
+        if (!levelProjectionIsPerspective()) {
+            return;
         }
         if (armorStand && QUEUE.size() >= MAX_CAPTURES) {
             return;
@@ -230,7 +238,9 @@ public final class ThirdPersonOutlineManager {
             RenderTarget mainTarget = minecraft.getMainRenderTarget();
             ensureTargets(mainTarget);
             sceneDepth.copyDepthFrom(mainTarget);
-            depthReady = true;
+            // Sodium (and Iris' own frame setup) can flush the shared buffer source before the level
+            // has written depth; accepting that snapshot would disable occlusion for the whole frame.
+            depthReady = sceneDepthHasContent();
         } catch (RuntimeException exception) {
             fail("depth snapshot", exception);
         } finally {
@@ -326,6 +336,30 @@ public final class ThirdPersonOutlineManager {
         }
     }
 
+    /** @return true when the copied depth contains any geometry (a sky-only view counts as empty). */
+    private static boolean sceneDepthHasContent() {
+        try {
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, sceneDepth.frameBufferId);
+            FloatBuffer buffer = BufferUtils.createFloatBuffer(sceneDepth.width);
+            boolean found = false;
+            for (int row = 1; row <= 3 && !found; row++) {
+                int y = Math.max(0, Math.min(sceneDepth.height - 1, sceneDepth.height * row / 4));
+                GL11.glReadPixels(0, y, sceneDepth.width, 1, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, buffer);
+                for (int index = 0; index < buffer.capacity(); index++) {
+                    if (buffer.get(index) < 0.999F) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER,
+                    Minecraft.getInstance().getMainRenderTarget().frameBufferId);
+            return found;
+        } catch (RuntimeException exception) {
+            return true;
+        }
+    }
+
     private static void snapshotCurrentDepth(RenderTarget mainTarget) {
         // RenderTarget#bindRead() binds the colour texture, not GL_READ_FRAMEBUFFER, so the depth copy
         // has to go through the engine helper that owns both bindings.
@@ -348,8 +382,13 @@ public final class ThirdPersonOutlineManager {
         RenderSystem.clearDepth(1.0D);
         RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
 
-        // Seed the mask depth from the scene snapshot so the replay is occluded by walls.
-        mask.copyDepthFrom(sceneDepth);
+        // Seed the mask depth from the scene snapshot so the replay is occluded by walls. With a
+        // shader pack the snapshot is Iris' depthtex2, which already contains the item itself:
+        // seeding would let the replay compete with it and punch frame-to-frame holes into the
+        // coverage, so the mask stays unseeded and the shaders perform the per-pixel rejection.
+        if (!HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            mask.copyDepthFrom(sceneDepth);
+        }
 
         replay(capture);
 
@@ -694,6 +733,14 @@ public final class ThirdPersonOutlineManager {
                 .map(key -> key.location().toString())
                 .orElseGet(() -> armorItem.getMaterial().toString());
         return material + "|" + (slot == EquipmentSlot.LEGS);
+    }
+
+    /**
+     * Iris uploads its shadow pass orthographic matrix into the same projection state; a capture
+     * taken with it would replay and clip against a rectangle unrelated to the item.
+     */
+    private static boolean levelProjectionIsPerspective() {
+        return Math.abs(RenderSystem.getProjectionMatrix().m33()) < 0.5F;
     }
 
     private static Capture acquire() {
