@@ -89,6 +89,8 @@ public final class HeldItemOutlineRenderer {
     private static final Program BLOOM = new Program("itemglintrelight_bloom_composite");
     private static final Program BLUR = new Program("itemglintrelight_bloom_blur");
     private static final Program GUI_COMPOSITE = new Program("itemglintrelight_gui_composite");
+    private static final Program THIRD_PERSON_BLOOM_SEED = new Program("itemglintrelight_third_person_bloom_seed");
+    private static final Program THIRD_PERSON_BLOOM_COMPOSITE = new Program("itemglintrelight_third_person_bloom_composite");
 
     private HeldItemOutlineRenderer() { }
 
@@ -736,6 +738,18 @@ public final class HeldItemOutlineRenderer {
 
     static ShaderInstance bloomBlurShader(Minecraft minecraft) {
         return BLUR.get(minecraft);
+    }
+
+    static ShaderInstance outlineShader(Minecraft minecraft) {
+        return OUTLINE.get(minecraft);
+    }
+
+    static ShaderInstance thirdPersonBloomSeedShader(Minecraft minecraft) {
+        return THIRD_PERSON_BLOOM_SEED.get(minecraft);
+    }
+
+    static ShaderInstance thirdPersonBloomCompositeShader(Minecraft minecraft) {
+        return THIRD_PERSON_BLOOM_COMPOSITE.get(minecraft);
     }
 
     /**

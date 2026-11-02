@@ -1,0 +1,722 @@
+package celia.adwadg.itemglintrelight.client.render;
+
+import celia.adwadg.itemglintrelight.ItemGlintRelight;
+import celia.adwadg.itemglintrelight.config.DisplayRuleManager;
+import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
+import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfigManager;
+import celia.adwadg.itemglintrelight.config.OutlineColorMode;
+import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
+import celia.adwadg.itemglintrelight.config.RenderQuality;
+import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.pipeline.TextureTarget;
+import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexSorting;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.item.ItemStack;
+import org.joml.Matrix4f;
+import org.joml.Matrix4fStack;
+import org.lwjgl.opengl.GL11;
+
+
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * Third-person item / armor / armor-stand outline for 1.21.1.
+ *
+ * <p>1.21.11 mirrors {@code SubmitNodeCollector} submissions into a private storage and replays them
+ * after the level. 1.21.1 draws entities immediately, so the mirror happens at vertex level
+ * ({@link ThirdPersonBufferSource}) and the captured batches are replayed into an off-screen mask
+ * once {@code GameRenderer#renderLevel} returns, before the GUI.
+ *
+ * <p>The pipeline per capture: clear the mask region, copy the opaque scene depth into the mask
+ * depth (so the replay is occluded by walls), replay the captured vertices with the captured
+ * projection and camera matrix, grow the bloom from the mask, then composite the stroke onto the
+ * main target inside the capture's projected screen rectangle.
+ */
+public final class ThirdPersonOutlineManager {
+    private static final float REFERENCE_RENDER_HEIGHT = 1080.0F;
+    private static final float BLOOM_REFERENCE_DISTANCE = 4.0F;
+    private static final int MAX_CAPTURES = 16;
+    private static final int MAX_POOL = 16;
+    private static final int PALETTE_CACHE_LIMIT = 128;
+    private static final float[][] UNIT_PALETTE = {{1.0F, 1.0F, 1.0F}};
+
+    private static final Deque<Capture> QUEUE = new ArrayDeque<>();
+    private static final Deque<Capture> POOL = new ArrayDeque<>();
+    private static final Map<celia.adwadg.itemglintrelight.client.render.ItemStackKey, float[][]> PALETTES =
+            new LinkedHashMap<>(32, 0.75F, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<ItemStackKey, float[][]> eldest) {
+                    return size() > PALETTE_CACHE_LIMIT;
+                }
+            };
+
+    private static Capture recording;
+    private static int captureDepth;
+    private static boolean armorGroup;
+    private static ItemGlintRelightConfig armorConfig;
+
+    private static TextureTarget mask;
+    private static TextureTarget sceneDepth;
+    private static TextureTarget bloomSeed;
+    private static TextureTarget bloomFirst;
+    private static TextureTarget bloomSecond;
+    private static TextureTarget armStandIn;
+    private static boolean depthReady;
+    private static int failures;
+    private static boolean announced;
+
+    private ThirdPersonOutlineManager() {
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Lifecycle
+    // ---------------------------------------------------------------------------------------------
+
+    public static void beginFrame() {
+        depthReady = false;
+        recording = null;
+        captureDepth = 0;
+        armorGroup = false;
+        armorConfig = null;
+        while (!QUEUE.isEmpty()) {
+            release(QUEUE.poll());
+        }
+    }
+
+    /** Wraps the buffer source handed to an entity layer so vertices can be mirrored. */
+    public static MultiBufferSource route(MultiBufferSource original) {
+        return original == null ? null : new ThirdPersonBufferSource(original);
+    }
+
+    static ThirdPersonBufferSource.MaskSource currentMaskSource() {
+        Capture capture = recording;
+        return capture == null ? null : capture.mask;
+    }
+
+    public static void beginItem(LivingEntity entity, ItemStack stack, PoseStack pose) {
+        if (captureDepth++ > 0) {
+            return;
+        }
+        if (recording != null) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!canCapture(minecraft) || entity == null || stack == null || stack.isEmpty() || pose == null) {
+            return;
+        }
+        boolean armorStand = entity instanceof ArmorStand;
+        ItemGlintRelightConfig config = resolve(entity, stack, armorStand, false);
+        if (config == null) {
+            return;
+        }
+        if (armorStand && QUEUE.size() >= MAX_CAPTURES) {
+            return;
+        }
+        Capture capture = acquire();
+        capture.begin(entity, stack, config, pose, false, armorStand);
+        recording = capture;
+    }
+
+    public static void endItem() {
+        if (--captureDepth > 0) {
+            return;
+        }
+        captureDepth = 0;
+        closeCapture();
+    }
+
+    public static void beginArmorPiece(LivingEntity entity, ItemStack stack, PoseStack pose) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!canCapture(minecraft) || entity == null || stack == null || stack.isEmpty() || pose == null) {
+            return;
+        }
+        boolean armorStand = entity instanceof ArmorStand;
+        ItemGlintRelightConfig config = resolve(entity, stack, armorStand, true);
+        if (config == null) {
+            return;
+        }
+        // Four pieces that resolve to the same config share one capture, exactly like the reference:
+        // an ordinary set produces a single merged silhouette and a single composite pass.
+        if (armorGroup && recording != null && recording.armor && recording.entity == entity
+                && armorConfig == config) {
+            return;
+        }
+        if (armorGroup) {
+            closeArmorGroup();
+        }
+        if (armorStand && QUEUE.size() >= MAX_CAPTURES) {
+            return;
+        }
+        Capture capture = acquire();
+        capture.begin(entity, stack, config, pose, true, armorStand);
+        recording = capture;
+        armorGroup = true;
+        armorConfig = config;
+    }
+
+    public static void endArmorGroup() {
+        closeArmorGroup();
+    }
+
+    private static void closeArmorGroup() {
+        if (!armorGroup) {
+            return;
+        }
+        armorGroup = false;
+        armorConfig = null;
+        closeCapture();
+    }
+
+    private static void closeCapture() {
+        Capture capture = recording;
+        recording = null;
+        if (capture == null) {
+            return;
+        }
+        if (capture.mask.isEmpty()) {
+            release(capture);
+            return;
+        }
+        if (QUEUE.size() >= MAX_CAPTURES) {
+            release(capture);
+            return;
+        }
+        QUEUE.addLast(capture);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Scene depth snapshot
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Called after the level's main buffer flush. Everything the outline must be hidden behind is
+     * already in the main target's depth, while translucent terrain, clouds and weather are not.
+     */
+    public static void afterMainBatch(MultiBufferSource.BufferSource source) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || source == null || QUEUE.isEmpty() || depthReady) {
+            return;
+        }
+        if (source != minecraft.renderBuffers().bufferSource()) {
+            return;
+        }
+        try {
+            RenderTarget mainTarget = minecraft.getMainRenderTarget();
+            ensureTargets(mainTarget);
+            sceneDepth.bindWrite(true);
+            RenderSystem.depthMask(true);
+            RenderSystem.colorMask(false, false, false, false);
+            RenderSystem.clearDepth(1.0D);
+            RenderSystem.clear(GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
+            RenderSystem.colorMask(true, true, true, true);
+            mainTarget.bindRead();
+            sceneDepth.bindWrite(false);
+            GlStateManager._glBlitFrameBuffer(0, 0, mainTarget.width, mainTarget.height,
+                    0, 0, sceneDepth.width, sceneDepth.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+            depthReady = true;
+        } catch (RuntimeException exception) {
+            fail("depth snapshot", exception);
+        } finally {
+            minecraft.getMainRenderTarget().bindWrite(true);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Composite
+    // ---------------------------------------------------------------------------------------------
+
+    /** Runs after {@code GameRenderer#renderLevel}, before the GUI. */
+    public static void compositeAfterLevel() {
+        if (QUEUE.isEmpty()) {
+            return;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null) {
+            QUEUE.clear();
+            return;
+        }
+        RenderTarget mainTarget = minecraft.getMainRenderTarget();
+        try {
+            ensureTargets(mainTarget);
+            if (!depthReady) {
+                snapshotCurrentDepth(mainTarget);
+            }
+            if (!announced) {
+                announced = true;
+                ItemGlintRelight.LOGGER.info("[ThirdPerson] outline active: captures={} depthReady={}",
+                        QUEUE.size(), depthReady);
+            }
+            GuiGlState state = GuiGlState.capture();
+            try {
+                    while (!QUEUE.isEmpty()) {
+                    Capture capture = QUEUE.poll();
+                    try {
+                        compositeOne(minecraft, mainTarget, capture);
+                    } finally {
+                        release(capture);
+                    }
+                }
+            } finally {
+                mainTarget.bindWrite(true);
+                state.restore();
+            }
+        } catch (RuntimeException exception) {
+            fail("composite", exception);
+            QUEUE.clear();
+        }
+    }
+
+    private static void snapshotCurrentDepth(RenderTarget mainTarget) {
+        sceneDepth.bindWrite(false);
+        mainTarget.bindRead();
+        GlStateManager._glBlitFrameBuffer(0, 0, mainTarget.width, mainTarget.height,
+                0, 0, sceneDepth.width, sceneDepth.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+        depthReady = true;
+    }
+
+    private static void compositeOne(Minecraft minecraft, RenderTarget mainTarget, Capture capture) {
+        ItemGlintRelightConfig config = thirdPersonConfig(capture);
+        ScissorRect scissor = scissorFor(mainTarget, capture, config);
+        float[][] palette = paletteFor(capture, config);
+
+        mask.bindWrite(true);
+        applyScissor(scissor);
+        RenderSystem.colorMask(true, true, true, true);
+        RenderSystem.depthMask(true);
+        RenderSystem.clearColor(0.0F, 0.0F, 0.0F, 0.0F);
+        RenderSystem.clearDepth(1.0D);
+        RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
+
+        // Seed the mask depth from the opaque scene snapshot so the replay is occluded by walls.
+        sceneDepth.bindRead();
+        mask.bindWrite(false);
+        GlStateManager._glBlitFrameBuffer(0, 0, sceneDepth.width, sceneDepth.height,
+                0, 0, mask.width, mask.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+
+        replay(capture, scissor);
+
+        if (config.outlineBloomEnabled()) {
+            drawBloom(minecraft, mainTarget, capture, config, scissor);
+        }
+        drawOutline(minecraft, mainTarget, capture, config, palette, scissor);
+    }
+
+    private static void replay(Capture capture, ScissorRect scissor) {
+        mask.bindWrite(true);
+        applyScissor(scissor);
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthFunc(GL11.GL_LEQUAL);
+        RenderSystem.depthMask(true);
+        RenderSystem.enableBlend();
+        RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+                GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        RenderSystem.disableCull();
+
+        RenderSystem.backupProjectionMatrix();
+        RenderSystem.setProjectionMatrix(new Matrix4f(capture.projection), VertexSorting.DISTANCE_TO_ORIGIN);
+        Matrix4fStack modelView = RenderSystem.getModelViewStack();
+        modelView.pushMatrix();
+        modelView.set(capture.modelView);
+        RenderSystem.applyModelViewMatrix();
+        try {
+            capture.mask.draw();
+        } finally {
+            modelView.popMatrix();
+            RenderSystem.applyModelViewMatrix();
+            RenderSystem.restoreProjectionMatrix();
+        }
+    }
+
+    private static void drawBloom(Minecraft minecraft, RenderTarget mainTarget, Capture capture,
+                                  ItemGlintRelightConfig config, ScissorRect scissor) {
+        ShaderInstance seedShader = HeldItemOutlineRenderer.thirdPersonBloomSeedShader(minecraft);
+        ShaderInstance blurShader = HeldItemOutlineRenderer.bloomBlurShader(minecraft);
+        ShaderInstance compositeShader = HeldItemOutlineRenderer.thirdPersonBloomCompositeShader(minecraft);
+        if (seedShader == null || blurShader == null || compositeShader == null) {
+            return;
+        }
+        int width = mainTarget.width;
+        int height = mainTarget.height;
+
+        bloomSeed.bindWrite(true);
+        applyScissor(scissor);
+        RenderSystem.clearColor(0.0F, 0.0F, 0.0F, 0.0F);
+        RenderSystem.disableBlend();
+        RenderSystem.depthMask(false);
+        RenderSystem.disableDepthTest();
+        RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT, Minecraft.ON_OSX);
+        RenderSystem.setShader(() -> seedShader);
+        seedShader.setSampler("MaskSampler", mask.getColorTextureId());
+        seedShader.setSampler("ItemDepthSampler", mask.getDepthTextureId());
+        seedShader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
+        HeldItemOutlineRenderer.drawFullscreenQuad();
+
+        int passes = Math.max(1, config.outlineBloomBlurPasses());
+        float radius = config.outlineBloomRadius() * 3.0F * height / REFERENCE_RENDER_HEIGHT
+                / (float) Math.sqrt(passes);
+        int source = bloomSeed.getColorTextureId();
+        for (int pass = 0; pass < passes; pass++) {
+            source = blurPass(width, height, bloomFirst, source, radius, 1.0F, 0.0F,
+                    config.outlineBloomQuality(), blurShader, scissor);
+            source = blurPass(width, height, bloomSecond, source, radius, 0.0F, 1.0F,
+                    config.outlineBloomQuality(), blurShader, scissor);
+        }
+
+        mainTarget.bindWrite(true);
+        applyScissor(scissor);
+        RenderSystem.setShader(() -> compositeShader);
+        compositeShader.setSampler("BloomSampler", source);
+        compositeShader.setSampler("SeedSampler", bloomSeed.getColorTextureId());
+        compositeShader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
+        writeUniforms(compositeShader, mainTarget, config, UNIT_PALETTE, scissor, 1.0F);
+        RenderSystem.enableBlend();
+        RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+                GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        RenderSystem.depthMask(false);
+        RenderSystem.disableDepthTest();
+        HeldItemOutlineRenderer.drawFullscreenQuad();
+        RenderSystem.depthMask(true);
+        RenderSystem.enableDepthTest();
+    }
+
+    private static int blurPass(int width, int height, TextureTarget destination, int source, float radius,
+                                float directionX, float directionY, RenderQuality quality, ShaderInstance blur,
+                                ScissorRect scissor) {
+        destination.bindWrite(true);
+        applyScissor(scissor);
+        RenderSystem.clearColor(0.0F, 0.0F, 0.0F, 0.0F);
+        RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT, Minecraft.ON_OSX);
+        RenderSystem.setShader(() -> blur);
+        blur.setSampler("InputSampler", source);
+        HeldItemOutlineRenderer.put(blur, "blur", directionX / width, directionY / height, radius,
+                HeldItemOutlineRenderer.bloomSamples(quality));
+        RenderSystem.disableBlend();
+        RenderSystem.depthMask(false);
+        RenderSystem.disableDepthTest();
+        HeldItemOutlineRenderer.drawFullscreenQuad();
+        RenderSystem.depthMask(true);
+        RenderSystem.enableDepthTest();
+        return destination.getColorTextureId();
+    }
+
+    private static void drawOutline(Minecraft minecraft, RenderTarget mainTarget, Capture capture,
+                                    ItemGlintRelightConfig config, float[][] palette, ScissorRect scissor) {
+        ShaderInstance shader = HeldItemOutlineRenderer.outlineShader(minecraft);
+        if (shader == null) {
+            return;
+        }
+        ensureArmStandIn();
+        mainTarget.bindWrite(true);
+        applyScissor(scissor);
+        RenderSystem.setShader(() -> shader);
+        shader.setSampler("MaskSampler", mask.getColorTextureId());
+        shader.setSampler("ItemDepthSampler", mask.getDepthTextureId());
+        shader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
+        shader.setSampler("ArmOccluderSampler", armStandIn.getColorTextureId());
+        shader.setSampler("ArmOccluderDepthSampler", armStandIn.getDepthTextureId());
+        writeUniforms(shader, mainTarget, config, palette, scissor, distanceScale(capture));
+        RenderSystem.enableBlend();
+        RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
+                GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        RenderSystem.depthMask(false);
+        RenderSystem.disableDepthTest();
+        HeldItemOutlineRenderer.drawFullscreenQuad();
+        RenderSystem.depthMask(true);
+        RenderSystem.enableDepthTest();
+        RenderSystem.disableBlend();
+    }
+
+
+
+    // ---------------------------------------------------------------------------------------------
+    // Uniforms
+    // ---------------------------------------------------------------------------------------------
+
+    private static void writeUniforms(ShaderInstance shader, RenderTarget target, ItemGlintRelightConfig config,
+                                      float[][] palette, ScissorRect scissor, float distanceScale) {
+        HeldItemOutlineRenderer.putColor(shader, "primaryColor", config.outlinePrimaryColor(), config.outlineOpacity());
+        HeldItemOutlineRenderer.putColor(shader, "secondaryColor", config.outlineSecondaryColor(), config.outlineOpacity());
+        float radius = outlineRadius(target, config) * distanceScale;
+        HeldItemOutlineRenderer.put(shader, "geometry", target.width, target.height, radius, config.outlineAlphaThreshold());
+        float time = (System.nanoTime() % 3_600_000_000_000L) / 1_000_000_000.0F;
+        HeldItemOutlineRenderer.put(shader, "animation", HeldItemOutlineRenderer.colorMode(config.outlineColorMode()),
+                time, config.outlineColorScrollSpeed() * 9.0F, config.outlineSoftness());
+        float[][] colors = palette == null || palette.length == 0 ? UNIT_PALETTE : palette;
+        HeldItemOutlineRenderer.put(shader, "effect", HeldItemOutlineRenderer.sampleCount(config.outlineQuality()),
+                config.outlineGlowIntensity(), colors.length, config.outlineBloomIntensity());
+        float directionRadians = (float) Math.toRadians(config.outlineColorScrollDirection());
+        HeldItemOutlineRenderer.put(shader, "colorScroll", (float) Math.cos(directionRadians),
+                -(float) Math.sin(directionRadians), config.outlineColorScrollInterval(),
+                HeldItemOutlineRenderer.renderMode(config.outlineRenderMode()));
+        float padding = outlineRadius(target, config) + (config.outlineBloomEnabled()
+                ? bloomRadius(target, config) * config.outlineBloomBlurPasses() : 0.0F) + 8.0F;
+        float centerX = scissor == null ? target.width * 0.5F : scissor.x + scissor.width * 0.5F;
+        float centerY = scissor == null ? target.height * 0.5F : scissor.y + scissor.height * 0.5F;
+        float halfWidth = scissor == null ? target.width * 0.25F : Math.max(1.0F, scissor.width * 0.5F - padding);
+        float halfHeight = scissor == null ? target.height * 0.25F : Math.max(1.0F, scissor.height * 0.5F - padding);
+        float pathRadius = HeldItemOutlineRenderer.ellipsePathRadius(halfWidth, halfHeight);
+        HeldItemOutlineRenderer.put(shader, "scrollMode", HeldItemOutlineRenderer.scrollMode(config.outlineColorScrollMode()),
+                centerX, centerY, Math.max(pathRadius, 1.0F));
+        // z = 2 marks the third-person path: scene occlusion on, binary visibility in the shaders.
+        HeldItemOutlineRenderer.put(shader, "scrollBounds", halfWidth, halfHeight, 2.0F, 0.0F);
+        for (int index = 0; index < 8; index++) {
+            float[] color = config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE
+                    ? colors[index % colors.length]
+                    : ((index & 1) == 0 ? HeldItemOutlineRenderer.rgb(config.outlinePrimaryColor())
+                        : HeldItemOutlineRenderer.rgb(config.outlineSecondaryColor()));
+            HeldItemOutlineRenderer.put(shader, "palette" + index, color[0], color[1], color[2], 1.0F);
+        }
+        HeldItemOutlineRenderer.put(shader, "bloomParameters", config.outlineBloomSoftness(), 0.0F, 0.0F, 0.0F);
+    }
+
+    private static float outlineRadius(RenderTarget target, ItemGlintRelightConfig config) {
+        float width = config.outlineWidth();
+        if (config.outlineRenderMode() == OutlineRenderMode.CUBIC) {
+            width *= 1.2F;
+        }
+        return width * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
+    }
+
+    private static float bloomRadius(RenderTarget target, ItemGlintRelightConfig config) {
+        return config.outlineBloomRadius() * 3.0F * Math.max(1, target.height) / REFERENCE_RENDER_HEIGHT;
+    }
+
+    /** Distance of the captured anchor in view space, or a non-positive value when unknown. */
+    private static float viewDistance(Capture capture) {
+        if (capture.modelView == null || capture.pose == null) {
+            return -1.0F;
+        }
+        float distance = Math.abs(new Matrix4f(capture.modelView).mul(capture.pose).m32());
+        return Float.isFinite(distance) ? distance : -1.0F;
+    }
+
+    private static float distanceScale(Capture capture) {
+        float distance = viewDistance(capture);
+        if (distance <= 0.001F) {
+            return 1.0F;
+        }
+        if (capture.armorStand) {
+            // Keep the stroke's world-space thickness constant for stands far from the camera.
+            return BLOOM_REFERENCE_DISTANCE / distance;
+        }
+        return 1.0F;
+    }
+
+    private static float bloomDistanceScale(Capture capture) {
+        float distance = viewDistance(capture);
+        if (distance <= 0.001F) {
+            return 1.0F;
+        }
+        return Math.max(0.35F, Math.min(3.0F, BLOOM_REFERENCE_DISTANCE / distance));
+    }
+
+    private static ItemGlintRelightConfig thirdPersonConfig(Capture capture) {
+        ItemGlintRelightConfig config = capture.config.copy();
+        config.setOutlineQuality(config.thirdPersonOutlineQuality());
+        config.setOutlineWidth(config.outlineWidth() * 0.5F * distanceScale(capture));
+        config.setOutlineBloomRadius(config.outlineBloomRadius() * 0.5F * bloomDistanceScale(capture));
+        return config;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Scissor
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * Composite region for one capture.
+     *
+     * <p>v1 composites over the whole target: the projected region is only a bandwidth optimisation and
+     * the bounds derived from mirrored vertices did not line up with the replay in testing, so the
+     * correct (if slower) full-target region is used until that is resolved.
+     */
+    /**
+     * Composite region for one capture.
+     *
+     * <p>v1 composites over the whole target: the projected region is a bandwidth optimisation, and
+     * the bounds accumulated from the mirrored vertices did not line up with the replay in testing,
+     * so the correct (if slower) full-target region is used until that is resolved.
+     */
+    private static ScissorRect scissorFor(RenderTarget target, Capture capture, ItemGlintRelightConfig config) {
+        return null;
+    }
+
+    private static void applyScissor(ScissorRect scissor) {
+        if (scissor == null) {
+            RenderSystem.disableScissor();
+        } else {
+            RenderSystem.enableScissor(scissor.x, scissor.y, scissor.width, scissor.height);
+        }
+    }
+
+    private record ScissorRect(int x, int y, int width, int height) {
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Capture
+    // ---------------------------------------------------------------------------------------------
+
+    private static boolean canCapture(Minecraft minecraft) {
+        return minecraft != null && minecraft.level != null && minecraft.player != null
+                && !HeldItemOutlineCompat.isIrisShadowPass();
+    }
+
+    private static boolean thirdPersonCamera(Minecraft minecraft) {
+        return minecraft.screen == null && !minecraft.options.getCameraType().isFirstPerson();
+    }
+
+    private static ItemGlintRelightConfig resolve(LivingEntity entity, ItemStack stack, boolean armorStand, boolean armor) {
+        Minecraft minecraft = Minecraft.getInstance();
+        ItemGlintRelightConfig base = ItemGlintRelightConfigManager.get();
+        if (!base.outlineEnabled() || !base.renderThirdPerson()) {
+            return null;
+        }
+        if (!armorStand && entity != minecraft.player) {
+            return null;
+        }
+        if (armorStand) {
+            if (!base.outlineArmorStands()) {
+                return null;
+            }
+            if (!(armor ? base.outlineArmor() : base.outlineThirdPerson())) {
+                return null;
+            }
+        } else {
+            if (!thirdPersonCamera(minecraft)) {
+                return null;
+            }
+            if (!(armor ? base.outlineArmor() : base.outlineThirdPerson())) {
+                return null;
+            }
+        }
+        ItemGlintRelightConfig config = DisplayRuleManager.resolve(stack, base);
+        if (config == null || !config.outlineEnabled() || !config.renderThirdPerson()) {
+            return null;
+        }
+        return config;
+    }
+
+    private static Capture acquire() {
+        Capture capture = POOL.pollFirst();
+        return capture == null ? new Capture() : capture;
+    }
+
+    private static void release(Capture capture) {
+        if (capture == null) {
+            return;
+        }
+        capture.reset();
+        if (POOL.size() < MAX_POOL) {
+            POOL.addLast(capture);
+        } else {
+            capture.mask.close();
+        }
+    }
+
+    private static float[][] paletteFor(Capture capture, ItemGlintRelightConfig config) {
+        if (config.outlineColorMode() != OutlineColorMode.TEXTURE_SAMPLE) {
+            return UNIT_PALETTE;
+        }
+        ItemStackKey key = ItemStackKey.of(capture.stack);
+        float[][] cached = PALETTES.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        Minecraft minecraft = Minecraft.getInstance();
+        float[][] palette = HeldItemOutlineRenderer.resolveGuiMaterialPalette(capture.stack, minecraft.level,
+                capture.entity, capture.entity.getId(), config);
+        if (palette == null || palette.length == 0) {
+            palette = UNIT_PALETTE;
+        }
+        PALETTES.put(key, palette);
+        return palette;
+    }
+
+    private static void ensureTargets(RenderTarget mainTarget) {
+        mask = ensure(mask, mainTarget, true);
+        sceneDepth = ensure(sceneDepth, mainTarget, true);
+        bloomSeed = ensure(bloomSeed, mainTarget, false);
+        bloomFirst = ensure(bloomFirst, mainTarget, false);
+        bloomSecond = ensure(bloomSecond, mainTarget, false);
+    }
+
+    private static TextureTarget ensure(TextureTarget target, RenderTarget mainTarget, boolean depth) {
+        if (target == null) {
+            target = new TextureTarget(mainTarget.width, mainTarget.height, depth, false);
+            target.setFilterMode(GL11.GL_LINEAR);
+            return target;
+        }
+        if (target.width != mainTarget.width || target.height != mainTarget.height) {
+            target.resize(mainTarget.width, mainTarget.height, false);
+        }
+        return target;
+    }
+
+    private static void ensureArmStandIn() {
+        if (armStandIn != null) {
+            return;
+        }
+        armStandIn = new TextureTarget(1, 1, true, false);
+        armStandIn.bindWrite(true);
+        RenderSystem.depthMask(true);
+        RenderSystem.colorMask(true, true, true, true);
+        RenderSystem.clearColor(0.0F, 0.0F, 0.0F, 0.0F);
+        RenderSystem.clearDepth(1.0D);
+        RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
+    }
+
+
+
+    private static void fail(String stage, RuntimeException exception) {
+        if (failures++ < 3) {
+            ItemGlintRelight.LOGGER.error("[ThirdPerson] " + stage + " failed", exception);
+        }
+    }
+
+    /** One captured draw: the entity geometry, the matrices it was drawn with, and its screen box. */
+    private static final class Capture {
+        private LivingEntity entity;
+        private ItemStack stack;
+        private ItemGlintRelightConfig config;
+        private boolean armor;
+        private boolean armorStand;
+        private Matrix4f projection;
+        private Matrix4f modelView;
+        private Matrix4f pose;
+        private final ThirdPersonBufferSource.MaskSource mask = new ThirdPersonBufferSource.MaskSource();
+
+        private void begin(LivingEntity entity, ItemStack stack, ItemGlintRelightConfig config, PoseStack pose,
+                           boolean armor, boolean armorStand) {
+            this.entity = entity;
+            this.stack = stack;
+            this.config = config;
+            this.armor = armor;
+            this.armorStand = armorStand;
+            this.projection = new Matrix4f(RenderSystem.getProjectionMatrix());
+            this.modelView = new Matrix4f(RenderSystem.getModelViewMatrix());
+            this.pose = new Matrix4f(pose.last().pose());
+        }
+
+        private void reset() {
+            this.mask.clear();
+            this.entity = null;
+            this.stack = null;
+            this.config = null;
+            this.armor = false;
+            this.armorStand = false;
+            this.projection = null;
+            this.modelView = null;
+            this.pose = null;
+        }
+
+    }
+}

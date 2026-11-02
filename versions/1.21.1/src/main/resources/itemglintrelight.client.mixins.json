@@ -6,6 +6,10 @@
   "client": [
     "GameRendererMixin",
     "GuiGraphicsItemOutlineMixin",
+    "PlayerItemInHandLayerMixin",
+    "ItemInHandLayerMixin",
+    "HumanoidArmorLayerMixin",
+    "BufferSourceMixin",
     "ItemInHandRendererMixin",
     "ItemInHandRendererInvoker",
     "ItemRendererAccessor",

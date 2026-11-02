@@ -2,6 +2,7 @@ package celia.adwadg.itemglintrelight.mixin.client;
 
 import celia.adwadg.itemglintrelight.client.render.GuiItemOutlineManager;
 import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
+import celia.adwadg.itemglintrelight.client.render.ThirdPersonOutlineManager;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -18,6 +19,16 @@ public abstract class GameRendererMixin {
     private void itemglintrelight$beginFrame(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         HeldItemOutlineRenderer.beginFrame();
         GuiItemOutlineManager.beginFrame();
+        ThirdPersonOutlineManager.beginFrame();
+    }
+
+    /**
+     * Third-person outline: {@code renderLevel} has finished (translucent terrain, clouds and weather
+     * included) and the GUI has not started yet, which is exactly where the reference composites.
+     */
+    @Inject(method = "renderLevel", at = @At("RETURN"))
+    private void itemglintrelight$compositeThirdPerson(DeltaTracker deltaTracker, CallbackInfo ci) {
+        ThirdPersonOutlineManager.compositeAfterLevel();
     }
 
     /**

@@ -41,6 +41,10 @@ float coverage(vec2 uv) {
     return texture(MaskSampler, clamp(uv, vec2(0.0), vec2(1.0))).a;
 }
 
+bool thirdPersonOcclusion() {
+    return scrollBounds.z > 1.5;
+}
+
 bool sceneOcclusionEnabled() {
     return scrollBounds.z < 0.5 || scrollBounds.z > 1.5;
 }
@@ -338,7 +342,10 @@ void main() {
     float visible = 1.0;
     if (sceneOcclusionEnabled()) {
         float sceneDepth = texture(SceneDepthSampler, texCoord).r;
-        visible = smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);
+        // Third-person occlusion is a binary visibility test: a soft transition leaves fringe
+        // pixels that the bloom then turns into a false closed edge.
+        visible = thirdPersonOcclusion() ? 1.0
+                : smoothstep(nearestDepth - 0.0004, nearestDepth + 0.0003, sceneDepth);
         if (sceneDepth + 0.00015 < nearestDepth) {
             discard;
         }
