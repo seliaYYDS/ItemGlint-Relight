@@ -17,6 +17,8 @@ import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.item.ArmorItem;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
@@ -64,6 +66,7 @@ public final class ThirdPersonOutlineManager {
     private static int captureDepth;
     private static boolean armorGroup;
     private static ItemGlintRelightConfig armorConfig;
+    private static String armorGroupAsset;
 
     private static TextureTarget mask;
     private static TextureTarget sceneDepth;
@@ -135,7 +138,7 @@ public final class ThirdPersonOutlineManager {
         closeCapture();
     }
 
-    public static void beginArmorPiece(LivingEntity entity, ItemStack stack, PoseStack pose) {
+    public static void beginArmorPiece(LivingEntity entity, ItemStack stack, EquipmentSlot slot, PoseStack pose) {
         Minecraft minecraft = Minecraft.getInstance();
         if (!canCapture(minecraft) || entity == null || stack == null || stack.isEmpty() || pose == null) {
             return;
@@ -145,10 +148,13 @@ public final class ThirdPersonOutlineManager {
         if (config == null) {
             return;
         }
-        // Four pieces that resolve to the same config share one capture, exactly like the reference:
-        // an ordinary set produces a single merged silhouette and a single composite pass.
+        // Pieces that resolve to the same config share one capture, exactly like the reference. In
+        // texture-sampling mode the palette comes from the piece's own armor texture, so a mixed set
+        // has to split at the material boundary (the leggings use a different texture as well).
+        String armorAsset = config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE
+                ? armorAssetKey(stack, slot) : null;
         if (armorGroup && recording != null && recording.armor && recording.entity == entity
-                && armorConfig == config) {
+                && armorConfig == config && java.util.Objects.equals(armorAsset, armorGroupAsset)) {
             return;
         }
         if (armorGroup) {
@@ -162,6 +168,7 @@ public final class ThirdPersonOutlineManager {
         recording = capture;
         armorGroup = true;
         armorConfig = config;
+        armorGroupAsset = armorAsset;
     }
 
     public static void endArmorGroup() {
@@ -174,6 +181,7 @@ public final class ThirdPersonOutlineManager {
         }
         armorGroup = false;
         armorConfig = null;
+        armorGroupAsset = null;
         closeCapture();
     }
 
@@ -626,6 +634,17 @@ public final class ThirdPersonOutlineManager {
             return null;
         }
         return config;
+    }
+
+    /** Key that separates armor materials (and the leggings texture) in texture-sampling mode. */
+    private static String armorAssetKey(ItemStack stack, EquipmentSlot slot) {
+        if (!(stack.getItem() instanceof ArmorItem armorItem)) {
+            return null;
+        }
+        String material = armorItem.getMaterial().unwrapKey()
+                .map(key -> key.location().toString())
+                .orElseGet(() -> armorItem.getMaterial().toString());
+        return material + "|" + (slot == EquipmentSlot.LEGS);
     }
 
     private static Capture acquire() {

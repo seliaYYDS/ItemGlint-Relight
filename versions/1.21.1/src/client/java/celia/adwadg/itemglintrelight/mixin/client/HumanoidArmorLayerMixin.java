@@ -35,7 +35,7 @@ public abstract class HumanoidArmorLayerMixin {
             at = @At("HEAD"))
     private void itemglintrelight$beginArmorPiece(PoseStack pose, MultiBufferSource source, LivingEntity entity,
                                                   EquipmentSlot slot, int light, HumanoidModel<?> model, CallbackInfo ci) {
-        ThirdPersonOutlineManager.beginArmorPiece(entity, entity.getItemBySlot(slot), pose);
+        ThirdPersonOutlineManager.beginArmorPiece(entity, entity.getItemBySlot(slot), slot, pose);
     }
 
     @Inject(
