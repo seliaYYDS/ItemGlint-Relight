@@ -74,6 +74,14 @@ public final class HeldItemOutlineRenderer {
     private static InteractionHand recordingHand;
     private static boolean recordingEnabled;
     private static boolean implicitWindowLogged;
+    // Vertex mirror of the hand pass. It is independent of which renderer draws the hand, so it also
+    // covers mods (Punchy) that replace ItemInHandRenderer#renderArmWithItem/renderItem entirely.
+    private static final ThirdPersonBufferSource.MaskSource HAND_GEOMETRY =
+            new ThirdPersonBufferSource.MaskSource();
+    private static boolean handGeometryActive;
+    private static boolean armGeometryActive;
+    private static Matrix4f handGeometryProjection;
+    private static Matrix4f handGeometryModelView;
 
     private static TextureTarget maskTarget;
     private static TextureTarget armTarget;
@@ -95,8 +103,43 @@ public final class HeldItemOutlineRenderer {
 
     private HeldItemOutlineRenderer() { }
 
+    /**
+     * Starts mirroring the hand pass and returns the wrapping buffer source.
+     *
+     * <p>Called from {@code ItemInHandRenderer#renderHandsWithItems} and from Punchy's
+     * {@code renderFirstPerson}, whichever runs first; the second call returns the already wrapped
+     * source untouched. Arm geometry is excluded by the arm flags so the mask stays the item only.
+     */
+    public static MultiBufferSource wrapHandGeometry(MultiBufferSource source) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (source == null || !shouldRender(minecraft)) {
+            return source;
+        }
+        if (handGeometryProjection == null || handGeometryModelView == null) {
+            handGeometryProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+            handGeometryModelView = new Matrix4f(RenderSystem.getModelViewMatrix());
+        }
+        return new ThirdPersonBufferSource(source, () -> HAND_GEOMETRY);
+    }
+
+    public static void endHandGeometry() {
+        handGeometryActive = false;
+        armGeometryActive = false;
+    }
+
+    public static void beginArmGeometry() {
+        armGeometryActive = true;
+    }
+
+    public static void endArmGeometry() {
+        armGeometryActive = false;
+    }
+
     /** Called at the head of every frame, before any hand is recorded. */
     public static void beginFrame() {
+        HAND_GEOMETRY.clear();
+        handGeometryProjection = null;
+        handGeometryModelView = null;
         MAIN_HAND.reset();
         OFF_HAND.reset();
         recordingHand = null;
@@ -213,7 +256,8 @@ public final class HeldItemOutlineRenderer {
      */
     public static void composite(Minecraft minecraft) {
         try {
-            if (!shouldRender(minecraft) || (!MAIN_HAND.hasGeometry() && !OFF_HAND.hasGeometry())) {
+            if (!shouldRender(minecraft) || (!MAIN_HAND.hasGeometry() && !OFF_HAND.hasGeometry()
+                    && HAND_GEOMETRY.isEmpty())) {
                 return;
             }
             RenderTarget mainTarget = minecraft.getMainRenderTarget();
@@ -245,22 +289,47 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void compositeHand(Minecraft minecraft, RenderTarget mainTarget, float occlusion, HandCapture capture) {
-        if (capture.itemPose == null && capture.mapPose == null) {
+        // The pose replay is the normal path. When no pose was recorded (a mod owns the hand pass),
+        // fall back to the mirrored vertices, which carry the item exactly as it was drawn.
+        boolean mirrored = !HAND_GEOMETRY.isEmpty();
+        if (!mirrored && capture.itemPose == null && capture.mapPose == null) {
             return;
         }
-        ItemGlintRelightConfig config = capture.config == null ? ItemGlintRelightConfigManager.get() : capture.config;
+        ItemGlintRelightConfig config = capture.config;
+        if (config == null && mirrored) {
+            InteractionHand hand = capture == OFF_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
+            ItemStack live = hand == InteractionHand.MAIN_HAND
+                    ? minecraft.player.getMainHandItem() : minecraft.player.getOffhandItem();
+            if (live.isEmpty() || !isEnabled(hand, live)) {
+                return;
+            }
+            config = DisplayRuleManager.resolve(live, ItemGlintRelightConfigManager.get());
+            if (config == null || !config.outlineEnabled()) {
+                return;
+            }
+            capture.item = live;
+            capture.itemContext = hand == InteractionHand.MAIN_HAND
+                    ? ItemDisplayContext.FIRST_PERSON_RIGHT_HAND : ItemDisplayContext.FIRST_PERSON_LEFT_HAND;
+        }
+        if (config == null) {
+            config = ItemGlintRelightConfigManager.get();
+        }
         maskTarget.bindWrite(true);
         clear();
-        replayCapture(minecraft, capture, () -> {
-            if (capture.itemPose != null) {
-                minecraft.gameRenderer.itemInHandRenderer.renderItem(
-                        minecraft.player, capture.item, capture.itemContext, capture.itemLeftHand,
-                        poseOf(capture.itemPose), maskSource, capture.itemLight);
-            }
-            if (capture.mapPose != null) {
-                invoke(minecraft).itemglintrelight$renderMap(poseOf(capture.mapPose), maskSource, capture.mapLight, capture.map);
-            }
-        });
+        if (mirrored) {
+            replayMirroredGeometry(minecraft, capture);
+        } else {
+            replayCapture(minecraft, capture, () -> {
+                if (capture.itemPose != null) {
+                    minecraft.gameRenderer.itemInHandRenderer.renderItem(
+                            minecraft.player, capture.item, capture.itemContext, capture.itemLeftHand,
+                            poseOf(capture.itemPose), maskSource, capture.itemLight);
+                }
+                if (capture.mapPose != null) {
+                    invoke(minecraft).itemglintrelight$renderMap(poseOf(capture.mapPose), maskSource, capture.mapLight, capture.map);
+                }
+            });
+        }
         float[][] palette = resolvePalette(config, capture);
         float radius = resolveOutlineRadius(mainTarget, config);
         if (config.outlineBloomEnabled()) {
@@ -420,14 +489,28 @@ public final class HeldItemOutlineRenderer {
      * hand because {@code RenderSystem} keeps a single backup slot that the draw calls themselves
      * may use.
      */
+    /** Replays the mirrored hand geometry with the matrices the pass was drawn with. */
+    private static void replayMirroredGeometry(Minecraft minecraft, HandCapture capture) {
+        Matrix4f projection = capture.projection != null ? capture.projection : handGeometryProjection;
+        Matrix4f modelView = capture.modelView != null ? capture.modelView : handGeometryModelView;
+        if (projection == null || modelView == null) {
+            return;
+        }
+        replayWith(projection, modelView, HAND_GEOMETRY::draw);
+    }
+
     private static void replayCapture(Minecraft minecraft, HandCapture capture, Runnable body) {
         if (capture.projection == null || capture.modelView == null) {
             return;
         }
+        replayWith(capture.projection, capture.modelView, body);
+    }
+
+    private static void replayWith(Matrix4f projection, Matrix4f modelView, Runnable body) {
         Matrix4f previousProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
-        RenderSystem.setProjectionMatrix(new Matrix4f(capture.projection), VertexSorting.DISTANCE_TO_ORIGIN);
+        RenderSystem.setProjectionMatrix(new Matrix4f(projection), VertexSorting.DISTANCE_TO_ORIGIN);
         RenderSystem.getModelViewStack().pushMatrix();
-        RenderSystem.getModelViewStack().set(capture.modelView);
+        RenderSystem.getModelViewStack().set(modelView);
         RenderSystem.applyModelViewMatrix();
         try {
             body.run();

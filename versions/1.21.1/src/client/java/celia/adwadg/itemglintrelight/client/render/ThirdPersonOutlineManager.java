@@ -103,7 +103,7 @@ public final class ThirdPersonOutlineManager {
 
     /** Wraps the buffer source handed to an entity layer so vertices can be mirrored. */
     public static MultiBufferSource route(MultiBufferSource original) {
-        return original == null ? null : new ThirdPersonBufferSource(original);
+        return original == null ? null : new ThirdPersonBufferSource(original, ThirdPersonOutlineManager::currentMaskSource);
     }
 
     static ThirdPersonBufferSource.MaskSource currentMaskSource() {

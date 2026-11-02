@@ -21,15 +21,17 @@ import java.util.Map;
  */
 final class ThirdPersonBufferSource implements MultiBufferSource {
     private final MultiBufferSource original;
+    private final java.util.function.Supplier<MaskSource> target;
 
-    ThirdPersonBufferSource(MultiBufferSource original) {
+    ThirdPersonBufferSource(MultiBufferSource original, java.util.function.Supplier<MaskSource> target) {
         this.original = original;
+        this.target = target;
     }
 
     @Override
     public VertexConsumer getBuffer(RenderType type) {
         VertexConsumer real = this.original.getBuffer(type);
-        MaskSource mask = ThirdPersonOutlineManager.currentMaskSource();
+        MaskSource mask = this.target.get();
         if (mask == null) {
             return real;
         }

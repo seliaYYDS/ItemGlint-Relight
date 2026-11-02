@@ -13,6 +13,7 @@ import net.minecraft.world.item.ItemStack;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(ItemInHandRenderer.class)
@@ -29,6 +30,16 @@ public abstract class ItemInHandRendererMixin {
                                           float swing, ItemStack stack, float equip, PoseStack poseStack,
                                           MultiBufferSource source, int light, CallbackInfo ci) {
         HeldItemOutlineRenderer.endHand();
+    }
+
+    /**
+     * Mirrors the item's real vertices. ItemInHandRenderer#renderItem is first-person only, and it is
+     * the funnel every hand implementation goes through (vanilla, Punchy), so the mask no longer
+     * depends on a pose replay being reproduced exactly.
+     */
+    @ModifyVariable(method = "renderItem", at = @At("HEAD"), argsOnly = true, index = 6)
+    private MultiBufferSource itemglintrelight$mirrorItemGeometry(MultiBufferSource source) {
+        return HeldItemOutlineRenderer.wrapHandGeometry(source);
     }
 
     @Inject(method = "renderItem", at = @At("HEAD"))
