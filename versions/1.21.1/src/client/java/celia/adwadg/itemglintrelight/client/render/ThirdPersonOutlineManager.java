@@ -367,7 +367,7 @@ public final class ThirdPersonOutlineManager {
         compositeShader.setSampler("BloomSampler", source);
         compositeShader.setSampler("SeedSampler", bloomSeed.getColorTextureId());
         compositeShader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
-        writeUniforms(compositeShader, mainTarget, config, UNIT_PALETTE, region, 1.0F);
+        writeUniforms(compositeShader, mainTarget, config, UNIT_PALETTE, region);
         RenderSystem.enableBlend();
         RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                 GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -412,7 +412,7 @@ public final class ThirdPersonOutlineManager {
         shader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
         shader.setSampler("ArmOccluderSampler", armStandIn.getColorTextureId());
         shader.setSampler("ArmOccluderDepthSampler", armStandIn.getDepthTextureId());
-        writeUniforms(shader, mainTarget, config, palette, region, distanceScale(capture));
+        writeUniforms(shader, mainTarget, config, palette, region);
         RenderSystem.enableBlend();
         RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                 GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
@@ -435,10 +435,10 @@ public final class ThirdPersonOutlineManager {
     // ---------------------------------------------------------------------------------------------
 
     private static void writeUniforms(ShaderInstance shader, RenderTarget target, ItemGlintRelightConfig config,
-                                      float[][] palette, ScissorRect region, float distanceScale) {
+                                      float[][] palette, ScissorRect region) {
         HeldItemOutlineRenderer.putColor(shader, "primaryColor", config.outlinePrimaryColor(), config.outlineOpacity());
         HeldItemOutlineRenderer.putColor(shader, "secondaryColor", config.outlineSecondaryColor(), config.outlineOpacity());
-        float radius = outlineRadius(target, config) * distanceScale;
+        float radius = outlineRadius(target, config);
         HeldItemOutlineRenderer.put(shader, "geometry", target.width, target.height, radius, config.outlineAlphaThreshold());
         float time = (System.nanoTime() % 3_600_000_000_000L) / 1_000_000_000.0F;
         HeldItemOutlineRenderer.put(shader, "animation", HeldItemOutlineRenderer.colorMode(config.outlineColorMode()),
@@ -530,16 +530,8 @@ public final class ThirdPersonOutlineManager {
     /**
      * Composite region for one capture.
      *
-     * <p>v1 composites over the whole target: the projected region is only a bandwidth optimisation and
-     * the bounds derived from mirrored vertices did not line up with the replay in testing, so the
-     * correct (if slower) full-target region is used until that is resolved.
-     */
-    /**
-     * Composite region for one capture.
-     *
-     * <p>v1 composites over the whole target: the projected region is a bandwidth optimisation, and
-     * the bounds accumulated from the mirrored vertices did not line up with the replay in testing,
-     * so the correct (if slower) full-target region is used until that is resolved.
+     * <p>The mirrored vertices are camera-relative, so the region is their bounding box transformed by
+     * the capture's projection and camera matrix, padded by the stroke and bloom radii.
      */
     private static ScissorRect scissorFor(RenderTarget target, Capture capture, ItemGlintRelightConfig config) {
         float[] bounds = capture.mask.bounds();
