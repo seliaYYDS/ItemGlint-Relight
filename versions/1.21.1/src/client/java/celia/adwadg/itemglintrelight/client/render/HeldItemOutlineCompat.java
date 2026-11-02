@@ -22,6 +22,7 @@ public final class HeldItemOutlineCompat {
     private static Method getPipelineNullable;
     private static Field pipelineTargetsField;
     private static Method getDepthTextureNoHand;
+    private static Method GET_DEPTH_TEXTURE_ID;
     private static String apiResolutionFailure = "none";
     private static String pipelineResolutionFailure = "none";
     private static String apiInvocationFailure = "none";
@@ -108,6 +109,32 @@ public final class HeldItemOutlineCompat {
         } catch (ReflectiveOperationException | RuntimeException exception) {
             pipelineInvocationFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
             return null;
+        }
+    }
+
+    /**
+     * 1.21.1 Iris exposes its no-hand depth as {@code DepthTexture}; the shader-facing value is the
+     * GL texture id it wraps.
+     */
+    public static int getIrisNoHandDepthTextureId() {
+        Object texture = getIrisNoHandDepthTexture();
+        if (texture == null) {
+            return 0;
+        }
+        if (GET_DEPTH_TEXTURE_ID == null) {
+            try {
+                GET_DEPTH_TEXTURE_ID = texture.getClass().getMethod("getTextureId");
+            } catch (ReflectiveOperationException exception) {
+                pipelineInvocationFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
+                return 0;
+            }
+        }
+        try {
+            Object id = GET_DEPTH_TEXTURE_ID.invoke(texture);
+            return id instanceof Integer value ? value : 0;
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            pipelineInvocationFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
+            return 0;
         }
     }
 

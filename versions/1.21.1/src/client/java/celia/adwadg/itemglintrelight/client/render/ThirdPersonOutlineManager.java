@@ -9,6 +9,7 @@ import celia.adwadg.itemglintrelight.config.OutlineRenderMode;
 import celia.adwadg.itemglintrelight.config.RenderQuality;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexSorting;
@@ -24,6 +25,7 @@ import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
 import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL30;
 
 
 import java.util.ArrayDeque;
@@ -75,6 +77,7 @@ public final class ThirdPersonOutlineManager {
     private static TextureTarget bloomSecond;
     private static TextureTarget armStandIn;
     private static boolean depthReady;
+    private static int irisDepthFbo = -1;
     private static int failures;
     private static boolean announced;
 
@@ -218,6 +221,11 @@ public final class ThirdPersonOutlineManager {
         if (source != minecraft.renderBuffers().bufferSource()) {
             return;
         }
+        // With a shader pack the main target's depth is not the frame depth; Iris' depthtex2 is
+        // copied at composite time instead (it is only complete after Iris' pre-hand copy).
+        if (HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+            return;
+        }
         try {
             RenderTarget mainTarget = minecraft.getMainRenderTarget();
             ensureTargets(mainTarget);
@@ -249,6 +257,9 @@ public final class ThirdPersonOutlineManager {
             ensureTargets(mainTarget);
             // renderLevel clears the depth buffer before the hand pass, so the finished depth is
             // empty by now; the scene snapshot must come from the main batch flush instead.
+            if (!depthReady && HeldItemOutlineCompat.isIrisShaderPackRendering()) {
+                depthReady = copyIrisSceneDepth(mainTarget);
+            }
             if (!depthReady) {
                 snapshotCurrentDepth(mainTarget);
             }
@@ -274,6 +285,44 @@ public final class ThirdPersonOutlineManager {
         } catch (RuntimeException exception) {
             fail("composite", exception);
             QUEUE.clear();
+        }
+    }
+
+    /**
+     * Copies Iris' {@code depthtex2} (no-hand depth) into the scene snapshot target.
+     *
+     * <p>Iris keeps the frame depth in its own targets, so the main target has no usable depth while
+     * a shader pack is active. {@code depthtex2} is copied right before the hand pass, which makes it
+     * this frame's scene depth at composite time.
+     */
+    private static boolean copyIrisSceneDepth(RenderTarget mainTarget) {
+        int textureId = HeldItemOutlineCompat.getIrisNoHandDepthTextureId();
+        if (textureId <= 0) {
+            return false;
+        }
+        try {
+            if (irisDepthFbo <= 0) {
+                irisDepthFbo = GlStateManager.glGenFramebuffers();
+            }
+            GlStateManager._bindTexture(textureId);
+            int sourceWidth = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
+            int sourceHeight = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
+            GlStateManager._bindTexture(0);
+            if (sourceWidth <= 0 || sourceHeight <= 0) {
+                return false;
+            }
+            GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, irisDepthFbo);
+            GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_DEPTH_ATTACHMENT,
+                    GL11.GL_TEXTURE_2D, textureId, 0);
+            GL30.glReadBuffer(GL11.GL_NONE);
+            GlStateManager._glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, sceneDepth.frameBufferId);
+            GlStateManager._glBlitFrameBuffer(0, 0, sourceWidth, sourceHeight,
+                    0, 0, sceneDepth.width, sceneDepth.height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+            GlStateManager._glBindFramebuffer(GL30.GL_FRAMEBUFFER, mainTarget.frameBufferId);
+            return GL11.glGetError() == GL11.GL_NO_ERROR;
+        } catch (RuntimeException exception) {
+            fail("iris depth copy", exception);
+            return false;
         }
     }
 

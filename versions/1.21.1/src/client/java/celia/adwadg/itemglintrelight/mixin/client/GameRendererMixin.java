@@ -23,11 +23,15 @@ public abstract class GameRendererMixin {
     }
 
     /**
-     * Third-person outline: {@code renderLevel} has finished (translucent terrain, clouds and weather
-     * included) and the GUI has not started yet, which is exactly where the reference composites.
+     * Composites after {@code renderLevel} has fully returned, so Iris' {@code finalizeGameRendering}
+     * tail (its final pass) has already written the world into the main target.
      */
-    @Inject(method = "renderLevel", at = @At("RETURN"))
-    private void itemglintrelight$compositeThirdPerson(DeltaTracker deltaTracker, CallbackInfo ci) {
+    @Inject(
+            method = "render",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+                    shift = At.Shift.AFTER))
+    private void itemglintrelight$compositeThirdPerson(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         ThirdPersonOutlineManager.compositeAfterLevel();
     }
 
