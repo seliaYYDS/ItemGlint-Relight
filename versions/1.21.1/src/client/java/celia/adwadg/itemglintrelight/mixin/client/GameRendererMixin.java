@@ -36,16 +36,28 @@ public abstract class GameRendererMixin {
     }
 
     /**
-     * 1.21.1 draws the hands at the end of {@code renderItemInHand}, so the return of that method is
-     * the first point where the captured geometry can be replayed into the mask and composited.
+     * The hand capture window spans the whole level render, not just {@code renderItemInHand}.
+     *
+     * <p>With a shader pack Iris cancels {@code renderArmWithItem} for translucent hand items during
+     * the normal pass and redraws them from {@code renderLevel}'s tail ({@code HandRenderer
+     * .renderTranslucent}), after {@code renderItemInHand} has returned. A window that closes there
+     * would record nothing and an early composite would be overwritten by Iris' final pass.
      */
-    @Inject(method = "renderItemInHand", at = @At("HEAD"))
-    private void itemglintrelight$beginHandPass(Camera camera, float partialTick, Matrix4f projectionMatrix, CallbackInfo ci) {
+    @Inject(method = "renderLevel", at = @At("HEAD"))
+    private void itemglintrelight$beginHandPass(DeltaTracker deltaTracker, CallbackInfo ci) {
         HeldItemOutlineRenderer.beginHandPass();
     }
 
-    @Inject(method = "renderItemInHand", at = @At("RETURN"))
-    private void itemglintrelight$compositeHandOutline(Camera camera, float partialTick, Matrix4f projectionMatrix, CallbackInfo ci) {
+    /**
+     * Composites right after {@code renderLevel} returns: Iris' final pass and its translucent hand
+     * pass have both written to the main target by then, and the GUI has not started yet.
+     */
+    @Inject(
+            method = "render",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/GameRenderer;renderLevel(Lnet/minecraft/client/DeltaTracker;)V",
+                    shift = At.Shift.AFTER))
+    private void itemglintrelight$compositeHandOutline(DeltaTracker deltaTracker, boolean tick, CallbackInfo ci) {
         HeldItemOutlineRenderer.composite(Minecraft.getInstance());
         HeldItemOutlineRenderer.endHandPass();
     }

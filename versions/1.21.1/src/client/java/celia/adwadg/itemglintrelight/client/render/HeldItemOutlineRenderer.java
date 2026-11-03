@@ -119,9 +119,11 @@ public final class HeldItemOutlineRenderer {
         if (source == null || hand == null || !handPassActive || !shouldRender(minecraft)) {
             return source;
         }
+        hand.geometryProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+        hand.geometryModelView = new Matrix4f(RenderSystem.getModelViewMatrix());
         if (handGeometryProjection == null || handGeometryModelView == null) {
-            handGeometryProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
-            handGeometryModelView = new Matrix4f(RenderSystem.getModelViewMatrix());
+            handGeometryProjection = new Matrix4f(hand.geometryProjection);
+            handGeometryModelView = new Matrix4f(hand.geometryModelView);
         }
         return new ThirdPersonBufferSource(source, () -> hand.geometry);
     }
@@ -567,8 +569,10 @@ public final class HeldItemOutlineRenderer {
     }
 
     private static void replayMirroredGeometry(Minecraft minecraft, HandCapture capture) {
-        Matrix4f projection = capture.projection != null ? capture.projection : handGeometryProjection;
-        Matrix4f modelView = capture.modelView != null ? capture.modelView : handGeometryModelView;
+        Matrix4f projection = capture.geometryProjection != null ? capture.geometryProjection
+                : capture.projection != null ? capture.projection : handGeometryProjection;
+        Matrix4f modelView = capture.geometryModelView != null ? capture.geometryModelView
+                : capture.modelView != null ? capture.modelView : handGeometryModelView;
         if (projection == null || modelView == null) {
             return;
         }
@@ -1108,6 +1112,10 @@ public final class HeldItemOutlineRenderer {
         private final ThirdPersonBufferSource.MaskSource armGeometry = new ThirdPersonBufferSource.MaskSource();
         private Matrix4f armProjection;
         private Matrix4f armModelView;
+        // Matrices of the pass that produced the mirrored item geometry. With a shader pack Iris draws
+        // some hands after renderItemInHand with its own projection, so these are captured per draw.
+        private Matrix4f geometryProjection;
+        private Matrix4f geometryModelView;
         private ItemGlintRelightConfig config;
         private Matrix4f projection;
         private Matrix4f modelView;
@@ -1146,6 +1154,8 @@ public final class HeldItemOutlineRenderer {
             this.armGeometry.clear();
             this.armProjection = null;
             this.armModelView = null;
+            this.geometryProjection = null;
+            this.geometryModelView = null;
         }
     }
 

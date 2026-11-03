@@ -54,7 +54,7 @@ public abstract class ItemInHandRendererMixin {
         HeldItemOutlineRenderer.captureArm(poseStack, light, equipProgress, swingProgress, arm);
     }
 
-    @ModifyVariable(method = "renderPlayerArm", at = @At("HEAD"), argsOnly = true, index = 1, require = 0)
+    @ModifyVariable(method = "renderPlayerArm", at = @At("HEAD"), argsOnly = true, index = 2, require = 0)
     private MultiBufferSource itemglintrelight$mirrorArmGeometry(MultiBufferSource source,
             @com.llamalad7.mixinextras.sugar.Local(argsOnly = true) HumanoidArm arm) {
         return HeldItemOutlineRenderer.wrapArmGeometry(source, arm);
