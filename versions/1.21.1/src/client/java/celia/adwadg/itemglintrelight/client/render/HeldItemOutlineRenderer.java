@@ -79,6 +79,9 @@ public final class HeldItemOutlineRenderer {
     private static final ThirdPersonBufferSource.MaskSource HAND_GEOMETRY =
             new ThirdPersonBufferSource.MaskSource();
     private static boolean handGeometryActive;
+    // Only the local player's first-person pass may feed the mask: level rendering draws every
+    // entity's held item through the same renderers and must never be mirrored.
+    private static boolean handPassActive;
     private static boolean armGeometryActive;
     private static Matrix4f handGeometryProjection;
     private static Matrix4f handGeometryModelView;
@@ -112,7 +115,7 @@ public final class HeldItemOutlineRenderer {
      */
     public static MultiBufferSource wrapHandGeometry(MultiBufferSource source) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (source == null || !shouldRender(minecraft)) {
+        if (source == null || !handPassActive || !shouldRender(minecraft)) {
             return source;
         }
         if (handGeometryProjection == null || handGeometryModelView == null) {
@@ -120,6 +123,15 @@ public final class HeldItemOutlineRenderer {
             handGeometryModelView = new Matrix4f(RenderSystem.getModelViewMatrix());
         }
         return new ThirdPersonBufferSource(source, () -> HAND_GEOMETRY);
+    }
+
+    public static void beginHandPass() {
+        handPassActive = true;
+    }
+
+    public static void endHandPass() {
+        handPassActive = false;
+        endHandGeometry();
     }
 
     public static void endHandGeometry() {
@@ -314,6 +326,19 @@ public final class HeldItemOutlineRenderer {
         if (config == null) {
             config = ItemGlintRelightConfigManager.get();
         }
+        if (config.outlineColorMode() == OutlineColorMode.TEXTURE_SAMPLE && capture.materialColors.isEmpty()) {
+            ItemStack sample = capture.item != null && !capture.item.isEmpty()
+                    ? capture.item : liveStackFor(minecraft, capture);
+            if (sample != null && !sample.isEmpty()) {
+                capture.item = sample;
+                if (capture.itemContext == null) {
+                    capture.itemContext = capture == OFF_HAND
+                            ? ItemDisplayContext.FIRST_PERSON_LEFT_HAND
+                            : ItemDisplayContext.FIRST_PERSON_RIGHT_HAND;
+                }
+                sampleItemColors(capture, sample, capture.itemContext);
+            }
+        }
         maskTarget.bindWrite(true);
         clear();
         if (mirrored) {
@@ -490,6 +515,13 @@ public final class HeldItemOutlineRenderer {
      * may use.
      */
     /** Replays the mirrored hand geometry with the matrices the pass was drawn with. */
+    private static ItemStack liveStackFor(Minecraft minecraft, HandCapture capture) {
+        if (minecraft.player == null) {
+            return ItemStack.EMPTY;
+        }
+        return capture == OFF_HAND ? minecraft.player.getOffhandItem() : minecraft.player.getMainHandItem();
+    }
+
     private static void replayMirroredGeometry(Minecraft minecraft, HandCapture capture) {
         Matrix4f projection = capture.projection != null ? capture.projection : handGeometryProjection;
         Matrix4f modelView = capture.modelView != null ? capture.modelView : handGeometryModelView;

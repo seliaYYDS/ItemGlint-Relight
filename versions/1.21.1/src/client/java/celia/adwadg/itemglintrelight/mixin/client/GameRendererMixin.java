@@ -39,8 +39,14 @@ public abstract class GameRendererMixin {
      * 1.21.1 draws the hands at the end of {@code renderItemInHand}, so the return of that method is
      * the first point where the captured geometry can be replayed into the mask and composited.
      */
+    @Inject(method = "renderItemInHand", at = @At("HEAD"))
+    private void itemglintrelight$beginHandPass(Camera camera, float partialTick, Matrix4f projectionMatrix, CallbackInfo ci) {
+        HeldItemOutlineRenderer.beginHandPass();
+    }
+
     @Inject(method = "renderItemInHand", at = @At("RETURN"))
     private void itemglintrelight$compositeHandOutline(Camera camera, float partialTick, Matrix4f projectionMatrix, CallbackInfo ci) {
         HeldItemOutlineRenderer.composite(Minecraft.getInstance());
+        HeldItemOutlineRenderer.endHandPass();
     }
 }
