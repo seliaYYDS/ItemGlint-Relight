@@ -314,7 +314,10 @@ public final class HeldItemOutlineRenderer {
             if (mainTarget.useDepth) {
                 sceneDepthTarget.copyDepthFrom(mainTarget);
             }
-            float occlusion = HeldItemOutlineCompat.isIrisShaderPackRendering() ? 1.0F : 0.0F;
+            // The scene depth is copied from the main target after the level has fully rendered, so
+            // it already contains the hand and the arm; the per-pixel scene test can stay enabled and
+            // no longer depends on the arm mask, which Iris' cancelled hand pass never fills.
+            float occlusion = 0.0F;
             renderArmMask(minecraft);
             // One composite per hand: each hand owns its palette and its rule-resolved config, and
             // the off hand has to paint over the main hand exactly like the items themselves do.
