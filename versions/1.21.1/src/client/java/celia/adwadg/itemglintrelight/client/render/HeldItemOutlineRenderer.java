@@ -1,5 +1,9 @@
 package celia.adwadg.itemglintrelight.client.render;
 
+import org.lwjgl.BufferUtils;
+import java.nio.ByteBuffer;
+import java.nio.FloatBuffer;
+import org.joml.Vector4f;
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
 import celia.adwadg.itemglintrelight.client.ui.UiPainting;
 import celia.adwadg.itemglintrelight.config.ColorScrollMode;
@@ -16,6 +20,7 @@ import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.shaders.Uniform;
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.BufferUploader;
@@ -315,6 +320,7 @@ public final class HeldItemOutlineRenderer {
             // the off hand has to paint over the main hand exactly like the items themselves do.
             compositeHand(minecraft, mainTarget, occlusion, MAIN_HAND);
             compositeHand(minecraft, mainTarget, occlusion, OFF_HAND);
+            debugOcclusion(minecraft, mainTarget, occlusion);
         } catch (RuntimeException exception) {
             ItemGlintRelight.LOGGER.error("[HeldOutline] composite failed", exception);
         } finally {
@@ -329,6 +335,105 @@ public final class HeldItemOutlineRenderer {
             RenderSystem.disableBlend();
             RenderSystem.defaultBlendFunc();
         }
+    }
+
+    private static long nextOcclusionDebugMillis;
+
+    /**
+     * One line per second that pins down the first-person occlusion path: what the shader is told,
+     * how much each mask actually covers, and whether the arm batch projects sanely.
+     */
+    private static void debugOcclusion(Minecraft minecraft, RenderTarget mainTarget, float occlusion) {
+        long now = System.currentTimeMillis();
+        if (now < nextOcclusionDebugMillis) {
+            return;
+        }
+        nextOcclusionDebugMillis = now + 1000L;
+        ItemGlintRelight.LOGGER.info(
+                "[IGR-OCC] iris={} mode={} maskPx={} armPx={} armDepth={}..{} sceneMin={} armArea={} geoMain={} geoOff={}",
+                HeldItemOutlineCompat.isIrisShaderPackRendering(), occlusion, coverage(maskTarget),
+                coverage(armTarget), depthMin(armTarget), depthMax(armTarget), depthMin(sceneDepthTarget),
+                armArea(), !MAIN_HAND.geometry.isEmpty() || !MAIN_HAND.armGeometry.isEmpty(),
+                !OFF_HAND.geometry.isEmpty() || !OFF_HAND.armGeometry.isEmpty());
+    }
+
+    private static int coverage(TextureTarget target) {
+        GlStateManager._glBindFramebuffer(org.lwjgl.opengl.GL30.GL_READ_FRAMEBUFFER, target.frameBufferId);
+        ByteBuffer buffer = BufferUtils.createByteBuffer(target.width * target.height * 4);
+        GL11.glReadPixels(0, 0, target.width, target.height, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buffer);
+        int count = 0;
+        for (int index = 3; index < buffer.capacity(); index += 4) {
+            if ((buffer.get(index) & 0xFF) > 8) {
+                count++;
+            }
+        }
+        GlStateManager._glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, 0);
+        return count;
+    }
+
+    private static String depthMin(TextureTarget target) {
+        float value = extremeDepth(target, true);
+        return Float.isFinite(value) ? String.format(java.util.Locale.ROOT, "%.4f", value) : "n/a";
+    }
+
+    private static String depthMax(TextureTarget target) {
+        float value = extremeDepth(target, false);
+        return Float.isFinite(value) ? String.format(java.util.Locale.ROOT, "%.4f", value) : "n/a";
+    }
+
+    private static float extremeDepth(TextureTarget target, boolean min) {
+        GlStateManager._glBindFramebuffer(org.lwjgl.opengl.GL30.GL_READ_FRAMEBUFFER, target.frameBufferId);
+        FloatBuffer buffer = BufferUtils.createFloatBuffer(target.width * target.height);
+        GL11.glReadPixels(0, 0, target.width, target.height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, buffer);
+        GlStateManager._glBindFramebuffer(org.lwjgl.opengl.GL30.GL_FRAMEBUFFER, 0);
+        float value = min ? Float.POSITIVE_INFINITY : Float.NEGATIVE_INFINITY;
+        for (int index = 0; index < buffer.capacity(); index++) {
+            float sample = buffer.get(index);
+            value = min ? Math.min(value, sample) : Math.max(value, sample);
+        }
+        return value;
+    }
+
+    /** Projected area (0..1 of the screen) of the mirrored arm batch, 0 when nothing was recorded. */
+    private static String armArea() {
+        return String.format(java.util.Locale.ROOT, "%.3f", armArea(MAIN_HAND)) + "/"
+                + String.format(java.util.Locale.ROOT, "%.3f", armArea(OFF_HAND));
+    }
+
+    private static float armArea(HandCapture capture) {
+        float[] bounds = capture.armGeometry.bounds();
+        if (bounds == null) {
+            return 0.0F;
+        }
+        Matrix4f projection = capture.armProjection != null ? capture.armProjection
+                : capture.projection != null ? capture.projection : handGeometryProjection;
+        Matrix4f modelView = capture.armModelView != null ? capture.armModelView
+                : capture.modelView != null ? capture.modelView : handGeometryModelView;
+        if (projection == null || modelView == null) {
+            return -1.0F;
+        }
+        Matrix4f transform = new Matrix4f(projection).mul(modelView);
+        float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY;
+        float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
+        Vector4f clip = new Vector4f();
+        for (int index = 0; index < 8; index++) {
+            clip.set((index & 1) == 0 ? bounds[0] : bounds[3],
+                    (index & 2) == 0 ? bounds[1] : bounds[4],
+                    (index & 4) == 0 ? bounds[2] : bounds[5], 1.0F).mul(transform);
+            if (!Float.isFinite(clip.w) || clip.w == 0.0F) {
+                return -1.0F;
+            }
+            float x = clip.x / clip.w;
+            float y = clip.y / clip.w;
+            if (!Float.isFinite(x) || !Float.isFinite(y)) {
+                return -1.0F;
+            }
+            minX = Math.min(minX, x); minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+        }
+        float width = Math.min(Math.max(maxX, -1.0F), 1.0F) - Math.min(Math.max(minX, -1.0F), 1.0F);
+        float height = Math.min(Math.max(maxY, -1.0F), 1.0F) - Math.min(Math.max(minY, -1.0F), 1.0F);
+        return Math.max(0.0F, width / 2.0F) * Math.max(0.0F, height / 2.0F);
     }
 
     private static void compositeHand(Minecraft minecraft, RenderTarget mainTarget, float occlusion, HandCapture capture) {
