@@ -126,6 +126,30 @@ public final class HeldItemOutlineRenderer {
         return new ThirdPersonBufferSource(source, () -> hand.geometry);
     }
 
+    /**
+     * Wraps exactly one arm draw's buffer source.
+     *
+     * <p>There is deliberately no global "arm is being drawn" flag: a flag left behind by a missing
+     * or renamed arm entry point would route the item into the arm batch and empty the mask, which is
+     * how the previous attempt made the whole stroke disappear. The hand comes from the arm argument
+     * of the very call being wrapped.
+     */
+    public static MultiBufferSource wrapArmGeometry(MultiBufferSource source, HumanoidArm arm) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (source == null || arm == null || minecraft.player == null
+                || !handPassActive || !shouldRender(minecraft)) {
+            return source;
+        }
+        InteractionHand hand = minecraft.player.getMainArm() == arm
+                ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+        HandCapture capture = captureFor(hand);
+        if (capture.armProjection == null || capture.armModelView == null) {
+            capture.armProjection = new Matrix4f(RenderSystem.getProjectionMatrix());
+            capture.armModelView = new Matrix4f(RenderSystem.getModelViewMatrix());
+        }
+        return new ThirdPersonBufferSource(source, () -> capture.armGeometry);
+    }
+
     public static void beginHandPass() {
         handPassActive = true;
     }
@@ -494,8 +518,23 @@ public final class HeldItemOutlineRenderer {
     private static void renderArmMask(Minecraft minecraft) {
         armTarget.bindWrite(true);
         clear();
+        replayArmGeometry(MAIN_HAND);
+        replayArmGeometry(OFF_HAND);
         replayArms(minecraft, MAIN_HAND);
         replayArms(minecraft, OFF_HAND);
+    }
+
+    /** Replays the arm as it was actually drawn (Punchy owns its transforms). */
+    private static void replayArmGeometry(HandCapture capture) {
+        if (capture.armGeometry.isEmpty()) {
+            return;
+        }
+        Matrix4f projection = capture.armProjection != null ? capture.armProjection : handGeometryProjection;
+        Matrix4f modelView = capture.armModelView != null ? capture.armModelView : handGeometryModelView;
+        if (projection == null || modelView == null) {
+            return;
+        }
+        replayWith(projection, modelView, capture.armGeometry::draw);
     }
 
     private static void replayArms(Minecraft minecraft, HandCapture capture) {
@@ -1066,6 +1105,9 @@ public final class HeldItemOutlineRenderer {
         // Vertices of whatever was actually drawn for this hand this frame. Kept per hand so the two
         // hands never share a silhouette or a palette.
         private final ThirdPersonBufferSource.MaskSource geometry = new ThirdPersonBufferSource.MaskSource();
+        private final ThirdPersonBufferSource.MaskSource armGeometry = new ThirdPersonBufferSource.MaskSource();
+        private Matrix4f armProjection;
+        private Matrix4f armModelView;
         private ItemGlintRelightConfig config;
         private Matrix4f projection;
         private Matrix4f modelView;
@@ -1101,6 +1143,9 @@ public final class HeldItemOutlineRenderer {
             this.mapPose = null;
             this.arms.clear();
             this.geometry.clear();
+            this.armGeometry.clear();
+            this.armProjection = null;
+            this.armModelView = null;
         }
     }
 

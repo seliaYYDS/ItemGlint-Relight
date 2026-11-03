@@ -18,6 +18,7 @@ import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
@@ -39,6 +40,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Pseudo
 @Mixin(targets = "punchy.client.render.PunchyArmRenderer", remap = false)
 public abstract class PunchyArmRendererMixin {
+    @ModifyVariable(method = "renderArm", at = @At("HEAD"), argsOnly = true, index = 5, require = 0)
+    private static MultiBufferSource itemglintrelight$mirrorPunchyArmGeometry(MultiBufferSource source,
+            @com.llamalad7.mixinextras.sugar.Local(argsOnly = true) HumanoidArm arm) {
+        return HeldItemOutlineRenderer.wrapArmGeometry(source, arm);
+    }
+
     @Inject(method = "renderItemInHand", at = @At("HEAD"), require = 0)
     private static void itemglintrelight$beginPunchyHand(ItemInHandRenderer handRenderer, PlayerModel playerModel,
             LocalPlayer player, HumanoidArm arm, PoseStack poseStack, MultiBufferSource source, int light,

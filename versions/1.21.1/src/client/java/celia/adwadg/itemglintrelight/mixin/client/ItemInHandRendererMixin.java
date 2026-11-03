@@ -54,6 +54,12 @@ public abstract class ItemInHandRendererMixin {
         HeldItemOutlineRenderer.captureArm(poseStack, light, equipProgress, swingProgress, arm);
     }
 
+    @ModifyVariable(method = "renderPlayerArm", at = @At("HEAD"), argsOnly = true, index = 1, require = 0)
+    private MultiBufferSource itemglintrelight$mirrorArmGeometry(MultiBufferSource source,
+            @com.llamalad7.mixinextras.sugar.Local(argsOnly = true) HumanoidArm arm) {
+        return HeldItemOutlineRenderer.wrapArmGeometry(source, arm);
+    }
+
     @Inject(method = "renderMap", at = @At("HEAD"))
     private void itemglintrelight$captureMap(PoseStack poseStack, MultiBufferSource source, int light, ItemStack stack, CallbackInfo ci) {
         HeldItemOutlineRenderer.captureMap(poseStack, light, stack);
