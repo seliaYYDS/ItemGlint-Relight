@@ -20,6 +20,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.item.ArmorItem;
+import net.minecraft.world.item.ArmorMaterial;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
@@ -751,15 +752,28 @@ public final class ThirdPersonOutlineManager {
         return config;
     }
 
-    /** Key that separates armor materials (and the leggings texture) in texture-sampling mode. */
+    /**
+     * Key that names the armor textures a piece will actually be drawn with, matching what the 1.21.11
+     * reference gets from the equipable asset id.
+     *
+     * <p>Pieces of one set share those textures and therefore share one capture, one silhouette and
+     * one sampled palette; the leggings use the inner layer, so they legitimately split off.
+     */
     private static String armorAssetKey(ItemStack stack, EquipmentSlot slot) {
         if (!(stack.getItem() instanceof ArmorItem armorItem)) {
             return null;
         }
-        String material = armorItem.getMaterial().unwrapKey()
-                .map(key -> key.location().toString())
-                .orElseGet(() -> armorItem.getMaterial().toString());
-        return material + "|" + (slot == EquipmentSlot.LEGS);
+        boolean inner = slot == EquipmentSlot.LEGS;
+        StringBuilder key = new StringBuilder();
+        for (ArmorMaterial.Layer layer : armorItem.getMaterial().value().layers()) {
+            key.append(layer.texture(inner)).append('|');
+        }
+        if (key.length() == 0) {
+            key.append(armorItem.getMaterial().unwrapKey()
+                    .map(holder -> holder.location().toString())
+                    .orElseGet(() -> armorItem.getMaterial().value().toString()));
+        }
+        return key.toString();
     }
 
     /**
