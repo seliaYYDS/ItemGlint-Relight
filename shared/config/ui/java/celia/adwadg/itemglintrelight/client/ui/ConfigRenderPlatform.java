@@ -41,6 +41,16 @@ public interface ConfigRenderPlatform {
 
     void setPixelAbgr(NativeImage image, int x, int y, int abgr);
 
+    void enableScissor(GuiGraphics graphics, int x1, int y1, int x2, int y2);
+
+    void disableScissor(GuiGraphics graphics);
+
+    /** Draws the screen backdrop; newer versions do it in the default screen render, 1.21.1 does not. */
+    void renderBackground(net.minecraft.client.gui.screens.Screen screen, GuiGraphics graphics,
+                          int mouseX, int mouseY, float partialTick);
+
+    boolean isWindowIconified();
+
     void uploadTexture(Object texture);
 
     void releaseTexture(Object id);

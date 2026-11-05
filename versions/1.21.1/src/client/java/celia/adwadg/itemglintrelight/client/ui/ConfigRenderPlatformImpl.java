@@ -77,6 +77,29 @@ public final class ConfigRenderPlatformImpl implements ConfigRenderPlatform {
     }
 
 
+
+    @Override
+    public void enableScissor(GuiGraphics graphics, int x1, int y1, int x2, int y2) {
+        UiScissor.enable(graphics, x1, y1, x2, y2);
+    }
+
+    @Override
+    public void disableScissor(GuiGraphics graphics) {
+        UiScissor.disable(graphics);
+    }
+
+    @Override
+    public void renderBackground(net.minecraft.client.gui.screens.Screen screen, GuiGraphics graphics,
+                                 int mouseX, int mouseY, float partialTick) {
+        screen.renderBackground(graphics, mouseX, mouseY, partialTick);
+    }
+
+    @Override
+    public boolean isWindowIconified() {
+        return org.lwjgl.glfw.GLFW.glfwGetWindowAttrib(Minecraft.getInstance().getWindow().getWindow(),
+                org.lwjgl.glfw.GLFW.GLFW_ICONIFIED) == org.lwjgl.glfw.GLFW.GLFW_TRUE;
+    }
+
     @Override
     public void uploadTexture(Object texture) {
         ((net.minecraft.client.renderer.texture.DynamicTexture) texture).upload();

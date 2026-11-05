@@ -1,5 +1,6 @@
 package celia.adwadg.itemglintrelight.client;
 
+import celia.adwadg.itemglintrelight.client.ui.ConfigRenderPlatforms;
 import celia.adwadg.itemglintrelight.client.ui.ConfigUiBackground;
 import celia.adwadg.itemglintrelight.client.ui.SmoothTextRenderer;
 import celia.adwadg.itemglintrelight.client.ui.UiButton;
@@ -321,22 +322,23 @@ public final class ItemGlintRelightConfigScreen extends Screen {
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        if (minecraft.getWindow().isIconified()) {
+        if (ConfigRenderPlatforms.get().isWindowIconified()) {
             return;
         }
+        ConfigRenderPlatforms.get().renderBackground(this, graphics, mouseX, mouseY, partialTick);
         updateQuickPreviewLayout();
         ConfigUiBackground.renderBackdrop(graphics, width, height);
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(originX, originY);
-        graphics.pose().scale(uiScale, uiScale);
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, originX, originY);
+        ConfigRenderPlatforms.get().scale(graphics, uiScale, uiScale);
         ConfigUiBackground.renderPanel(graphics, left, top, right, bottom, sidebarRight);
-        graphics.enableScissor(left + 1, top + 1, right - 1, bottom - 1);
+        ConfigRenderPlatforms.get().enableScissor(graphics, left + 1, top + 1, right - 1, bottom - 1);
         float localMouseX = (mouseX - originX) / uiScale;
         float localMouseY = (mouseY - originY) / uiScale;
         mouseGlow.render(graphics, localMouseX, localMouseY);
         starParticles.update(localMouseX, localMouseY);
         starParticles.render(graphics, System.nanoTime());
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().disableScissor(graphics);
         renderStaticShell(graphics);
         int logicalMouseX = Math.round((mouseX - originX) / uiScale);
         int logicalMouseY = Math.round((mouseY - originY) / uiScale);
@@ -359,7 +361,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         if (ruleTargetPickerOpen) {
             renderRuleTargetPicker(graphics, logicalMouseX, logicalMouseY);
         }
-        graphics.pose().popMatrix();
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     @Override
@@ -723,9 +725,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
 
     private void renderPageContent(GuiGraphics graphics, int mouseX, int mouseY) {
         updatePageTransition();
-        graphics.enableScissor(sidebarRight + 12, top + RIGHT_CONTENT_TOP, right - 12, bottom - RIGHT_CONTENT_BOTTOM);
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(Math.round((1.0F - pageTransition) * 24.0F), 0.0F);
+        ConfigRenderPlatforms.get().enableScissor(graphics, sidebarRight + 12, top + RIGHT_CONTENT_TOP, right - 12, bottom - RIGHT_CONTENT_BOTTOM);
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, Math.round((1.0F - pageTransition) * 24.0F), 0.0F);
         if (page != Page.GENERAL) {
             if (page == Page.RENDER) {
                 layoutRenderControls();
@@ -762,8 +764,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             } else if (page == Page.RULES) {
                 renderRules(graphics, mouseX, mouseY);
             }
-            graphics.pose().popMatrix();
-            graphics.disableScissor();
+            ConfigRenderPlatforms.get().popPose(graphics);
+            ConfigRenderPlatforms.get().disableScissor(graphics);
             if (page == Page.RENDER) renderScrollBar(graphics);
             return;
         }
@@ -776,8 +778,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             armorToggle.render(graphics, font, mouseX, mouseY);
             armorStandsToggle.render(graphics, font, mouseX, mouseY);
         }
-        graphics.pose().popMatrix();
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().popPose(graphics);
+        ConfigRenderPlatforms.get().disableScissor(graphics);
     }
 
     private void updatePageTransition() {
@@ -807,10 +809,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         SmoothTextRenderer.drawCentered(graphics, font, plus, buttonRight - 12.0F,
                 buttonY + (24 - SmoothTextRenderer.height(plus, 1.05F, UiPalette.PALE_BLUE)) / 2.0F, 1.05F, UiPalette.PALE_BLUE);
         if (addRuleHover > 0.05F) {
-            graphics.enableScissor(buttonX, buttonY, buttonRight, buttonY + 24);
+            ConfigRenderPlatforms.get().enableScissor(graphics, buttonX, buttonY, buttonRight, buttonY + 24);
             SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.rules.add"), buttonX + 9, buttonY + 7, 0.62F,
                     UiMath.mix(UiPalette.MUTED_TEXT, UiPalette.TEXT, addRuleHover));
-            graphics.disableScissor();
+            ConfigRenderPlatforms.get().disableScissor(graphics);
         }
         List<DisplayRule> rules = DisplayRuleManager.rulesByPriority();
         if (rules.isEmpty()) {
@@ -823,7 +825,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int viewportBottom = bottom - 58;
         updateRuleListScroll(rules.size(), viewportBottom - viewportTop);
         int y = viewportTop - Math.round(ruleListScroll);
-        graphics.enableScissor(x, viewportTop, x + width, viewportBottom);
+        ConfigRenderPlatforms.get().enableScissor(graphics, x, viewportTop, x + width, viewportBottom);
         for (DisplayRule rule : rules) {
             UiShapes.roundedOutline(graphics, x, y, x + width, y + 38, 6, UiPalette.DIVIDER, UiPalette.SURFACE);
             String primary = rule.name().isBlank() ? (rule.target().isBlank() ? rule.nbtPath() : rule.target()) : rule.name();
@@ -837,7 +839,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             SmoothTextRenderer.draw(graphics, font, "x", x + width - 19, y + 14, 0.58F, UiPalette.MUTED_TEXT);
             y += 44;
         }
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().disableScissor(graphics);
         renderRuleListScrollBar(graphics, x, width, viewportTop, viewportBottom, rules.size());
     }
 
@@ -876,13 +878,13 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         float scale = 0.96F + ruleDialogAnimation * 0.04F;
         float centerX = x + width * 0.5F;
         float centerY = y + height * 0.5F;
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(centerX, centerY);
-        graphics.pose().scale(scale, scale);
-        graphics.pose().translate(-centerX, -centerY);
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, centerX, centerY);
+        ConfigRenderPlatforms.get().scale(graphics, scale, scale);
+        ConfigRenderPlatforms.get().translate(graphics, -centerX, -centerY);
         UiShapes.roundedOutline(graphics, x, y, x + width, y + height, 8, ruleDialogColor(UiPalette.DIVIDER), ruleDialogColor(0xEE07111F));
         drawRuleDialogText(graphics, "x", x + width - 22, y + 13, 0.82F, UiPalette.MUTED_TEXT);
-        graphics.enableScissor(x + 1, y + 1, x + width - 1, y + height - 1);
+        ConfigRenderPlatforms.get().enableScissor(graphics, x + 1, y + 1, x + width - 1, y + height - 1);
         int contentRowsHeight = 122 + (ruleMatchMode == RuleMatchMode.NBT_MATCH
                 ? primaryNbtMatchModeSelector.expandedHeight() + additionalNbtConditions.size() * 44 + additionalNbtMatchModeExpandedHeight() + 28 : 0);
         ruleDialogContentHeight = 95 + ruleModeDropdown.expandedHeight() + contentRowsHeight;
@@ -931,10 +933,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int outlineParametersY = priorityY + 44;
         renderRuleOutlineParameterField(graphics, x + 18, outlineParametersY, width - 36, mouseX, mouseY);
         ruleModeDropdown.render(graphics, font, mouseX, mouseY, ruleDialogAnimation);
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().disableScissor(graphics);
         renderRuleDialogScrollBar(graphics, x, contentViewportY, contentViewportBottom - contentViewportY);
         renderRuleAddButton(graphics, x, y, width, height, mouseX, mouseY);
-        graphics.pose().popMatrix();
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     private void renderRuleOutlineDialog(GuiGraphics graphics, int mouseX, int mouseY) {
@@ -946,7 +948,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int width = RULE_DIALOG_WIDTH;
         int height = 300;
         UiShapes.roundedOutline(graphics, x, y, x + width, y + height, 8, UiPalette.DIVIDER, 0xF207111F);
-        graphics.enableScissor(x + 1, y + 12, x + width - 1, y + height - 42);
+        ConfigRenderPlatforms.get().enableScissor(graphics, x + 1, y + 12, x + width - 1, y + height - 42);
         layoutRenderControls();
         outlineWidthSlider.render(graphics, font, mouseX, mouseY);
         outlineSoftnessSlider.render(graphics, font, mouseX, mouseY);
@@ -974,7 +976,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             outlineBloomSoftnessSlider.render(graphics, font, mouseX, mouseY);
             outlineBloomBlurPassesSlider.render(graphics, font, mouseX, mouseY);
         }
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().disableScissor(graphics);
         int buttonX = x + width - 106;
         int buttonY = y + height - 32;
         boolean hovered = UiMath.contains(buttonX, buttonY, 88, 24, mouseX, mouseY);
@@ -1226,10 +1228,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         float scale = 0.96F + presetDialogAnimation * 0.04F;
         float centerX = x + width * 0.5F;
         float centerY = y + height * 0.5F;
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(centerX, centerY);
-        graphics.pose().scale(scale, scale);
-        graphics.pose().translate(-centerX, -centerY);
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, centerX, centerY);
+        ConfigRenderPlatforms.get().scale(graphics, scale, scale);
+        ConfigRenderPlatforms.get().translate(graphics, -centerX, -centerY);
         UiShapes.roundedOutline(graphics, x, y, x + width, y + height, 8, presetDialogColor(UiPalette.DIVIDER), presetDialogColor(0xF207111F));
         boolean hovered = UiMath.contains(x + width - 32, y + 6, 24, 24, mouseX, mouseY);
         SmoothTextRenderer.draw(graphics, font, "x", x + width - 22, y + 13, 0.82F,
@@ -1252,7 +1254,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         String advancedTitle = tr("ui.itemglintrelight.rules.preset.advanced_enchantment");
         SmoothTextRenderer.draw(graphics, font, advancedTitle, x + 30, advancedCardY + 9, 0.76F, UiPalette.TEXT, presetDialogAnimation);
         SmoothTextRenderer.draw(graphics, font, "9 enchantment rules", x + 30, advancedCardY + 25, 0.56F, UiPalette.MUTED_TEXT, presetDialogAnimation);
-        graphics.pose().popMatrix();
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     private void applySimpleEnchantmentPreset() {
@@ -1852,7 +1854,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         ConfigUiBackground.renderCompanionPanel(graphics, QUICK_PREVIEW_X, top, panelRight, bottom, quickPreviewVisibility);
         boolean expanded = quickPreviewWidth > QUICK_PREVIEW_COLLAPSED_WIDTH + 8.0F && quickPreviewVisibility >= 0.01F;
         if (expanded) {
-            graphics.enableScissor(QUICK_PREVIEW_X + 1, top + 1, panelRight - 1, bottom - 1);
+            ConfigRenderPlatforms.get().enableScissor(graphics, QUICK_PREVIEW_X + 1, top + 1, panelRight - 1, bottom - 1);
             SmoothTextRenderer.draw(graphics, font, tr("ui.itemglintrelight.quick_preview"), QUICK_PREVIEW_X + 12, top + 12, 0.68F, quickPreviewColor(UiPalette.TEXT));
             graphics.fill(QUICK_PREVIEW_X + 12, top + 30, panelRight - 12, top + 31, quickPreviewColor(UiPalette.DIVIDER));
             int canvasLeft = QUICK_PREVIEW_X + 10;
@@ -1865,7 +1867,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             for (int y = canvasTop; y < canvasBottom; y += 12) {
                 graphics.fill(canvasLeft, y, canvasRight, y + 1, quickPreviewColor((y - canvasTop) % 48 == 0 ? 0x4A1D4664 : 0x261D4664));
             }
-            graphics.disableScissor();
+            ConfigRenderPlatforms.get().disableScissor(graphics);
             if (page != Page.PREVIEW) {
                 int previewLeft = Math.round(originX + canvasLeft * uiScale);
                 int previewTop = Math.round(originY + canvasTop * uiScale);
@@ -2011,10 +2013,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         float scale = 0.96F + itemPickerAnimation * 0.04F;
         float centerX = x + ITEM_PICKER_WIDTH * 0.5F;
         float centerY = y + ITEM_PICKER_HEIGHT * 0.5F;
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(centerX, centerY);
-        graphics.pose().scale(scale, scale);
-        graphics.pose().translate(-centerX, -centerY);
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, centerX, centerY);
+        ConfigRenderPlatforms.get().scale(graphics, scale, scale);
+        ConfigRenderPlatforms.get().translate(graphics, -centerX, -centerY);
         UiShapes.roundedOutline(graphics, x, y, rightEdge, bottomEdge, 8, pickerColor(UiPalette.DIVIDER), pickerColor(0xF20A1724));
         drawPickerText(graphics, tr("ui.itemglintrelight.preview.picker.title"), x + 12, y + 10, 0.76F, UiPalette.TEXT);
         String count = tr("ui.itemglintrelight.preview.picker.count", filteredItemChoices.size());
@@ -2036,7 +2038,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int visibleRows = itemPickerVisibleRows();
         int firstRow = (int) Math.floor(itemPickerScroll);
         int rowOffset = Math.round((itemPickerScroll - firstRow) * ITEM_PICKER_ROW_HEIGHT);
-        graphics.enableScissor(x + 2, rowsY, rightEdge - 2, bottomEdge - 4);
+        ConfigRenderPlatforms.get().enableScissor(graphics, x + 2, rowsY, rightEdge - 2, bottomEdge - 4);
         for (int row = 0; row <= visibleRows; row++) {
             int index = firstRow + row;
             if (index >= filteredItemChoices.size()) break;
@@ -2053,9 +2055,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             drawPickerText(graphics, truncate(choice.name(), 214, 0.70F), x + 38, rowY + 6, 0.70F, UiPalette.TEXT);
             drawPickerText(graphics, truncate(choice.id(), 300, 0.54F), x + 38, rowY + 19, 0.54F, UiPalette.MUTED_TEXT);
         }
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().disableScissor(graphics);
         renderItemPickerScrollBar(graphics, x, rowsY, visibleRows);
-        graphics.pose().popMatrix();
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     private boolean handleItemPickerClick(double mouseX, double mouseY, int button) {
@@ -2115,10 +2117,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         float scale = 0.96F + ruleTargetPickerAnimation * 0.04F;
         float centerX = x + ITEM_PICKER_WIDTH * 0.5F;
         float centerY = y + ITEM_PICKER_HEIGHT * 0.5F;
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(centerX, centerY);
-        graphics.pose().scale(scale, scale);
-        graphics.pose().translate(-centerX, -centerY);
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, centerX, centerY);
+        ConfigRenderPlatforms.get().scale(graphics, scale, scale);
+        ConfigRenderPlatforms.get().translate(graphics, -centerX, -centerY);
         UiShapes.roundedOutline(graphics, x, y, rightEdge, bottomEdge, 8, ruleTargetPickerColor(UiPalette.DIVIDER), ruleTargetPickerColor(0xF20A1724));
         drawRuleTargetPickerText(graphics, tr("ui.itemglintrelight.rules.target.title"), x + 12, y + 10, 0.76F, UiPalette.TEXT);
         String count = tr("ui.itemglintrelight.rules.target.count", filteredRuleTargetChoices.size());
@@ -2139,7 +2141,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int visibleRows = itemPickerVisibleRows();
         int firstRow = (int) Math.floor(ruleTargetPickerScroll);
         int rowOffset = Math.round((ruleTargetPickerScroll - firstRow) * ITEM_PICKER_ROW_HEIGHT);
-        graphics.enableScissor(x + 2, rowsY, rightEdge - 2, bottomEdge - 4);
+        ConfigRenderPlatforms.get().enableScissor(graphics, x + 2, rowsY, rightEdge - 2, bottomEdge - 4);
         for (int row = 0; row <= visibleRows; row++) {
             int index = firstRow + row;
             if (index >= filteredRuleTargetChoices.size()) break;
@@ -2157,9 +2159,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             drawRuleTargetPickerText(graphics, truncate(choice.label(), 214, 0.70F), x + 38, rowY + 6, 0.70F, UiPalette.TEXT);
             drawRuleTargetPickerText(graphics, truncate(choice.value(), 300, 0.54F), x + 38, rowY + 19, 0.54F, UiPalette.MUTED_TEXT);
         }
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().disableScissor(graphics);
         renderRuleTargetPickerScrollBar(graphics, x, rowsY, visibleRows);
-        graphics.pose().popMatrix();
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     private boolean handleRuleTargetPickerClick(double mouseX, double mouseY, int button) {
@@ -2420,9 +2422,9 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         }
         int width = Math.max(1, Math.round(SmoothTextRenderer.width(label, 0.76F, UiPalette.BRIGHT_BLUE) * fill));
         int height = SmoothTextRenderer.height(label, 0.76F, UiPalette.BRIGHT_BLUE);
-        graphics.enableScissor(x, y - 3, x + width, y + height + 3);
+        ConfigRenderPlatforms.get().enableScissor(graphics, x, y - 3, x + width, y + height + 3);
         SmoothTextRenderer.draw(graphics, font, label, x, y, 0.76F, UiPalette.BRIGHT_BLUE);
-        graphics.disableScissor();
+        ConfigRenderPlatforms.get().disableScissor(graphics);
     }
 
     private void updateNavigationAnimation() {
