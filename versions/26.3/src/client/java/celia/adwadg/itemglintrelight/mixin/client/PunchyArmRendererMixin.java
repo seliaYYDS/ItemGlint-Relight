@@ -12,6 +12,7 @@ import net.minecraft.client.renderer.FirstPersonHandsAndItemsRenderer;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.SubmitNodeStorage;
 import net.minecraft.client.renderer.entity.state.AvatarRenderState;
+import net.minecraft.client.renderer.state.level.FirstPersonHandsAndItemsRenderState;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.HumanoidArm;
@@ -111,6 +112,7 @@ public abstract class PunchyArmRendererMixin {
                                                          PoseStack poseStack, SubmitNodeCollector submitNodeCollector,
                                                          int combinedLight, Matrix4f rootWorld, ModelPart geoArm,
                                                          ModelPart geoItem, ModelPart geoGrip, float partialTicks,
+                                                         FirstPersonHandsAndItemsRenderState passState,
                                                          CallbackInfo ci) {
         InteractionHand hand = resolveHand(player, arm);
         if (hand == null) {
@@ -126,6 +128,7 @@ public abstract class PunchyArmRendererMixin {
                                                        PoseStack poseStack, SubmitNodeCollector submitNodeCollector,
                                                        int combinedLight, Matrix4f rootWorld, ModelPart geoArm,
                                                        ModelPart geoItem, ModelPart geoGrip, float partialTicks,
+                                                       FirstPersonHandsAndItemsRenderState passState,
                                                        CallbackInfo ci) {
         HeldItemOutlineRenderer.endExternalHandSubmission();
     }
