@@ -1,15 +1,12 @@
 package celia.adwadg.itemglintrelight.client.ui;
 
 import com.mojang.blaze3d.platform.NativeImage;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
 
 public final class UiMouseGlow {
     private static final int SIZE = 240;
-    private static final ResourceLocation TEXTURE_ID = ResourceLocation.fromNamespaceAndPath("itemglintrelight", "ui/mouse_glow");
-    private DynamicTexture texture;
+    private static final Object TEXTURE_ID = ConfigRenderPlatforms.get().textureId("itemglintrelight", "ui/mouse_glow");
+    private Object texture;
     private NativeImage image;
     private float x;
     private float y;
@@ -27,13 +24,13 @@ public final class UiMouseGlow {
         }
         x = UiMath.approach(x, targetX, delta, 8.0F);
         y = UiMath.approach(y, targetY, delta, 8.0F);
-        UiTextures.blit(graphics, TEXTURE_ID, Math.round(x - SIZE / 2.0F), Math.round(y - SIZE / 2.0F),
+        ConfigRenderPlatforms.get().blit(graphics, TEXTURE_ID, Math.round(x - SIZE / 2.0F), Math.round(y - SIZE / 2.0F),
                 0.0F, 0.0F, SIZE, SIZE, SIZE, SIZE);
     }
 
     public void close() {
         if (texture != null) {
-            Minecraft.getInstance().getTextureManager().release(TEXTURE_ID);
+            ConfigRenderPlatforms.get().releaseTexture(TEXTURE_ID);
             texture = null;
             image = null;
         }
@@ -44,8 +41,8 @@ public final class UiMouseGlow {
             return;
         }
         image = new NativeImage(SIZE, SIZE, false);
-        texture = new DynamicTexture(image);
-        Minecraft.getInstance().getTextureManager().register(TEXTURE_ID, texture);
+        texture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_mouse_glow", image);
+        ConfigRenderPlatforms.get().registerTexture(TEXTURE_ID, texture);
         updateTexture();
     }
 
@@ -69,10 +66,10 @@ public final class UiMouseGlow {
                 float colorMix = Math.max(0.0F, Math.min(1.0F, (dx - dy + 2.0F) / 4.0F));
                 int color = UiMath.mix(UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, colorMix);
                 int alpha = Math.round(intensity * 255.0F);
-                UiPainting.setPixel(image, pixelX, pixelY, alpha << 24 | color & 0x00FFFFFF);
+                ConfigRenderPlatforms.get().setPixel(image, pixelX, pixelY, alpha << 24 | color & 0x00FFFFFF);
             }
         }
-        texture.upload();
+        ConfigRenderPlatforms.get().uploadTexture(texture);
     }
 
     private float deltaSeconds() {
