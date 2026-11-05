@@ -18,6 +18,11 @@ public interface ConfigPlatform {
     /** Registry lookup of a data component type, or {@code null} when the id does not resolve. */
     DataComponentType<?> componentType(String id);
 
+    /** {@code ResourceKey} id as a string ({@code location()} in 1.21.1, {@code identifier()} later). */
+    String registryKeyId(Object key);
+
+    String registryKeyNamespace(Object key);
+
     void warn(String message, Object... arguments);
 
     void info(String message, Object... arguments);

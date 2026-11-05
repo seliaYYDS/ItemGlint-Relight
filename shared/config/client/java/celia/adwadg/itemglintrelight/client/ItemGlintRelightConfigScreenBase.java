@@ -15,10 +15,8 @@ import celia.adwadg.itemglintrelight.client.ui.UiSlider;
 import celia.adwadg.itemglintrelight.client.ui.UiShapes;
 import celia.adwadg.itemglintrelight.client.ui.UiTrailStarParticles;
 import celia.adwadg.itemglintrelight.client.ui.UiToggle;
-import celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer;
-import celia.adwadg.itemglintrelight.client.render.ItemPreviewRenderState;
-import celia.adwadg.itemglintrelight.mixin.client.GuiGraphicsAccessor;
 import celia.adwadg.itemglintrelight.config.RenderQuality;
+import celia.adwadg.itemglintrelight.config.platform.ConfigPlatforms;
 import celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig;
 import celia.adwadg.itemglintrelight.config.DisplayRule;
 import celia.adwadg.itemglintrelight.config.DisplayRuleManager;
@@ -34,20 +32,15 @@ import java.util.Locale;
 import java.util.Map;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.navigation.ScreenRectangle;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.input.CharacterEvent;
-import net.minecraft.client.input.KeyEvent;
-import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import org.lwjgl.glfw.GLFW;
 
-public final class ItemGlintRelightConfigScreen extends Screen {
+public class ItemGlintRelightConfigScreenBase extends Screen {
     private static final int ITEM_PICKER_X = 156;
     private static final int ITEM_PICKER_Y = 36;
     private static final int ITEM_PICKER_WIDTH = 472;
@@ -211,7 +204,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private final float[] additionalNbtMatchModeOptionHovers = new float[NbtMatchMode.values().length];
     private long lastNbtMatchModeFrame;
 
-    public ItemGlintRelightConfigScreen(Screen parent) {
+    public ItemGlintRelightConfigScreenBase(Screen parent) {
         super(Component.literal("ItemGlintRelight"));
         this.parent = parent;
     }
@@ -364,18 +357,17 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         ConfigRenderPlatforms.get().popPose(graphics);
     }
 
-    @Override
-    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        double mouseX = (event.x() - originX) / uiScale;
-        double mouseY = (event.y() - originY) / uiScale;
+    protected boolean handleMouseClicked(double screenMouseX, double screenMouseY, int screenButton) {
+        double mouseX = (screenMouseX - originX) / uiScale;
+        double mouseY = (screenMouseY - originY) / uiScale;
         if (itemPickerOpen) {
-            return handleItemPickerClick(mouseX, mouseY, event.button());
+            return handleItemPickerClick(mouseX, mouseY, screenButton);
         }
         if (ruleTargetPickerOpen) {
-            return handleRuleTargetPickerClick(mouseX, mouseY, event.button());
+            return handleRuleTargetPickerClick(mouseX, mouseY, screenButton);
         }
         if (presetDialogOpen) {
-            if (event.button() == 0) {
+            if (screenButton == 0) {
                 if (UiMath.contains(RULE_DIALOG_X + 18, RULE_DIALOG_Y + 46, RULE_DIALOG_WIDTH - 36, 42, mouseX, mouseY)) {
                     applySimpleEnchantmentPreset();
                 }
@@ -390,18 +382,18 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return true;
         }
         if (ruleOutlineDialogOpen) {
-            return handleRuleOutlineDialogClick(mouseX, mouseY, event.button());
+            return handleRuleOutlineDialogClick(mouseX, mouseY, screenButton);
         }
         if (ruleDialogOpen) {
-            return handleRuleDialogClick(mouseX, mouseY, event.button());
+            return handleRuleDialogClick(mouseX, mouseY, screenButton);
         }
         if (isQuickPreviewToggle(mouseX, mouseY)) {
             quickPreviewCollapsed = !quickPreviewCollapsed;
             return true;
         }
         if (isInQuickPreviewCanvas(mouseX, mouseY)) {
-            if (event.button() == 0) draggingQuickPreview = true;
-            if (event.button() == 1) rollingQuickPreview = true;
+            if (screenButton == 0) draggingQuickPreview = true;
+            if (screenButton == 1) rollingQuickPreview = true;
             return true;
         }
         Page nextPage = pageAt(mouseX, mouseY);
@@ -412,7 +404,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             page = nextPage;
             return true;
         }
-        if (saveButton.mouseClicked(mouseX, mouseY, event.button())) {
+        if (saveButton.mouseClicked(mouseX, mouseY, screenButton)) {
             return true;
         }
         if (page == Page.RULES && isAddRuleButton(mouseX, mouseY)) {
@@ -426,128 +418,126 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return true;
         }
         if (page == Page.RULES && handleRuleEntryClick(mouseX, mouseY)) return true;
-        if (page == Page.GENERAL && outlineToggle.mouseClicked(mouseX, mouseY, event.button())) {
+        if (page == Page.GENERAL && outlineToggle.mouseClicked(mouseX, mouseY, screenButton)) {
             return true;
         }
         if (page == Page.GENERAL && model.draft().outlineEnabled()) {
-            if (mainHandToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (offHandToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (thirdPersonToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (guiItemsToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (armorToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (armorStandsToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (mainHandToggle.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (offHandToggle.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (thirdPersonToggle.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (guiItemsToggle.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (armorToggle.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (armorStandsToggle.mouseClicked(mouseX, mouseY, screenButton)) return true;
         }
         if (page == Page.PREVIEW && isPreviewItemLabel(mouseX, mouseY)) {
             openItemPicker();
             return true;
         }
         if (page == Page.PREVIEW && isInPreviewCanvas(mouseX, mouseY)) {
-            if (event.button() == 0) draggingPreview = true;
-            if (event.button() == 2) panningPreview = true;
-            if (event.button() == 1) rollingPreview = true;
-            return event.button() == 0 || event.button() == 1 || event.button() == 2;
+            if (screenButton == 0) draggingPreview = true;
+            if (screenButton == 2) panningPreview = true;
+            if (screenButton == 1) rollingPreview = true;
+            return screenButton == 0 || screenButton == 1 || screenButton == 2;
         }
         if (page == Page.RENDER) {
-            if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineRenderModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (model.draft().outlineThirdPerson() && thirdPersonOutlineQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (model.draft().outlineGuiItems() && guiOutlineQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesColorAnimation() && outlineColorScrollModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (model.draft().outlineBloomEnabled() && outlineBloomQualityDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomToggle.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineWidthSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineSoftnessSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineThresholdSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineOpacitySlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesColorAnimation() && outlineColorScrollSpeedSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesPlanarColorScroll() && outlineColorScrollControl.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesOutlineColorScroll() && outlineColorLengthSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesTextureSampling() && outlineSampleSizeSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (usesTextureSampling() && outlineSampleColorCountSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-            if (outlineGlowIntensitySlider.mouseClicked(mouseX, mouseY, event.button())) return true;
+            if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineRenderModeDropdown.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineQualityDropdown.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (model.draft().outlineThirdPerson() && thirdPersonOutlineQualityDropdown.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (model.draft().outlineGuiItems() && guiOutlineQualityDropdown.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesColorAnimation() && outlineColorScrollModeDropdown.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (model.draft().outlineBloomEnabled() && outlineBloomQualityDropdown.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomToggle.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineWidthSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineSoftnessSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineThresholdSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineOpacitySlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesColorAnimation() && outlineColorScrollSpeedSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesPlanarColorScroll() && outlineColorScrollControl.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesOutlineColorScroll() && outlineColorLengthSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesTextureSampling() && outlineSampleSizeSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (usesTextureSampling() && outlineSampleColorCountSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+            if (outlineGlowIntensitySlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
             if (model.draft().outlineBloomEnabled()) {
-                if (outlineBloomRadiusSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-                if (outlineBloomIntensitySlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-                if (outlineBloomSoftnessSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
-                if (outlineBloomBlurPassesSlider.mouseClicked(mouseX, mouseY, event.button())) return true;
+                if (outlineBloomRadiusSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+                if (outlineBloomIntensitySlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+                if (outlineBloomSoftnessSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
+                if (outlineBloomBlurPassesSlider.mouseClicked(mouseX, mouseY, screenButton)) return true;
             }
         }
         return mouseX >= left && mouseX < right && mouseY >= top && mouseY < bottom;
     }
 
-    @Override
-    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        double mouseX = (event.x() - originX) / uiScale;
-        double mouseY = (event.y() - originY) / uiScale;
+    protected boolean handleMouseDragged(double screenMouseX, double screenMouseY, int screenButton, double dragX, double dragY) {
+        double mouseX = (screenMouseX - originX) / uiScale;
+        double mouseY = (screenMouseY - originY) / uiScale;
         if (ruleOutlineDialogOpen) {
-            if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineWidthSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineSoftnessSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineThresholdSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineOpacitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesColorAnimation() && outlineColorScrollSpeedSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesPlanarColorScroll() && outlineColorScrollControl.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesOutlineColorScroll() && outlineColorLengthSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesTextureSampling() && outlineSampleSizeSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesTextureSampling() && outlineSampleColorCountSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineGlowIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomRadiusSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomSoftnessSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
+            if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineWidthSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineSoftnessSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineThresholdSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineOpacitySlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesColorAnimation() && outlineColorScrollSpeedSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesPlanarColorScroll() && outlineColorScrollControl.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesOutlineColorScroll() && outlineColorLengthSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesTextureSampling() && outlineSampleSizeSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesTextureSampling() && outlineSampleColorCountSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineGlowIntensitySlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomRadiusSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomIntensitySlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomSoftnessSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
         }
-        if (draggingQuickPreview && event.button() == 0) {
+        if (draggingQuickPreview && screenButton == 0) {
             quickPreviewYaw += (float) dragX / uiScale * 0.8F;
             quickPreviewPitch = Math.max(-89.0F, Math.min(89.0F, quickPreviewPitch + (float) dragY / uiScale * 0.8F));
             return true;
         }
-        if (rollingQuickPreview && event.button() == 1) {
+        if (rollingQuickPreview && screenButton == 1) {
             quickPreviewRoll += (float) dragX / uiScale * 0.8F;
             return true;
         }
         if (page == Page.RENDER) {
-            if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineWidthSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineSoftnessSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineThresholdSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineOpacitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineColorScrollSpeedSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesPlanarColorScroll() && outlineColorScrollControl.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (usesOutlineColorScroll() && outlineColorLengthSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineSampleSizeSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineSampleColorCountSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineGlowIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomRadiusSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomIntensitySlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomSoftnessSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
-            if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
+            if (usesPrimaryColor() && outlinePrimaryColorPicker.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesSecondaryColor() && outlineSecondaryColorPicker.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineWidthSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineSoftnessSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineThresholdSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineOpacitySlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineColorScrollSpeedSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesPlanarColorScroll() && outlineColorScrollControl.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (usesOutlineColorScroll() && outlineColorLengthSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineSampleSizeSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineSampleColorCountSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineGlowIntensitySlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomRadiusSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomIntensitySlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomSoftnessSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
+            if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, screenButton)) return true;
         }
         if (page == Page.PREVIEW) {
-            if (draggingPreview && event.button() == 0) {
+            if (draggingPreview && screenButton == 0) {
                 previewYaw += (float) dragX / uiScale * 0.8F;
                 previewPitch = Math.max(-89.0F, Math.min(89.0F, previewPitch + (float) dragY / uiScale * 0.8F));
                 return true;
             }
-            if (panningPreview && event.button() == 2) {
+            if (panningPreview && screenButton == 2) {
                 previewOffsetX += (float) dragX / uiScale;
                 previewOffsetY += (float) dragY / uiScale;
                 return true;
             }
-            if (rollingPreview && event.button() == 1) {
+            if (rollingPreview && screenButton == 1) {
                 previewRoll += (float) dragX / uiScale * 0.8F;
                 return true;
             }
         }
-        return super.mouseDragged(event, dragX, dragY);
+        return false;
     }
 
-    @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
+    protected boolean handleMouseReleased(double screenMouseX, double screenMouseY, int screenButton) {
         draggingPreview = false;
         panningPreview = false;
         rollingPreview = false;
@@ -569,7 +559,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         outlineBloomBlurPassesSlider.stopDragging();
         outlinePrimaryColorPicker.stopDragging();
         outlineSecondaryColorPicker.stopDragging();
-        return super.mouseReleased(event);
+        return false;
     }
 
     @Override
@@ -615,30 +605,29 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
-    @Override
-    public boolean keyPressed(KeyEvent event) {
+    protected boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
         if (presetDialogOpen) {
-            if (event.key() == GLFW.GLFW_KEY_ESCAPE) presetDialogOpen = false;
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) presetDialogOpen = false;
             return true;
         }
         if (ruleTargetPickerOpen) {
-            return handleRuleTargetPickerKey(event);
+            return handleRuleTargetPickerKey(keyCode);
         }
         if (ruleOutlineDialogOpen) {
-            if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+            if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
                 closeRuleOutlineDialog(false);
             }
             return true;
         }
         if (ruleDialogOpen) {
-            return handleRuleDialogKey(event);
+            return handleRuleDialogKey(keyCode);
         }
-        if (!itemPickerOpen) return super.keyPressed(event);
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (!itemPickerOpen) return false;
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             closeItemPicker();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_BACKSPACE && !itemSearch.isEmpty()) {
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !itemSearch.isEmpty()) {
             if (itemSearchCursor > 0) {
                 itemSearch = itemSearch.substring(0, itemSearchCursor - 1) + itemSearch.substring(itemSearchCursor);
                 itemSearchCursor--;
@@ -646,45 +635,48 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             filterItemChoices();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_LEFT) {
+        if (keyCode == GLFW.GLFW_KEY_LEFT) {
             itemSearchCursor = Math.max(0, itemSearchCursor - 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_RIGHT) {
+        if (keyCode == GLFW.GLFW_KEY_RIGHT) {
             itemSearchCursor = Math.min(itemSearch.length(), itemSearchCursor + 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_ENTER && !filteredItemChoices.isEmpty()) {
+        if (keyCode == GLFW.GLFW_KEY_ENTER && !filteredItemChoices.isEmpty()) {
             selectPreviewItem(filteredItemChoices.get(0));
             return true;
         }
         return true;
     }
 
-    @Override
-    public boolean charTyped(CharacterEvent event) {
+    private static boolean isAllowedChatCharacter(char codePoint) {
+        return codePoint != 167 && codePoint >= ' ' && codePoint != 127;
+    }
+
+    protected boolean handleCharTyped(char codePoint, int modifiers) {
         if (ruleOutlineDialogOpen) {
             return true;
         }
         if (ruleTargetPickerOpen) {
-            if (event.isAllowedChatCharacter() && ruleTargetSearch.length() < 96) {
-                ruleTargetSearch = ruleTargetSearch.substring(0, ruleTargetSearchCursor) + event.codepointAsString()
+            if (isAllowedChatCharacter(codePoint) && ruleTargetSearch.length() < 96) {
+                ruleTargetSearch = ruleTargetSearch.substring(0, ruleTargetSearchCursor) + String.valueOf(codePoint)
                         + ruleTargetSearch.substring(ruleTargetSearchCursor);
-                ruleTargetSearchCursor += event.codepointAsString().length();
+                ruleTargetSearchCursor += String.valueOf(codePoint).length();
                 filterRuleTargetChoices();
             }
             return true;
         }
         if (ruleDialogOpen) {
-            if (event.isAllowedChatCharacter()) {
-                appendRuleInput(event.codepointAsString());
+            if (isAllowedChatCharacter(codePoint)) {
+                appendRuleInput(String.valueOf(codePoint));
             }
             return true;
         }
-        if (!itemPickerOpen) return super.charTyped(event);
-        if (event.isAllowedChatCharacter() && itemSearch.length() < 96) {
-            itemSearch = itemSearch.substring(0, itemSearchCursor) + event.codepointAsString() + itemSearch.substring(itemSearchCursor);
-            itemSearchCursor += event.codepointAsString().length();
+        if (!itemPickerOpen) return false;
+        if (isAllowedChatCharacter(codePoint) && itemSearch.length() < 96) {
+            itemSearch = itemSearch.substring(0, itemSearchCursor) + String.valueOf(codePoint) + itemSearch.substring(itemSearchCursor);
+            itemSearchCursor += String.valueOf(codePoint).length();
             filterItemChoices();
         }
         return true;
@@ -692,7 +684,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
 
     @Override
     public void onClose() {
-        HeldItemOutlineRenderer.clearQueuedPreview();
+        ConfigRenderPlatforms.get().clearPreview();
         if (mouseGlow != null) {
             mouseGlow.close();
         }
@@ -1590,25 +1582,25 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         return Math.round(NbtMatchMode.values().length * 22.0F * nbtMatchModeExpansion);
     }
 
-    private boolean handleRuleDialogKey(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+    private boolean handleRuleDialogKey(int keyCode) {
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             ruleDialogOpen = false;
             ruleInputFocus = RuleInputFocus.NONE;
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_ENTER) {
+        if (keyCode == GLFW.GLFW_KEY_ENTER) {
             ruleInputFocus = RuleInputFocus.NONE;
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_LEFT) {
+        if (keyCode == GLFW.GLFW_KEY_LEFT) {
             ruleInputCursor = Math.max(0, ruleInputCursor - 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_RIGHT) {
+        if (keyCode == GLFW.GLFW_KEY_RIGHT) {
             ruleInputCursor = Math.min(ruleInputValue().length(), ruleInputCursor + 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE) {
             deleteRuleInputCharacter();
             return true;
         }
@@ -1815,10 +1807,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         int previewTop = Math.round(originY + PREVIEW_Y * uiScale);
         int previewRight = Math.round(originX + (PREVIEW_X + PREVIEW_WIDTH) * uiScale);
         int previewBottom = Math.round(originY + (PREVIEW_Y + PREVIEW_HEIGHT) * uiScale);
-        ((GuiGraphicsAccessor) graphics).itemglintrelight$getGuiRenderState().submitPicturesInPictureState(
-                new ItemPreviewRenderState(previewItem.copy(), previewLeft, previewTop, previewRight, previewBottom,
-                        previewZoom * uiScale, previewPitch, previewYaw, previewRoll, previewOffsetX, previewOffsetY, previewZoom / 72.0F, model.draft().copy(),
-                        new ScreenRectangle(previewLeft, previewTop, previewRight - previewLeft, previewBottom - previewTop)));
+        ConfigRenderPlatforms.get().renderPreview(graphics, previewItem, model.draft(),
+                previewLeft, previewTop, previewRight, previewBottom,
+                PREVIEW_X, PREVIEW_Y, PREVIEW_WIDTH, PREVIEW_HEIGHT,
+                previewZoom, previewPitch, previewYaw, previewRoll, previewOffsetX, previewOffsetY, uiScale);
     }
 
     private void renderRuleOutlineParameterField(GuiGraphics graphics, int x, int y, int width, int mouseX, int mouseY) {
@@ -1873,11 +1865,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
                 int previewTop = Math.round(originY + canvasTop * uiScale);
                 int previewRight = Math.round(originX + canvasRight * uiScale);
                 int previewBottom = Math.round(originY + canvasBottom * uiScale);
-                ((GuiGraphicsAccessor) graphics).itemglintrelight$getGuiRenderState().submitPicturesInPictureState(
-                        new ItemPreviewRenderState(quickPreviewItem.copy(), previewLeft, previewTop, previewRight, previewBottom,
-                                quickPreviewZoom * 16.0F * uiScale, quickPreviewPitch, quickPreviewYaw, quickPreviewRoll, 0.0F, 0.0F,
-                                quickPreviewZoom * 16.0F / 72.0F, model.draft().copy(),
-                                new ScreenRectangle(previewLeft, previewTop, previewRight - previewLeft, previewBottom - previewTop)));
+                ConfigRenderPlatforms.get().renderPreview(graphics, quickPreviewItem, model.draft(),
+                        previewLeft, previewTop, previewRight, previewBottom,
+                        canvasLeft, canvasTop, canvasRight - canvasLeft, canvasBottom - canvasTop,
+                        quickPreviewZoom * 16.0F, quickPreviewPitch, quickPreviewYaw, quickPreviewRoll, 0.0F, 0.0F, uiScale);
             }
         }
         int toggleLeft = panelRight - 22;
@@ -1930,13 +1921,14 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private void rebuildItemChoices() {
         allItemChoices.clear();
         for (var entry : BuiltInRegistries.ITEM.entrySet()) {
-            Identifier id = entry.getKey().identifier();
+            String id = ConfigPlatforms.get().registryKeyId(entry.getKey());
+            String namespace = ConfigPlatforms.get().registryKeyNamespace(entry.getKey());
             if (entry.getValue() == Items.AIR) continue;
             ItemStack stack = new ItemStack(entry.getValue());
             String name = stack.getHoverName().getString();
-            String modName = FabricLoader.getInstance().getModContainer(id.getNamespace())
-                    .map(container -> container.getMetadata().getName()).orElse(id.getNamespace());
-            allItemChoices.add(new ItemChoice(stack, name, id.toString(), id.getNamespace(), modName));
+            String modName = FabricLoader.getInstance().getModContainer(namespace)
+                    .map(container -> container.getMetadata().getName()).orElse(namespace);
+            allItemChoices.add(new ItemChoice(stack, name, id, namespace, modName));
         }
         allItemChoices.sort(Comparator.comparing(ItemChoice::name, String.CASE_INSENSITIVE_ORDER)
                 .thenComparing(ItemChoice::id, String.CASE_INSENSITIVE_ORDER));
@@ -1946,10 +1938,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     private void rebuildRuleTargetChoices() {
         allRuleTargetChoices.clear();
         for (var entry : BuiltInRegistries.ITEM.entrySet()) {
-            Identifier id = entry.getKey().identifier();
+            String id = ConfigPlatforms.get().registryKeyId(entry.getKey());
             if (entry.getValue() == Items.AIR) continue;
             ItemStack stack = new ItemStack(entry.getValue());
-            allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.ITEM, stack, stack.getHoverName().getString(), id.toString(), id.toString()));
+            allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.ITEM, stack, stack.getHoverName().getString(), id, id));
         }
         FabricLoader.getInstance().getAllMods().forEach(container -> {
             String id = container.getMetadata().getId();
@@ -1957,7 +1949,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         });
         if (minecraft != null && minecraft.level != null) {
             minecraft.level.registryAccess().lookupOrThrow(Registries.ITEM).listTags().forEach(tag -> {
-                Identifier id = tag.key().location();
+                String id = ConfigPlatforms.get().registryKeyId(tag.key());
                 allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.TAG, ItemStack.EMPTY,
                         tr("ui.itemglintrelight.rules.target.tag"), "#" + id, id.toString()));
             });
@@ -2183,12 +2175,12 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         return true;
     }
 
-    private boolean handleRuleTargetPickerKey(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+    private boolean handleRuleTargetPickerKey(int keyCode) {
+        if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             closeRuleTargetPicker();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_BACKSPACE && !ruleTargetSearch.isEmpty()) {
+        if (keyCode == GLFW.GLFW_KEY_BACKSPACE && !ruleTargetSearch.isEmpty()) {
             if (ruleTargetSearchCursor > 0) {
                 ruleTargetSearch = ruleTargetSearch.substring(0, ruleTargetSearchCursor - 1) + ruleTargetSearch.substring(ruleTargetSearchCursor);
                 ruleTargetSearchCursor--;
@@ -2196,15 +2188,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             filterRuleTargetChoices();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_LEFT) {
+        if (keyCode == GLFW.GLFW_KEY_LEFT) {
             ruleTargetSearchCursor = Math.max(0, ruleTargetSearchCursor - 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_RIGHT) {
+        if (keyCode == GLFW.GLFW_KEY_RIGHT) {
             ruleTargetSearchCursor = Math.min(ruleTargetSearch.length(), ruleTargetSearchCursor + 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_ENTER && !filteredRuleTargetChoices.isEmpty()) {
+        if (keyCode == GLFW.GLFW_KEY_ENTER && !filteredRuleTargetChoices.isEmpty()) {
             ruleItemId = filteredRuleTargetChoices.get(0).value();
             focusRuleInput(RuleInputFocus.ITEM);
             closeRuleTargetPicker();

@@ -21,6 +21,16 @@ public final class IdentifierConfigPlatform implements ConfigPlatform {
     }
 
     @Override
+    public String registryKeyId(Object key) {
+        return ((net.minecraft.resources.ResourceKey<?>) key).identifier().toString();
+    }
+
+    @Override
+    public String registryKeyNamespace(Object key) {
+        return ((net.minecraft.resources.ResourceKey<?>) key).identifier().getNamespace();
+    }
+
+    @Override
     public void warn(String message, Object... arguments) {
         ItemGlintRelight.LOGGER.warn(message, arguments);
     }

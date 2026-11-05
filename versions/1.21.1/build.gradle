@@ -49,6 +49,8 @@ sourceSets {
     client {
         // Shared configuration widgets that are byte-identical across the 1.21.x generation.
         java.srcDir("../../shared/config/ui/java")
+        // Shared configuration screen base (input signature is supplied by this version's subclass).
+        java.srcDir("../../shared/config/client/java")
     }
 }
 

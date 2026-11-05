@@ -80,6 +80,27 @@ public final class ConfigRenderPlatformImpl implements ConfigRenderPlatform {
 
 
 
+
+    @Override
+    public void renderPreview(GuiGraphics graphics, net.minecraft.world.item.ItemStack stack,
+                              celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig config,
+                              int left, int top, int right, int bottom,
+                              int layoutLeft, int layoutTop, int layoutWidth, int layoutHeight,
+                              float zoom, float pitch, float yaw, float roll, float offsetX, float offsetY,
+                              float uiScale) {
+        ((celia.adwadg.itemglintrelight.mixin.client.GuiGraphicsAccessor) graphics)
+                .itemglintrelight$getGuiRenderState().submitPicturesInPictureState(
+                new celia.adwadg.itemglintrelight.client.render.ItemPreviewRenderState(
+                        stack.copy(), left, top, right, bottom, zoom * uiScale, pitch, yaw, roll,
+                        offsetX, offsetY, zoom / 72.0F, config.copy(),
+                        new net.minecraft.client.gui.navigation.ScreenRectangle(left, top, right - left, bottom - top)));
+    }
+
+    @Override
+    public void clearPreview() {
+        celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer.clearQueuedPreview();
+    }
+
     @Override
     public void enableScissor(GuiGraphics graphics, int x1, int y1, int x2, int y2) {
         graphics.enableScissor(x1, y1, x2, y2);

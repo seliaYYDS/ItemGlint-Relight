@@ -51,6 +51,22 @@ public interface ConfigRenderPlatform {
 
     boolean isWindowIconified();
 
+    /**
+     * Draws the item preview.
+     *
+     * <p>Newer versions submit a render state in absolute screen coordinates; 1.21.1 renders
+     * immediately in layout coordinates (inside the translated/scaled pose), so both rectangles and
+     * the UI scale are passed.
+     */
+    void renderPreview(GuiGraphics graphics, net.minecraft.world.item.ItemStack stack,
+                       celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig config,
+                       int left, int top, int right, int bottom,
+                       int layoutLeft, int layoutTop, int layoutWidth, int layoutHeight,
+                       float zoom, float pitch, float yaw, float roll, float offsetX, float offsetY,
+                       float uiScale);
+
+    void clearPreview();
+
     void uploadTexture(Object texture);
 
     void releaseTexture(Object id);
