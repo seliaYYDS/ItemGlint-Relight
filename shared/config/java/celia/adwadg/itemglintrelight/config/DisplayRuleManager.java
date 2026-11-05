@@ -1,6 +1,6 @@
 package celia.adwadg.itemglintrelight.config;
 
-import celia.adwadg.itemglintrelight.ItemGlintRelight;
+import celia.adwadg.itemglintrelight.config.platform.ConfigPlatforms;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import java.io.IOException;
@@ -13,10 +13,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.core.component.DataComponentType;
-import net.minecraft.tags.TagKey;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
 
@@ -97,7 +94,7 @@ public final class DisplayRuleManager {
         if (rule.target().startsWith("@")) return itemId.startsWith(rule.target().substring(1) + ":");
         if (rule.target().startsWith("#")) {
             try {
-                return stack.is(TagKey.create(Registries.ITEM, ResourceLocation.parse(rule.target().substring(1))));
+                return ConfigPlatforms.get().isItemTag(stack, rule.target().substring(1));
             } catch (RuntimeException ignored) {
                 return false;
             }
@@ -146,7 +143,7 @@ public final class DisplayRuleManager {
 
     private static DataComponentType<?> lookupComponent(String id) {
         try {
-            return BuiltInRegistries.DATA_COMPONENT_TYPE.get(ResourceLocation.parse(id));
+            return ConfigPlatforms.get().componentType(id);
         } catch (RuntimeException ignored) {
             return null;
         }
@@ -156,7 +153,7 @@ public final class DisplayRuleManager {
         long now = System.currentTimeMillis();
         if (now < nextComponentPathDiagnosticMillis) return;
         nextComponentPathDiagnosticMillis = now + 5000L;
-        ItemGlintRelight.LOGGER.warn("[DisplayRule] no data component matches NBT path '{}'; the field takes a component id such as minecraft:enchantments",
+        ConfigPlatforms.get().warn("[DisplayRule] no data component matches NBT path '{}'; the field takes a component id such as minecraft:enchantments",
                 path);
     }
 
@@ -220,7 +217,7 @@ public final class DisplayRuleManager {
         long now = System.currentTimeMillis();
         if (now < nextMatchDiagnosticMillis) return;
         nextMatchDiagnosticMillis = now + 250L;
-        ItemGlintRelight.LOGGER.info("[DisplayRule] matched item={} rule={} mode={} priority={} custom={}",
+        ConfigPlatforms.get().info("[DisplayRule] matched item={} rule={} mode={} priority={} custom={}",
                 BuiltInRegistries.ITEM.getKey(stack.getItem()), rule.id(), rule.mode(), rule.priority(), rule.outlineConfig() != null);
     }
 

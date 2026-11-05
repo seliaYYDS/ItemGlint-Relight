@@ -41,6 +41,8 @@ loom {
 sourceSets {
     main {
         java.srcDir("../../common/src/main/java")
+        // Shared, version-neutral configuration code (one copy for every supported version).
+        java.srcDir("../../shared/config/java")
         resources.srcDir("../../common/src/main/resources")
     }
     client {

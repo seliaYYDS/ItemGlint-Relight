@@ -38,6 +38,15 @@ loom {
     }
 }
 
+sourceSets {
+    main {
+        // Shared, version-neutral configuration code (one copy for every supported version).
+        java.srcDir("../../shared/config/java")
+        // 1.21.1 has no Identifier; its ResourceLocation platform implementation is used instead.
+        java.exclude("celia/adwadg/itemglintrelight/config/platform/IdentifierConfigPlatform.java")
+    }
+}
+
 // Source sets come from Loom's splitEnvironmentSourceSets():
 // main -> src/main/{java,resources}, client -> src/client/{java,resources}.
 

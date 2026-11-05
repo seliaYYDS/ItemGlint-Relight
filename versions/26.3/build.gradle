@@ -42,6 +42,8 @@ sourceSets {
         java.srcDir("src/client/java")
         // Config model and other environment-neutral code stays shared.
         java.srcDir("../../common/src/main/java")
+        // Shared, version-neutral configuration code (one copy for every supported version).
+        java.srcDir("../../shared/config/java")
         // 26.3 owns fabric.mod.json and the mixin config; shared assets are added
         // in processResources with the overridden files excluded.
         resources.srcDir("src/client/resources")
