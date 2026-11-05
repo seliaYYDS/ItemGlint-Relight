@@ -21,6 +21,8 @@ public interface ConfigRenderPlatform {
 
     void scale(GuiGraphics graphics, float factor);
 
+    void scale(GuiGraphics graphics, float x, float y);
+
     void blit(GuiGraphics graphics, Object texture, int x, int y, float u, float v,
               int width, int height, int textureWidth, int textureHeight);
 

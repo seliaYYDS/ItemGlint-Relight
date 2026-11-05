@@ -7,8 +7,6 @@ import java.util.function.IntSupplier;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
 
 public final class UiColorPicker implements UiComponent {
     private static final int MARKER_SIZE = 20;
@@ -25,13 +23,13 @@ public final class UiColorPicker implements UiComponent {
     private float markerY;
     private boolean markerInitialized;
     private NativeImage paletteImage;
-    private DynamicTexture paletteTexture;
-    private ResourceLocation paletteTextureId;
+    private Object paletteTexture;
+    private Object paletteTextureId;
     private int renderedPaletteSize = -1;
     private float renderedPaletteHue = Float.NaN;
     private NativeImage markerImage;
-    private DynamicTexture markerTexture;
-    private ResourceLocation markerTextureId;
+    private Object markerTexture;
+    private Object markerTextureId;
     private int renderedMarkerColor = Integer.MIN_VALUE;
     private int markerSampling = -1;
     private long lastFrame = System.nanoTime();
@@ -74,7 +72,7 @@ public final class UiColorPicker implements UiComponent {
         int hueX = x + paletteSize + 5;
         UiShapes.roundedRect(graphics, hueX - 1, paletteY - 1, hueX + 11, paletteY + paletteSize + 1, 5, UiPalette.PALE_BLUE);
         ensurePaletteTexture(paletteSize, hsv[0]);
-        UiTextures.blit(graphics, paletteTextureId, x, paletteY, 0.0F, 0.0F,
+        ConfigRenderPlatforms.get().blit(graphics, paletteTextureId, x, paletteY, 0.0F, 0.0F,
                 paletteSize + 15, paletteSize, paletteSize + 15, paletteSize);
         int markerX = x + Math.round(hsv[1] * (paletteSize - 1));
         int markerY = paletteY + Math.round((1.0F - hsv[2]) * (paletteSize - 1));
@@ -139,12 +137,12 @@ public final class UiColorPicker implements UiComponent {
 
     public void close() {
         if (paletteTexture != null) {
-            Minecraft.getInstance().getTextureManager().release(paletteTextureId);
+            ConfigRenderPlatforms.get().releaseTexture(paletteTextureId);
             paletteTexture = null;
             paletteImage = null;
         }
         if (markerTexture != null) {
-            Minecraft.getInstance().getTextureManager().release(markerTextureId);
+            ConfigRenderPlatforms.get().releaseTexture(markerTextureId);
             markerTexture = null;
             markerImage = null;
         }
@@ -163,11 +161,11 @@ public final class UiColorPicker implements UiComponent {
 
     private void ensurePaletteTexture(int paletteSize, float hue) {
         if (paletteTexture == null || renderedPaletteSize != paletteSize) {
-            if (paletteTexture != null) Minecraft.getInstance().getTextureManager().release(paletteTextureId);
+            if (paletteTexture != null) ConfigRenderPlatforms.get().releaseTexture(paletteTextureId);
             paletteImage = new NativeImage(paletteSize + 15, paletteSize, false);
-            paletteTexture = new DynamicTexture(paletteImage);
-            paletteTextureId = ResourceLocation.fromNamespaceAndPath("itemglintrelight", "ui/color_palette/" + textureIndex++);
-            Minecraft.getInstance().getTextureManager().register(paletteTextureId, paletteTexture);
+            paletteTexture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_color_palette", paletteImage);
+            paletteTextureId = ConfigRenderPlatforms.get().textureId("itemglintrelight", "ui/color_palette/" + textureIndex++);
+            ConfigRenderPlatforms.get().registerTexture(paletteTextureId, paletteTexture);
             renderedPaletteSize = paletteSize;
             renderedPaletteHue = Float.NaN;
         }
@@ -177,33 +175,33 @@ public final class UiColorPicker implements UiComponent {
             int hueColor = 0xFF000000 | Color.HSBtoRGB(pixelY / (float) Math.max(1, paletteSize - 1), 1.0F, 1.0F);
             for (int pixelX = 0; pixelX < paletteSize; pixelX++) {
                 float saturation = pixelX / (float) Math.max(1, paletteSize - 1);
-                UiPainting.setPixel(paletteImage, pixelX, pixelY, 0xFF000000 | Color.HSBtoRGB(hue, saturation, brightness));
+                ConfigRenderPlatforms.get().setPixel(paletteImage, pixelX, pixelY, 0xFF000000 | Color.HSBtoRGB(hue, saturation, brightness));
             }
-            for (int huePixelX = paletteSize + 5; huePixelX < paletteSize + 15; huePixelX++) UiPainting.setPixel(paletteImage, huePixelX, pixelY, hueColor);
+            for (int huePixelX = paletteSize + 5; huePixelX < paletteSize + 15; huePixelX++) ConfigRenderPlatforms.get().setPixel(paletteImage, huePixelX, pixelY, hueColor);
         }
-        paletteTexture.upload();
+        ConfigRenderPlatforms.get().uploadTexture(paletteTexture);
         renderedPaletteHue = hue;
     }
 
     private void drawMarker(GuiGraphics graphics, int x, int y, int color) {
         ensureMarkerTexture(color);
-        graphics.pose().pushPose();
-        graphics.pose().translate(x - MARKER_SIZE / 2.0F, y - MARKER_SIZE / 2.0F, 0.0F);
-        graphics.pose().scale(1.0F / markerSampling, 1.0F / markerSampling, 1.0F);
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, x - MARKER_SIZE / 2.0F, y - MARKER_SIZE / 2.0F);
+        ConfigRenderPlatforms.get().scale(graphics, 1.0F / markerSampling, 1.0F / markerSampling);
         int sourceSize = MARKER_SIZE * markerSampling;
-        UiTextures.blit(graphics, markerTextureId, 0, 0, 0.0F, 0.0F, sourceSize, sourceSize, sourceSize, sourceSize);
-        graphics.pose().popPose();
+        ConfigRenderPlatforms.get().blit(graphics, markerTextureId, 0, 0, 0.0F, 0.0F, sourceSize, sourceSize, sourceSize, sourceSize);
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     private void ensureMarkerTexture(int color) {
-        int sampling = Math.max(2, (int) (Minecraft.getInstance().getWindow().getGuiScale() * 2));
+        int sampling = Math.max(2, ConfigRenderPlatforms.get().guiScale() * 2);
         if (markerTexture == null || markerSampling != sampling) {
-            if (markerTexture != null) Minecraft.getInstance().getTextureManager().release(markerTextureId);
+            if (markerTexture != null) ConfigRenderPlatforms.get().releaseTexture(markerTextureId);
             int sourceSize = MARKER_SIZE * sampling;
             markerImage = new NativeImage(sourceSize, sourceSize, false);
-            markerTexture = new DynamicTexture(markerImage);
-            markerTextureId = ResourceLocation.fromNamespaceAndPath("itemglintrelight", "ui/color_marker/" + textureIndex++);
-            Minecraft.getInstance().getTextureManager().register(markerTextureId, markerTexture);
+            markerTexture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_color_marker", markerImage);
+            markerTextureId = ConfigRenderPlatforms.get().textureId("itemglintrelight", "ui/color_marker/" + textureIndex++);
+            ConfigRenderPlatforms.get().registerTexture(markerTextureId, markerTexture);
             markerSampling = sampling;
             renderedMarkerColor = Integer.MIN_VALUE;
         }
@@ -215,7 +213,7 @@ public final class UiColorPicker implements UiComponent {
         drawCircle(markerImage, center, center, 6.0F * markerSampling, UiPalette.DEEP_BLUE);
         drawCircle(markerImage, center, center, 5.0F * markerSampling, color);
         drawCircle(markerImage, center - 2.0F * markerSampling, center - 2.0F * markerSampling, markerSampling, 0x88FFFFFF);
-        markerTexture.upload();
+        ConfigRenderPlatforms.get().uploadTexture(markerTexture);
         renderedMarkerColor = color;
     }
 
@@ -235,13 +233,13 @@ public final class UiColorPicker implements UiComponent {
     private static void blend(NativeImage image, int x, int y, int color, float coverage) {
         float sourceAlpha = (color >>> 24) / 255.0F * coverage;
         if (sourceAlpha <= 0.0F) return;
-        int existing = UiPainting.getPixel(image, x, y);
+        int existing = ConfigRenderPlatforms.get().pixel(image, x, y);
         float existingAlpha = (existing >>> 24) / 255.0F;
         float outputAlpha = sourceAlpha + existingAlpha * (1.0F - sourceAlpha);
         int red = Math.round((((color >>> 16) & 255) * sourceAlpha + ((existing >>> 16) & 255) * existingAlpha * (1.0F - sourceAlpha)) / outputAlpha);
         int green = Math.round((((color >>> 8) & 255) * sourceAlpha + ((existing >>> 8) & 255) * existingAlpha * (1.0F - sourceAlpha)) / outputAlpha);
         int blue = Math.round(((color & 255) * sourceAlpha + (existing & 255) * existingAlpha * (1.0F - sourceAlpha)) / outputAlpha);
-        UiPainting.setPixel(image, x, y, Math.round(outputAlpha * 255.0F) << 24 | red << 16 | green << 8 | blue);
+        ConfigRenderPlatforms.get().setPixel(image, x, y, Math.round(outputAlpha * 255.0F) << 24 | red << 16 | green << 8 | blue);
     }
 
     private static float[] hsv(int color) {

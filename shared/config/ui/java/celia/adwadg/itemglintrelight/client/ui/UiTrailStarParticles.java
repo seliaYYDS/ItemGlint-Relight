@@ -5,9 +5,6 @@ import java.util.ArrayDeque;
 import java.util.concurrent.ThreadLocalRandom;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.Identifier;
 
 public final class UiTrailStarParticles {
     private static final int TILE_SIZE = 48;
@@ -21,8 +18,8 @@ public final class UiTrailStarParticles {
     private static final int[] COLOURS = {UiPalette.BRIGHT_BLUE, UiPalette.LIGHT_GREEN, 0xFF2D82B8, 0xFF238A68};
     private static final float[][] POINTS = {{0.0F, -0.94F}, {0.18F, -0.18F}, {0.94F, 0.0F}, {0.18F, 0.18F}, {0.0F, 0.94F}, {-0.18F, 0.18F}, {-0.94F, 0.0F}, {-0.18F, -0.18F}};
     private final ArrayDeque<Particle> particles = new ArrayDeque<>();
-    private final Identifier[][] textureIds = new Identifier[COLOURS.length][ALPHA_LEVELS];
-    private final DynamicTexture[][] textures = new DynamicTexture[COLOURS.length][ALPHA_LEVELS];
+    private final Object[][] textureIds = new Object[COLOURS.length][ALPHA_LEVELS];
+    private final Object[][] textures = new Object[COLOURS.length][ALPHA_LEVELS];
     private float lastX = Float.NaN;
     private float lastY = Float.NaN;
     private float lastSpawnX = Float.NaN;
@@ -67,7 +64,7 @@ public final class UiTrailStarParticles {
             int sourceY = frame / ATLAS_COLUMNS * TILE_SIZE;
             int drawX = Math.round(particle.x + particle.horizontalSpeed * seconds - particle.size / 2.0F);
             int drawY = Math.round(particle.y + particle.fallSpeed * seconds + particle.gravity * seconds * seconds * 0.5F - particle.size / 2.0F);
-            graphics.blit(RenderPipelines.GUI_TEXTURED, textureIds[particle.colour][level], drawX, drawY,
+            ConfigRenderPlatforms.get().blit(graphics, textureIds[particle.colour][level], drawX, drawY,
                     sourceX, sourceY, particle.size, particle.size, TILE_SIZE, TILE_SIZE, ATLAS_WIDTH, ATLAS_HEIGHT);
         }
     }
@@ -82,7 +79,7 @@ public final class UiTrailStarParticles {
         for (int colour = 0; colour < COLOURS.length; colour++) {
             for (int level = 0; level < ALPHA_LEVELS; level++) {
                 if (textures[colour][level] != null) {
-                    Minecraft.getInstance().getTextureManager().release(textureIds[colour][level]);
+                    ConfigRenderPlatforms.get().releaseTexture(textureIds[colour][level]);
                     textures[colour][level] = null;
                 }
             }
@@ -133,14 +130,14 @@ public final class UiTrailStarParticles {
                         }
                     }
                     int alpha = Math.round(baseAlpha * coverage);
-                    image.setPixelABGR(offsetX + pixelX, offsetY + pixelY, toAbgr(alpha << 24 | COLOURS[colour] & 0x00FFFFFF));
+                    ConfigRenderPlatforms.get().setPixelAbgr(image, offsetX + pixelX, offsetY + pixelY, toAbgr(alpha << 24 | COLOURS[colour] & 0x00FFFFFF));
                 }
             }
         }
-        Identifier id = Identifier.fromNamespaceAndPath("itemglintrelight", "ui/trail_star_particle_rewrite_" + colour + "_" + level);
-        DynamicTexture texture = new DynamicTexture(() -> "itemglintrelight_trail_star_particle", image);
-        Minecraft.getInstance().getTextureManager().register(id, texture);
-        texture.upload();
+        Object id = ConfigRenderPlatforms.get().textureId("itemglintrelight", "ui/trail_star_particle_rewrite_" + colour + "_" + level);
+        Object texture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_trail_star_particle", image);
+        ConfigRenderPlatforms.get().registerTexture(id, texture);
+        ConfigRenderPlatforms.get().uploadTexture(texture);
         textureIds[colour][level] = id;
         textures[colour][level] = texture;
     }

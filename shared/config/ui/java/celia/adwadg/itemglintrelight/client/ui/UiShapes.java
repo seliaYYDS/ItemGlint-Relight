@@ -5,9 +5,6 @@ import java.util.HashMap;
 import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.Identifier;
 
 /** High-resolution prefiltered corner masks for smooth configuration surfaces. */
 public final class UiShapes {
@@ -48,13 +45,13 @@ public final class UiShapes {
 
     public static void clear() {
         for (CornerTexture texture : CORNER_TEXTURES.values()) {
-            Minecraft.getInstance().getTextureManager().release(texture.identifier());
+            ConfigRenderPlatforms.get().releaseTexture(texture.identifier());
         }
         CORNER_TEXTURES.clear();
     }
 
     private static CornerTexture cornerTexture(int radius, int color) {
-        int sampling = Math.max(2, Minecraft.getInstance().getWindow().getGuiScale() * 2);
+        int sampling = Math.max(2, ConfigRenderPlatforms.get().guiScale() * 2);
         TextureKey key = new TextureKey(radius, sampling, quantize(color));
         return CORNER_TEXTURES.computeIfAbsent(key, UiShapes::createCornerTexture);
     }
@@ -66,13 +63,13 @@ public final class UiShapes {
         float center = cornerPixels;
         for (int y = 0; y < texturePixels; y++) {
             for (int x = 0; x < texturePixels; x++) {
-                image.setPixel(x, y, withAlpha(key.color(), coverage(x, y, center)));
+                ConfigRenderPlatforms.get().setPixel(image, x, y, withAlpha(key.color(), coverage(x, y, center)));
             }
         }
-        Identifier identifier = Identifier.fromNamespaceAndPath("itemglintrelight", "ui/rounded_corner/" + textureIndex++);
-        DynamicTexture texture = new DynamicTexture(() -> "itemglintrelight_rounded_corner", image);
-        Minecraft.getInstance().getTextureManager().register(identifier, texture);
-        texture.upload();
+        Object identifier = ConfigRenderPlatforms.get().textureId("itemglintrelight", "ui/rounded_corner/" + textureIndex++);
+        Object texture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_rounded_corner", image);
+        ConfigRenderPlatforms.get().registerTexture(identifier, texture);
+        ConfigRenderPlatforms.get().uploadTexture(texture);
         return new CornerTexture(identifier, cornerPixels, texturePixels, key.sampling());
     }
 
@@ -90,12 +87,12 @@ public final class UiShapes {
     }
 
     private static void drawCorner(GuiGraphics graphics, CornerTexture texture, int x, int y, int sourceX, int sourceY) {
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(x, y);
-        graphics.pose().scale(1.0F / texture.sampling(), 1.0F / texture.sampling());
-        graphics.blit(RenderPipelines.GUI_TEXTURED, texture.identifier(), 0, 0, sourceX, sourceY,
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, x, y);
+        ConfigRenderPlatforms.get().scale(graphics, 1.0F / texture.sampling(), 1.0F / texture.sampling());
+        ConfigRenderPlatforms.get().blit(graphics, texture.identifier(), 0, 0, sourceX, sourceY,
                 texture.cornerPixels(), texture.cornerPixels(), texture.texturePixels(), texture.texturePixels());
-        graphics.pose().popMatrix();
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     private static int quantize(int color) {
@@ -107,5 +104,5 @@ public final class UiShapes {
     }
 
     private record TextureKey(int radius, int sampling, int color) { }
-    private record CornerTexture(Identifier identifier, int cornerPixels, int texturePixels, int sampling) { }
+    private record CornerTexture(Object identifier, int cornerPixels, int texturePixels, int sampling) { }
 }

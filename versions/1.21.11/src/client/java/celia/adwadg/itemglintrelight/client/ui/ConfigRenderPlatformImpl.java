@@ -30,6 +30,11 @@ public final class ConfigRenderPlatformImpl implements ConfigRenderPlatform {
     }
 
     @Override
+    public void scale(GuiGraphics graphics, float x, float y) {
+        graphics.pose().scale(x, y);
+    }
+
+    @Override
     public void blit(GuiGraphics graphics, Object texture, int x, int y, float u, float v,
                      int width, int height, int textureWidth, int textureHeight) {
         graphics.blit(RenderPipelines.GUI_TEXTURED, (Identifier) texture, x, y, u, v, width, height,

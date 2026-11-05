@@ -6,8 +6,6 @@ import java.util.function.DoubleSupplier;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.ResourceLocation;
 
 public final class UiColorScrollControl implements UiComponent {
     private static final int TEXTURE_SIZE = 180;
@@ -15,7 +13,7 @@ public final class UiColorScrollControl implements UiComponent {
     private static final float OUTER_RADIUS = 66.0F;
     private static final float MIN_INTERVAL = 0.25F;
     private static final float MAX_INTERVAL = 1.5F;
-    private static final ResourceLocation TEXTURE_ID = ResourceLocation.fromNamespaceAndPath("itemglintrelight", "ui/colour_scroll_control");
+    private static final Object TEXTURE_ID = ConfigRenderPlatforms.get().textureId("itemglintrelight", "ui/colour_scroll_control");
 
     private int x;
     private int y;
@@ -24,7 +22,7 @@ public final class UiColorScrollControl implements UiComponent {
     private final DoubleSupplier direction;
     private final DoubleSupplier interval;
     private final BiConsumer<Float, Float> changeListener;
-    private DynamicTexture texture;
+    private Object texture;
     private NativeImage image;
     private float renderedDirection = Float.NaN;
     private float renderedInterval = Float.NaN;
@@ -58,7 +56,7 @@ public final class UiColorScrollControl implements UiComponent {
         int centerY = y + 102;
         boolean hovered = distanceSquared(mouseX - centerX, mouseY - centerY) <= 74 * 74;
         updateTexture((float) direction.getAsDouble(), (float) interval.getAsDouble(), hovered);
-        UiTextures.blit(graphics, TEXTURE_ID, centerX - CENTER, centerY - CENTER,
+        ConfigRenderPlatforms.get().blit(graphics, TEXTURE_ID, centerX - CENTER, centerY - CENTER,
                 0.0F, 0.0F, TEXTURE_SIZE, TEXTURE_SIZE, TEXTURE_SIZE, TEXTURE_SIZE);
         drawMarkers(graphics, font, centerX, centerY);
     }
@@ -83,7 +81,7 @@ public final class UiColorScrollControl implements UiComponent {
 
     public void close() {
         if (texture != null) {
-            Minecraft.getInstance().getTextureManager().release(TEXTURE_ID);
+            ConfigRenderPlatforms.get().releaseTexture(TEXTURE_ID);
             texture = null;
             image = null;
         }
@@ -133,14 +131,14 @@ public final class UiColorScrollControl implements UiComponent {
         drawSegment(CENTER, CENTER, endX, endY, 0.85F, UiPalette.BRIGHT_BLUE);
         drawSegment(endX, endY, endX - arrowX * 10.0F - arrowY * 4.0F, endY - arrowY * 10.0F + arrowX * 4.0F, 0.85F, UiPalette.LIGHT_GREEN);
         drawSegment(endX, endY, endX - arrowX * 10.0F + arrowY * 4.0F, endY - arrowY * 10.0F - arrowX * 4.0F, 0.85F, UiPalette.LIGHT_GREEN);
-        texture.upload();
+        ConfigRenderPlatforms.get().uploadTexture(texture);
     }
 
     private void ensureTexture() {
         if (texture != null) return;
         image = new NativeImage(TEXTURE_SIZE, TEXTURE_SIZE, false);
-        texture = new DynamicTexture(image);
-        Minecraft.getInstance().getTextureManager().register(TEXTURE_ID, texture);
+        texture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_colour_scroll_control", image);
+        ConfigRenderPlatforms.get().registerTexture(TEXTURE_ID, texture);
     }
 
     private void drawMarkers(GuiGraphics graphics, Font font, int centerX, int centerY) {
@@ -180,13 +178,13 @@ public final class UiColorScrollControl implements UiComponent {
 
     private void blend(int pixelX, int pixelY, int color, float alpha) {
         if (alpha <= 0.0F) return;
-        int existing = UiPainting.getPixel(image, pixelX, pixelY);
+        int existing = ConfigRenderPlatforms.get().pixel(image, pixelX, pixelY);
         float existingAlpha = (existing >>> 24) / 255.0F;
         float outputAlpha = alpha + existingAlpha * (1.0F - alpha);
         int red = Math.round((((color >>> 16) & 255) * alpha + ((existing >>> 16) & 255) * existingAlpha * (1.0F - alpha)) / outputAlpha);
         int green = Math.round((((color >>> 8) & 255) * alpha + ((existing >>> 8) & 255) * existingAlpha * (1.0F - alpha)) / outputAlpha);
         int blue = Math.round(((color & 255) * alpha + (existing & 255) * existingAlpha * (1.0F - alpha)) / outputAlpha);
-        UiPainting.setPixel(image, pixelX, pixelY, Math.round(outputAlpha * 255.0F) << 24 | red << 16 | green << 8 | blue);
+        ConfigRenderPlatforms.get().setPixel(image, pixelX, pixelY, Math.round(outputAlpha * 255.0F) << 24 | red << 16 | green << 8 | blue);
     }
 
     private static float coverage(float signedDistance) {

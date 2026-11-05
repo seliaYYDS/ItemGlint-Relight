@@ -16,9 +16,6 @@ import java.util.Map;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.resources.Identifier;
 
 public final class SmoothTextRenderer {
     private static final int OPACITY_STEPS = 32;
@@ -73,7 +70,7 @@ public final class SmoothTextRenderer {
 
     public static void drawGradient(GuiGraphics graphics, Font ignored, String text, float x, float y, float scale) {
         if (text == null || text.isEmpty()) return;
-        int sampling = Math.max(2, Minecraft.getInstance().getWindow().getGuiScale());
+        int sampling = Math.max(2, ConfigRenderPlatforms.get().guiScale());
         GradientKey key = new GradientKey(text, Math.round(scale * 100.0F), sampling);
         GradientTexture texture = GRADIENT_TEXTURES.computeIfAbsent(key, unused -> createGradientTexture(text, scale, sampling));
         texture.update();
@@ -82,17 +79,17 @@ public final class SmoothTextRenderer {
 
     public static void clear() {
         for (TextureEntry texture : TEXTURES.values()) {
-            Minecraft.getInstance().getTextureManager().release(texture.identifier());
+            ConfigRenderPlatforms.get().releaseTexture(texture.identifier());
         }
         TEXTURES.clear();
         for (GradientTexture texture : GRADIENT_TEXTURES.values()) {
-            Minecraft.getInstance().getTextureManager().release(texture.entry().identifier());
+            ConfigRenderPlatforms.get().releaseTexture(texture.entry().identifier());
         }
         GRADIENT_TEXTURES.clear();
     }
 
     private static TextureEntry texture(String text, float scale, int color) {
-        int sampling = Math.max(2, Minecraft.getInstance().getWindow().getGuiScale());
+        int sampling = Math.max(2, ConfigRenderPlatforms.get().guiScale());
         TextKey key = new TextKey(text, Math.round(scale * 100.0F), color, sampling);
         return TEXTURES.computeIfAbsent(key, unused -> createTexture(text, scale, color, sampling));
     }
@@ -104,12 +101,12 @@ public final class SmoothTextRenderer {
     }
 
     private static void drawTexture(GuiGraphics graphics, TextureEntry texture, int x, int y) {
-        graphics.pose().pushMatrix();
-        graphics.pose().translate(x, y);
-        graphics.pose().scale(1.0F / texture.sampling(), 1.0F / texture.sampling());
-        graphics.blit(RenderPipelines.GUI_TEXTURED, texture.identifier(), 0, 0, 0.0F, 0.0F,
+        ConfigRenderPlatforms.get().pushPose(graphics);
+        ConfigRenderPlatforms.get().translate(graphics, x, y);
+        ConfigRenderPlatforms.get().scale(graphics, 1.0F / texture.sampling(), 1.0F / texture.sampling());
+        ConfigRenderPlatforms.get().blit(graphics, texture.identifier(), 0, 0, 0.0F, 0.0F,
                 texture.sourceWidth(), texture.sourceHeight(), texture.sourceWidth(), texture.sourceHeight());
-        graphics.pose().popMatrix();
+        ConfigRenderPlatforms.get().popPose(graphics);
     }
 
     private static TextRaster rasterize(String text, float fontSize) {
@@ -188,13 +185,13 @@ public final class SmoothTextRenderer {
         NativeImage nativeImage = new NativeImage(sourceWidth, sourceHeight, false);
         for (int pixelY = 0; pixelY < sourceHeight; pixelY++) {
             for (int pixelX = 0; pixelX < sourceWidth; pixelX++) {
-                nativeImage.setPixel(pixelX, pixelY, image.getRGB(pixelX, pixelY));
+                ConfigRenderPlatforms.get().setPixel(nativeImage, pixelX, pixelY, image.getRGB(pixelX, pixelY));
             }
         }
-        Identifier identifier = Identifier.fromNamespaceAndPath("itemglintrelight", "ui_text/" + textureIndex++);
-        DynamicTexture texture = new DynamicTexture(() -> "itemglintrelight_ui_text", nativeImage);
-        Minecraft.getInstance().getTextureManager().register(identifier, texture);
-        texture.upload();
+        Object identifier = ConfigRenderPlatforms.get().textureId("itemglintrelight", "ui_text/" + textureIndex++);
+        Object texture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_ui_text", nativeImage);
+        ConfigRenderPlatforms.get().registerTexture(identifier, texture);
+        ConfigRenderPlatforms.get().uploadTexture(texture);
         int inset = Math.round(padding / (float) sampling);
         return new TextureEntry(identifier, Math.max(1, Math.round(sourceWidth / (float) sampling)),
                 Math.max(1, Math.round(sourceHeight / (float) sampling)), sourceWidth, sourceHeight, inset, sampling);
@@ -217,9 +214,9 @@ public final class SmoothTextRenderer {
         maskGraphics.dispose();
 
         NativeImage nativeImage = new NativeImage(sourceWidth, sourceHeight, false);
-        Identifier identifier = Identifier.fromNamespaceAndPath("itemglintrelight", "gradient_text/" + textureIndex++);
-        DynamicTexture texture = new DynamicTexture(() -> "itemglintrelight_gradient_text", nativeImage);
-        Minecraft.getInstance().getTextureManager().register(identifier, texture);
+        Object identifier = ConfigRenderPlatforms.get().textureId("itemglintrelight", "gradient_text/" + textureIndex++);
+        Object texture = ConfigRenderPlatforms.get().createTexture("itemglintrelight_gradient_text", nativeImage);
+        ConfigRenderPlatforms.get().registerTexture(identifier, texture);
         int inset = Math.round(padding / (float) sampling);
         TextureEntry entry = new TextureEntry(identifier, Math.max(1, Math.round(sourceWidth / (float) sampling)),
                 Math.max(1, Math.round(sourceHeight / (float) sampling)), sourceWidth, sourceHeight, inset, sampling);
@@ -243,20 +240,20 @@ public final class SmoothTextRenderer {
     private record TextRaster(TextLayout layout, Rectangle bounds) {
     }
 
-    private record TextureEntry(Identifier identifier, int width, int height, int sourceWidth, int sourceHeight, int inset, int sampling) {
+    private record TextureEntry(Object identifier, int width, int height, int sourceWidth, int sourceHeight, int inset, int sampling) {
     }
 
-    private record GradientTexture(TextureEntry entry, BufferedImage mask, NativeImage image, DynamicTexture texture) {
+    private record GradientTexture(TextureEntry entry, BufferedImage mask, NativeImage image, Object texture) {
         private void update() {
             float phase = (System.nanoTime() % 1_800_000_000L) / 1_800_000_000.0F;
             for (int y = 0; y < entry.sourceHeight(); y++) {
                 for (int x = 0; x < entry.sourceWidth(); x++) {
                     int alpha = mask.getRGB(x, y) >>> 24;
                     int color = gradientColor(x / (float) entry.sourceWidth() + phase);
-                    image.setPixel(x, y, alpha << 24 | color & 0x00FFFFFF);
+                    ConfigRenderPlatforms.get().setPixel(image, x, y, alpha << 24 | color & 0x00FFFFFF);
                 }
             }
-            texture.upload();
+            ConfigRenderPlatforms.get().uploadTexture(texture);
         }
     }
 }
