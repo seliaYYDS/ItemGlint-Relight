@@ -711,7 +711,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
         }
         SmoothTextRenderer.clear();
         UiShapes.clear();
-        this.minecraft.setScreen(parent);
+        ConfigScreenPlatforms.get().returnTo(this.minecraft, parent);
     }
 
     private void renderStaticShell(GuiGraphicsExtractor graphics) {
