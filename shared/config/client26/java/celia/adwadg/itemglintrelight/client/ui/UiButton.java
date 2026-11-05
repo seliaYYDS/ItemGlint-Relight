@@ -1,5 +1,7 @@
 package celia.adwadg.itemglintrelight.client.ui;
 
+import celia.adwadg.itemglintrelight.client.ConfigInputs;
+
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 
@@ -35,7 +37,7 @@ public final class UiButton implements UiComponent {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && UiMath.contains(x, y, width, height, mouseX, mouseY)) {
+        if (button == ConfigInputs.get().mouseLeft() && UiMath.contains(x, y, width, height, mouseX, mouseY)) {
             action.run();
             return true;
         }

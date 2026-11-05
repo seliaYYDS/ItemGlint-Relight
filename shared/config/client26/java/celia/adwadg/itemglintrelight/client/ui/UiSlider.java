@@ -1,5 +1,7 @@
 package celia.adwadg.itemglintrelight.client.ui;
 
+import celia.adwadg.itemglintrelight.client.ConfigInputs;
+
 import java.util.function.Consumer;
 import java.util.function.DoubleSupplier;
 import net.minecraft.client.gui.Font;
@@ -67,7 +69,7 @@ public final class UiSlider implements UiComponent {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button != 0 || !UiMath.contains(x, y, width, 28, mouseX, mouseY)) {
+        if (button != ConfigInputs.get().mouseLeft() || !UiMath.contains(x, y, width, 28, mouseX, mouseY)) {
             return false;
         }
         dragging = true;
@@ -76,7 +78,7 @@ public final class UiSlider implements UiComponent {
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button) {
-        if (!dragging || button != 0) {
+        if (!dragging || button != ConfigInputs.get().mouseLeft()) {
             return false;
         }
         updateValue(mouseX);

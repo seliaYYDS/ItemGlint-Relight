@@ -44,7 +44,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import org.lwjgl.glfw.GLFW;
 
 public final class ItemGlintRelightConfigScreen extends Screen {
     private static final int ITEM_PICKER_X = 156;
@@ -376,7 +375,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return handleRuleTargetPickerClick(mouseX, mouseY, event.button());
         }
         if (presetDialogOpen) {
-            if (event.button() == 0) {
+            if (event.button() == ConfigInputs.get().mouseLeft()) {
                 if (UiMath.contains(RULE_DIALOG_X + 18, RULE_DIALOG_Y + 46, RULE_DIALOG_WIDTH - 36, 42, mouseX, mouseY)) {
                     applySimpleEnchantmentPreset();
                 }
@@ -401,8 +400,8 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return true;
         }
         if (isInQuickPreviewCanvas(mouseX, mouseY)) {
-            if (event.button() == 0) draggingQuickPreview = true;
-            if (event.button() == 1) rollingQuickPreview = true;
+            if (event.button() == ConfigInputs.get().mouseLeft()) draggingQuickPreview = true;
+            if (event.button() == ConfigInputs.get().mouseRight()) rollingQuickPreview = true;
             return true;
         }
         Page nextPage = pageAt(mouseX, mouseY);
@@ -443,10 +442,10 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return true;
         }
         if (page == Page.PREVIEW && isInPreviewCanvas(mouseX, mouseY)) {
-            if (event.button() == 0) draggingPreview = true;
-            if (event.button() == 2) panningPreview = true;
-            if (event.button() == 1) rollingPreview = true;
-            return event.button() == 0 || event.button() == 1 || event.button() == 2;
+            if (event.button() == ConfigInputs.get().mouseLeft()) draggingPreview = true;
+            if (event.button() == ConfigInputs.get().mouseMiddle()) panningPreview = true;
+            if (event.button() == ConfigInputs.get().mouseRight()) rollingPreview = true;
+            return event.button() == ConfigInputs.get().mouseLeft() || event.button() == ConfigInputs.get().mouseRight() || event.button() == ConfigInputs.get().mouseMiddle();
         }
         if (page == Page.RENDER) {
             if (outlineColorModeDropdown.mouseClicked(mouseX, mouseY, event.button())) return true;
@@ -501,12 +500,12 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineBloomSoftnessSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
             if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
         }
-        if (draggingQuickPreview && event.button() == 0) {
+        if (draggingQuickPreview && event.button() == ConfigInputs.get().mouseLeft()) {
             quickPreviewYaw += (float) dragX / uiScale * 0.8F;
             quickPreviewPitch = Math.max(-89.0F, Math.min(89.0F, quickPreviewPitch + (float) dragY / uiScale * 0.8F));
             return true;
         }
-        if (rollingQuickPreview && event.button() == 1) {
+        if (rollingQuickPreview && event.button() == ConfigInputs.get().mouseRight()) {
             quickPreviewRoll += (float) dragX / uiScale * 0.8F;
             return true;
         }
@@ -529,17 +528,17 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             if (outlineBloomBlurPassesSlider.mouseDragged(mouseX, mouseY, event.button())) return true;
         }
         if (page == Page.PREVIEW) {
-            if (draggingPreview && event.button() == 0) {
+            if (draggingPreview && event.button() == ConfigInputs.get().mouseLeft()) {
                 previewYaw += (float) dragX / uiScale * 0.8F;
                 previewPitch = Math.max(-89.0F, Math.min(89.0F, previewPitch + (float) dragY / uiScale * 0.8F));
                 return true;
             }
-            if (panningPreview && event.button() == 2) {
+            if (panningPreview && event.button() == ConfigInputs.get().mouseMiddle()) {
                 previewOffsetX += (float) dragX / uiScale;
                 previewOffsetY += (float) dragY / uiScale;
                 return true;
             }
-            if (rollingPreview && event.button() == 1) {
+            if (rollingPreview && event.button() == ConfigInputs.get().mouseRight()) {
                 previewRoll += (float) dragX / uiScale * 0.8F;
                 return true;
             }
@@ -619,14 +618,14 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) {
         if (presetDialogOpen) {
-            if (event.key() == GLFW.GLFW_KEY_ESCAPE) presetDialogOpen = false;
+            if (event.key() == ConfigInputs.get().keyEscape()) presetDialogOpen = false;
             return true;
         }
         if (ruleTargetPickerOpen) {
             return handleRuleTargetPickerKey(event);
         }
         if (ruleOutlineDialogOpen) {
-            if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+            if (event.key() == ConfigInputs.get().keyEscape()) {
                 closeRuleOutlineDialog(false);
             }
             return true;
@@ -635,11 +634,11 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             return handleRuleDialogKey(event);
         }
         if (!itemPickerOpen) return super.keyPressed(event);
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (event.key() == ConfigInputs.get().keyEscape()) {
             closeItemPicker();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_BACKSPACE && !itemSearch.isEmpty()) {
+        if (event.key() == ConfigInputs.get().keyBackspace() && !itemSearch.isEmpty()) {
             if (itemSearchCursor > 0) {
                 itemSearch = itemSearch.substring(0, itemSearchCursor - 1) + itemSearch.substring(itemSearchCursor);
                 itemSearchCursor--;
@@ -647,15 +646,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             filterItemChoices();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_LEFT) {
+        if (event.key() == ConfigInputs.get().keyLeft()) {
             itemSearchCursor = Math.max(0, itemSearchCursor - 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_RIGHT) {
+        if (event.key() == ConfigInputs.get().keyRight()) {
             itemSearchCursor = Math.min(itemSearch.length(), itemSearchCursor + 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_ENTER && !filteredItemChoices.isEmpty()) {
+        if (event.key() == ConfigInputs.get().keyReturn() && !filteredItemChoices.isEmpty()) {
             selectPreviewItem(filteredItemChoices.get(0));
             return true;
         }
@@ -990,7 +989,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private boolean handleRuleOutlineDialogClick(double mouseX, double mouseY, int button) {
-        if (button != 0) return true;
+        if (button != ConfigInputs.get().mouseLeft()) return true;
         int x = RULE_DIALOG_X;
         int y = 20;
         int width = RULE_DIALOG_WIDTH;
@@ -1431,7 +1430,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private boolean handleRuleDialogClick(double mouseX, double mouseY, int button) {
-        if (button != 0) return true;
+        if (button != ConfigInputs.get().mouseLeft()) return true;
         int x = RULE_DIALOG_X;
         int y = RULE_DIALOG_Y;
         int width = RULE_DIALOG_WIDTH;
@@ -1592,24 +1591,24 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private boolean handleRuleDialogKey(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (event.key() == ConfigInputs.get().keyEscape()) {
             ruleDialogOpen = false;
             ruleInputFocus = RuleInputFocus.NONE;
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_ENTER) {
+        if (event.key() == ConfigInputs.get().keyReturn()) {
             ruleInputFocus = RuleInputFocus.NONE;
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_LEFT) {
+        if (event.key() == ConfigInputs.get().keyLeft()) {
             ruleInputCursor = Math.max(0, ruleInputCursor - 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_RIGHT) {
+        if (event.key() == ConfigInputs.get().keyRight()) {
             ruleInputCursor = Math.min(ruleInputValue().length(), ruleInputCursor + 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_BACKSPACE) {
+        if (event.key() == ConfigInputs.get().keyBackspace()) {
             deleteRuleInputCharacter();
             return true;
         }
@@ -2088,7 +2087,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private boolean handleItemPickerClick(double mouseX, double mouseY, int button) {
-        if (button != 0) return true;
+        if (button != ConfigInputs.get().mouseLeft()) return true;
         int x = ITEM_PICKER_X;
         int y = ITEM_PICKER_Y;
         if (mouseX < x || mouseX >= x + ITEM_PICKER_WIDTH || mouseY < y || mouseY >= y + ITEM_PICKER_HEIGHT) {
@@ -2192,7 +2191,7 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private boolean handleRuleTargetPickerClick(double mouseX, double mouseY, int button) {
-        if (button != 0) return true;
+        if (button != ConfigInputs.get().mouseLeft()) return true;
         int x = ITEM_PICKER_X;
         int y = ITEM_PICKER_Y;
         if (mouseX < x || mouseX >= x + ITEM_PICKER_WIDTH || mouseY < y || mouseY >= y + ITEM_PICKER_HEIGHT) {
@@ -2211,11 +2210,11 @@ public final class ItemGlintRelightConfigScreen extends Screen {
     }
 
     private boolean handleRuleTargetPickerKey(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (event.key() == ConfigInputs.get().keyEscape()) {
             closeRuleTargetPicker();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_BACKSPACE && !ruleTargetSearch.isEmpty()) {
+        if (event.key() == ConfigInputs.get().keyBackspace() && !ruleTargetSearch.isEmpty()) {
             if (ruleTargetSearchCursor > 0) {
                 ruleTargetSearch = ruleTargetSearch.substring(0, ruleTargetSearchCursor - 1) + ruleTargetSearch.substring(ruleTargetSearchCursor);
                 ruleTargetSearchCursor--;
@@ -2223,15 +2222,15 @@ public final class ItemGlintRelightConfigScreen extends Screen {
             filterRuleTargetChoices();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_LEFT) {
+        if (event.key() == ConfigInputs.get().keyLeft()) {
             ruleTargetSearchCursor = Math.max(0, ruleTargetSearchCursor - 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_RIGHT) {
+        if (event.key() == ConfigInputs.get().keyRight()) {
             ruleTargetSearchCursor = Math.min(ruleTargetSearch.length(), ruleTargetSearchCursor + 1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_ENTER && !filteredRuleTargetChoices.isEmpty()) {
+        if (event.key() == ConfigInputs.get().keyReturn() && !filteredRuleTargetChoices.isEmpty()) {
             ruleItemId = filteredRuleTargetChoices.get(0).value();
             focusRuleInput(RuleInputFocus.ITEM);
             closeRuleTargetPicker();

@@ -1,5 +1,7 @@
 package celia.adwadg.itemglintrelight.client.ui;
 
+import celia.adwadg.itemglintrelight.client.ConfigInputs;
+
 import java.util.List;
 import java.util.function.Consumer;
 import net.minecraft.client.gui.Font;
@@ -51,7 +53,7 @@ public final class UiCyclingSelector {
     }
 
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button != 0) return false;
+        if (button != ConfigInputs.get().mouseLeft()) return false;
         int fieldY = y + 12;
         if (expanded) {
             for (int index = 0; index < options.size(); index++) {

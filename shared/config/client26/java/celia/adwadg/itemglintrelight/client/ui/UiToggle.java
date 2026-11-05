@@ -1,5 +1,7 @@
 package celia.adwadg.itemglintrelight.client.ui;
 
+import celia.adwadg.itemglintrelight.client.ConfigInputs;
+
 import java.util.function.Consumer;
 import java.util.function.BooleanSupplier;
 import net.minecraft.client.gui.Font;
@@ -50,7 +52,7 @@ public final class UiToggle implements UiComponent {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && UiMath.contains(x, y, width, 20, mouseX, mouseY)) {
+        if (button == ConfigInputs.get().mouseLeft() && UiMath.contains(x, y, width, 20, mouseX, mouseY)) {
             changeListener.accept(!value.getAsBoolean());
             return true;
         }

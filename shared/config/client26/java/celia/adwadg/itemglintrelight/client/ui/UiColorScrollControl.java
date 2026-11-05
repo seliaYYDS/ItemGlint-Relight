@@ -1,5 +1,7 @@
 package celia.adwadg.itemglintrelight.client.ui;
 
+import celia.adwadg.itemglintrelight.client.ConfigInputs;
+
 import com.mojang.blaze3d.platform.NativeImage;
 import java.util.function.BiConsumer;
 import java.util.function.DoubleSupplier;
@@ -66,14 +68,14 @@ public final class UiColorScrollControl implements UiComponent {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button != 0 || !contains(mouseX, mouseY)) return false;
+        if (button != ConfigInputs.get().mouseLeft() || !contains(mouseX, mouseY)) return false;
         dragging = true;
         update(mouseX, mouseY);
         return true;
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button) {
-        if (!dragging || button != 0) return false;
+        if (!dragging || button != ConfigInputs.get().mouseLeft()) return false;
         update(mouseX, mouseY);
         return true;
     }

@@ -1,5 +1,7 @@
 package celia.adwadg.itemglintrelight.client.ui;
 
+import celia.adwadg.itemglintrelight.client.ConfigInputs;
+
 import com.mojang.blaze3d.platform.NativeImage;
 import java.awt.Color;
 import java.util.function.IntConsumer;
@@ -95,7 +97,7 @@ public final class UiColorPicker implements UiComponent {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button != 0) {
+        if (button != ConfigInputs.get().mouseLeft()) {
             return false;
         }
         int paletteY = y + 16;
@@ -116,7 +118,7 @@ public final class UiColorPicker implements UiComponent {
     }
 
     public boolean mouseDragged(double mouseX, double mouseY, int button) {
-        if (!dragging || button != 0) {
+        if (!dragging || button != ConfigInputs.get().mouseLeft()) {
             return false;
         }
         int paletteY = y + 16;
