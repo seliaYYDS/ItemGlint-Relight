@@ -45,6 +45,11 @@ sourceSets {
         // 1.21.1 has no Identifier; its ResourceLocation platform implementation is used instead.
         java.exclude("celia/adwadg/itemglintrelight/config/platform/IdentifierConfigPlatform.java")
     }
+
+    client {
+        // Shared configuration widgets that are byte-identical across the 1.21.x generation.
+        java.srcDir("../../shared/config/ui/java")
+    }
 }
 
 // Source sets come from Loom's splitEnvironmentSourceSets():

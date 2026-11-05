@@ -49,6 +49,8 @@ sourceSets {
         java.srcDir("../../common/src/client/java")
         // Shared configuration UI (screen + widgets), one copy for every 1.21.x version.
         java.srcDir("../../shared/config/client/java")
+        // Shared configuration widgets that are byte-identical across the 1.21.x generation.
+        java.srcDir("../../shared/config/ui/java")
         resources.srcDir("../../common/src/client/resources")
     }
 }
