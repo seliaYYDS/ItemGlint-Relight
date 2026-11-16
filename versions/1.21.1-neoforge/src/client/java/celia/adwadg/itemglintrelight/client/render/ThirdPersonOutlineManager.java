@@ -330,6 +330,11 @@ public final class ThirdPersonOutlineManager {
             depthReady = true;
         } catch (RuntimeException exception) {
             fail("translucent snapshot", exception);
+        } finally {
+            // RenderTarget#copyDepthFrom ends by binding the default framebuffer; without this the
+            // translucent terrain, clouds and weather that follow would render into framebuffer 0
+            // and vanish from the presented frame.
+            minecraft.getMainRenderTarget().bindWrite(true);
         }
     }
 
@@ -392,6 +397,7 @@ public final class ThirdPersonOutlineManager {
         // RenderTarget#bindRead() binds the colour texture, not GL_READ_FRAMEBUFFER, so the depth copy
         // has to go through the engine helper that owns both bindings.
         sceneDepth.copyDepthFrom(mainTarget);
+        mainTarget.bindWrite(true);
         depthReady = true;
     }
 
@@ -421,7 +427,7 @@ public final class ThirdPersonOutlineManager {
         replay(capture);
 
         if (config.outlineBloomEnabled()) {
-            drawBloom(minecraft, mainTarget, capture, config, region);
+            drawBloom(minecraft, mainTarget, capture, config, palette, region);
         }
         drawOutline(minecraft, mainTarget, capture, config, palette, region);
     }
@@ -452,7 +458,7 @@ public final class ThirdPersonOutlineManager {
     }
 
     private static void drawBloom(Minecraft minecraft, RenderTarget mainTarget, Capture capture,
-                                  ItemGlintRelightConfig config, ScissorRect region) {
+                                  ItemGlintRelightConfig config, float[][] palette, ScissorRect region) {
         ShaderInstance seedShader = HeldItemOutlineRenderer.thirdPersonBloomSeedShader(minecraft);
         ShaderInstance blurShader = HeldItemOutlineRenderer.bloomBlurShader(minecraft);
         ShaderInstance compositeShader = HeldItemOutlineRenderer.thirdPersonBloomCompositeShader(minecraft);
@@ -491,7 +497,7 @@ public final class ThirdPersonOutlineManager {
         compositeShader.setSampler("BloomSampler", source);
         compositeShader.setSampler("SeedSampler", bloomSeed.getColorTextureId());
         compositeShader.setSampler("SceneDepthSampler", sceneDepth.getDepthTextureId());
-        writeUniforms(compositeShader, mainTarget, config, UNIT_PALETTE, region);
+        writeUniforms(compositeShader, mainTarget, config, palette, region);
         RenderSystem.enableBlend();
         RenderSystem.blendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
                 GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
