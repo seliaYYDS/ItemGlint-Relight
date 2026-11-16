@@ -1,0 +1,138 @@
+package celia.adwadg.itemglintrelight.client.ui;
+
+import com.mojang.blaze3d.platform.NativeImage;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.Identifier;
+
+/** Newer 1.21.x: matrix posing, GUI_TEXTURED blits, Identifier ids, ARGB pixel storage. */
+public final class ConfigRenderPlatformImpl implements ConfigRenderPlatform {
+    @Override
+    public void pushPose(GuiGraphics graphics) {
+        graphics.pose().pushMatrix();
+    }
+
+    @Override
+    public void popPose(GuiGraphics graphics) {
+        graphics.pose().popMatrix();
+    }
+
+    @Override
+    public void translate(GuiGraphics graphics, float x, float y) {
+        graphics.pose().translate(x, y);
+    }
+
+    @Override
+    public void scale(GuiGraphics graphics, float factor) {
+        graphics.pose().scale(factor, factor);
+    }
+
+    @Override
+    public void scale(GuiGraphics graphics, float x, float y) {
+        graphics.pose().scale(x, y);
+    }
+
+    @Override
+    public void blit(GuiGraphics graphics, Object texture, int x, int y, float u, float v,
+                     int width, int height, int textureWidth, int textureHeight) {
+        graphics.blit(RenderPipelines.GUI_TEXTURED, (Identifier) texture, x, y, u, v, width, height,
+                textureWidth, textureHeight);
+    }
+
+    @Override
+    public void blit(GuiGraphics graphics, Object texture, int x, int y, float u, float v,
+                     int width, int height, int uWidth, int vHeight, int textureWidth, int textureHeight) {
+        graphics.blit(RenderPipelines.GUI_TEXTURED, (Identifier) texture, x, y, u, v, width, height,
+                uWidth, vHeight, textureWidth, textureHeight);
+    }
+
+    @Override
+    public Object textureId(String namespace, String path) {
+        return Identifier.fromNamespaceAndPath(namespace, path);
+    }
+
+    @Override
+    public Object createTexture(String name, NativeImage image) {
+        return new DynamicTexture(() -> name, image);
+    }
+
+    @Override
+    public void registerTexture(Object id, Object texture) {
+        Minecraft.getInstance().getTextureManager().register((Identifier) id, (DynamicTexture) texture);
+    }
+
+    @Override
+    public int pixel(NativeImage image, int x, int y) {
+        return image.getPixel(x, y);
+    }
+
+    @Override
+    public void setPixel(NativeImage image, int x, int y, int argb) {
+        image.setPixel(x, y, argb);
+    }
+
+    @Override
+    public void setPixelAbgr(NativeImage image, int x, int y, int abgr) {
+        image.setPixelABGR(x, y, abgr);
+    }
+
+
+
+
+    @Override
+    public void renderPreview(GuiGraphics graphics, net.minecraft.world.item.ItemStack stack,
+                              celia.adwadg.itemglintrelight.config.ItemGlintRelightConfig config,
+                              int left, int top, int right, int bottom,
+                              int layoutLeft, int layoutTop, int layoutWidth, int layoutHeight,
+                              float zoom, float pitch, float yaw, float roll, float offsetX, float offsetY,
+                              float uiScale) {
+        ((celia.adwadg.itemglintrelight.mixin.client.GuiGraphicsAccessor) graphics)
+                .itemglintrelight$getGuiRenderState().submitPicturesInPictureState(
+                new celia.adwadg.itemglintrelight.client.render.ItemPreviewRenderState(
+                        stack.copy(), left, top, right, bottom, zoom * uiScale, pitch, yaw, roll,
+                        offsetX, offsetY, zoom / 72.0F, config.copy(),
+                        new net.minecraft.client.gui.navigation.ScreenRectangle(left, top, right - left, bottom - top)));
+    }
+
+    @Override
+    public void clearPreview() {
+        celia.adwadg.itemglintrelight.client.render.HeldItemOutlineRenderer.clearQueuedPreview();
+    }
+
+    @Override
+    public void enableScissor(GuiGraphics graphics, int x1, int y1, int x2, int y2) {
+        graphics.enableScissor(x1, y1, x2, y2);
+    }
+
+    @Override
+    public void disableScissor(GuiGraphics graphics) {
+        graphics.disableScissor();
+    }
+
+    @Override
+    public void renderBackground(net.minecraft.client.gui.screens.Screen screen, GuiGraphics graphics,
+                                 int mouseX, int mouseY, float partialTick) {
+    }
+
+    @Override
+    public boolean isWindowIconified() {
+        return Minecraft.getInstance().getWindow().isIconified();
+    }
+
+    @Override
+    public void uploadTexture(Object texture) {
+        ((DynamicTexture) texture).upload();
+    }
+
+    @Override
+    public void releaseTexture(Object id) {
+        Minecraft.getInstance().getTextureManager().release((Identifier) id);
+    }
+
+    @Override
+    public int guiScale() {
+        return (int) Minecraft.getInstance().getWindow().getGuiScale();
+    }
+}

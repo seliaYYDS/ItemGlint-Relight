@@ -1,0 +1,102 @@
+plugins {
+    id "java-library"
+    id "net.neoforged.moddev" version "${moddev_version}"
+    id "maven-publish"
+}
+
+version = project.mod_version
+def toolchainProperties = new Properties()
+file("toolchain.properties").withInputStream { toolchainProperties.load(it) }
+def javaRelease = toolchainProperties.getProperty("java_release", "21").toInteger()
+
+base {
+    archivesName = project.archives_base_name
+}
+
+neoForge {
+    enable {
+        version = project.neoforge_version
+        // Temporary: skip the Vineflower decompile, which needs more commit memory than this
+        // machine currently has. Remove once the full sources have been generated once.
+        disableRecompilation = true
+    }
+
+    runs {
+        client {
+            client()
+        }
+        server {
+            server()
+        }
+    }
+
+    mods {
+        "${project.mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+sourceSets {
+    main {
+        java {
+            srcDir "src/client/java"
+            srcDir "../../shared/config/java"
+            // FabricLoader-based platform; this module supplies NeoForgeConfigPlatform instead.
+            exclude "celia/adwadg/itemglintrelight/config/platform/IdentifierConfigPlatform.java"
+            srcDir "../../shared/config/ui/java"
+            srcDir "../../shared/config/client/java"
+        }
+        resources {
+            srcDir "src/client/resources"
+        }
+    }
+}
+
+processResources {
+    from("../../common/src/main/resources") {
+        exclude "fabric.mod.json"
+        exclude "itemglintrelight.client.mixins.json"
+    }
+    inputs.properties([
+            version           : project.version,
+            mod_id            : project.mod_id,
+            mod_name          : project.mod_name,
+            mod_description   : project.mod_description,
+            mod_author        : project.mod_author,
+            mod_license       : project.mod_license,
+            minecraft_version : project.minecraft_version,
+            neoforge_version  : project.neoforge_version
+    ])
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand(inputs.properties)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = javaRelease
+    options.encoding = "UTF-8"
+    options.compilerArgs << "-Xmaxerrs" << "100000"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(javaRelease)
+    }
+    withSourcesJar()
+}
+
+jar {
+    from(file("../../LICENSE")) {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}

@@ -1,0 +1,29 @@
+{
+  "required": true,
+  "package": "celia.adwadg.itemglintrelight.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "FeatureRenderDispatcherAccessor",
+    "GuiGraphicsAccessor",
+    "GuiGraphicsItemOutlineMixin",
+    "SpriteContentsAccessor",
+    "ItemStackRenderStateAccessor",
+    "ItemStackLayerRenderStateAccessor",
+    "GameRendererAccessor",
+    "GlDeviceAccessor",
+    "GlTextureViewAccessor",
+    "GlTextureAccessor",
+    "BufferSourceMixin",
+    "GuiRendererItemOutlineMixin",
+    "GameRendererFrameMixin",
+    "HumanoidArmorLayerMixin",
+    "ItemInHandLayerMixin",
+    "PlayerItemInHandLayerMixin",
+    "ItemInHandRendererMixin",
+    "PerspectiveProjectionMatrixBufferMixin",
+    "CachedPerspectiveProjectionMatrixBufferMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
