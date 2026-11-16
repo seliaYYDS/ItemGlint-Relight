@@ -1,6 +1,8 @@
 package celia.adwadg.itemglintrelight.config.platform;
 
 import celia.adwadg.itemglintrelight.ItemGlintRelight;
+import java.util.List;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -38,5 +40,17 @@ public final class IdentifierConfigPlatform implements ConfigPlatform {
     @Override
     public void info(String message, Object... arguments) {
         ItemGlintRelight.LOGGER.info(message, arguments);
+    }
+
+    @Override
+    public String modDisplayName(String modId) {
+        return FabricLoader.getInstance().getModContainer(modId)
+                .map(container -> container.getMetadata().getName()).orElse(modId);
+    }
+
+    @Override
+    public List<String> modIds() {
+        return FabricLoader.getInstance().getAllMods().stream()
+                .map(container -> container.getMetadata().getId()).toList();
     }
 }

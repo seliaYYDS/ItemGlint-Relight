@@ -30,7 +30,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -1926,8 +1925,8 @@ public class ItemGlintRelightConfigScreenBase extends Screen {
             if (entry.getValue() == Items.AIR) continue;
             ItemStack stack = new ItemStack(entry.getValue());
             String name = stack.getHoverName().getString();
-            String modName = FabricLoader.getInstance().getModContainer(namespace)
-                    .map(container -> container.getMetadata().getName()).orElse(namespace);
+            String modName = ConfigPlatforms.get().modDisplayName(namespace);
+
             allItemChoices.add(new ItemChoice(stack, name, id, namespace, modName));
         }
         allItemChoices.sort(Comparator.comparing(ItemChoice::name, String.CASE_INSENSITIVE_ORDER)
@@ -1943,10 +1942,10 @@ public class ItemGlintRelightConfigScreenBase extends Screen {
             ItemStack stack = new ItemStack(entry.getValue());
             allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.ITEM, stack, stack.getHoverName().getString(), id, id));
         }
-        FabricLoader.getInstance().getAllMods().forEach(container -> {
-            String id = container.getMetadata().getId();
-            allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.MOD, ItemStack.EMPTY, container.getMetadata().getName(), "@" + id, id));
-        });
+        for (String id : ConfigPlatforms.get().modIds()) {
+            allRuleTargetChoices.add(new RuleTargetChoice(RuleTargetKind.MOD, ItemStack.EMPTY,
+                    ConfigPlatforms.get().modDisplayName(id), "@" + id, id));
+        }
         if (minecraft != null && minecraft.level != null) {
             minecraft.level.registryAccess().lookupOrThrow(Registries.ITEM).listTags().forEach(tag -> {
                 String id = ConfigPlatforms.get().registryKeyId(tag.key());

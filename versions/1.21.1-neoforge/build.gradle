@@ -32,22 +32,18 @@ neoForge {
     }
 }
 
-// ---------------------------------------------------------------------------
-// 移植阶段接入点（见 docs/PORT_1.21.1_NEOFORGE.md，P2/P3）：
-// 共享配置 / UI / 配置界面源码在完成 ConfigPlatform seam 之后挂入；
-// 当前 P0 只保留本模块自己的目录，保证空工程可以独立解析与构建。
-//
-// sourceSets.main.java.srcDirs += [
-//         "../../shared/config/java",
-//         "../../shared/config/ui/java",
-//         "../../shared/config/client/java"
-// ]
-// sourceSets.main.java.exclude "celia/adwadg/itemglintrelight/config/platform/IdentifierConfigPlatform.java"
-// ---------------------------------------------------------------------------
-
 sourceSets {
     main {
-        // 版本专属客户端资源目录（core shader 等），P3 起放入内容。
+        java {
+            srcDir "src/client/java"
+            // 共享配置模型、UI 控件与配置界面基类（与 1.21.1 Fabric 版本共用同一份源码）。
+            srcDir "../../shared/config/java"
+            // 1.21.1 只有 ResourceLocation，没有 Identifier；该平台实现由本模块提供。
+            exclude "celia/adwadg/itemglintrelight/config/platform/IdentifierConfigPlatform.java"
+            srcDir "../../shared/config/ui/java"
+            srcDir "../../shared/config/client/java"
+        }
+        // 版本专属客户端资源目录（core shader 等）。
         resources {
             srcDir "src/client/resources"
         }

@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "celia.adwadg.itemglintrelight.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ItemInHandRendererInvoker",
+    "ItemRendererAccessor",
+    "SpriteContentsAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

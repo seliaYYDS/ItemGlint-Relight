@@ -1,0 +1,16 @@
+{
+    "vertex": "itemglintrelight_held_outline",
+    "fragment": "itemglintrelight_third_person_bloom_seed",
+    "samplers": [
+        {
+            "name": "MaskSampler"
+        },
+        {
+            "name": "ItemDepthSampler"
+        },
+        {
+            "name": "SceneDepthSampler"
+        }
+    ],
+    "uniforms": []
+}

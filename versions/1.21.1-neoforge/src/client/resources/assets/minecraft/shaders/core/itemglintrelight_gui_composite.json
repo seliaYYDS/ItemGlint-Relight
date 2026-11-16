@@ -1,0 +1,119 @@
+{
+    "vertex": "itemglintrelight_held_outline",
+    "fragment": "itemglintrelight_gui_composite",
+    "samplers": [
+        {
+            "name": "MaskSampler"
+        },
+        {
+            "name": "BloomSampler"
+        },
+        {
+            "name": "ItemDepthSampler"
+        }
+    ],
+    "uniforms": [
+        {
+            "name": "primaryColor",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "secondaryColor",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "geometry",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "animation",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "effect",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "colorScroll",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "scrollMode",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "scrollBounds",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "bloomParameters",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette0",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette1",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette2",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette3",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette4",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette5",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette6",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        },
+        {
+            "name": "palette7",
+            "type": "float",
+            "count": 4,
+            "values": [1, 1, 1, 1]
+        }
+    ]
+}

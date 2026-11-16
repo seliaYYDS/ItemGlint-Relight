@@ -1,0 +1,22 @@
+{
+    "vertex": "itemglintrelight_held_outline",
+    "fragment": "itemglintrelight_bloom_blur",
+    "samplers": [
+        {
+            "name": "InputSampler"
+        }
+    ],
+    "uniforms": [
+        {
+            "name": "blur",
+            "type": "float",
+            "count": 4,
+            "values": [
+                0,
+                0,
+                1,
+                4
+            ]
+        }
+    ]
+}

@@ -1,5 +1,7 @@
 package celia.adwadg.itemglintrelight.config.platform;
 
+import java.util.List;
+
 import net.minecraft.core.component.DataComponentType;
 import net.minecraft.world.item.ItemStack;
 
@@ -26,4 +28,14 @@ public interface ConfigPlatform {
     void warn(String message, Object... arguments);
 
     void info(String message, Object... arguments);
+
+    /** Display name of the mod that owns the given id, or the id itself when unknown. */
+    default String modDisplayName(String modId) {
+        return modId;
+    }
+
+    /** Mod ids used by the configuration screen's "by mod" rule-target list. */
+    default List<String> modIds() {
+        return List.of();
+    }
 }
