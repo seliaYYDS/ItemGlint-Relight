@@ -26,3 +26,7 @@ side = "CLIENT"
 
 [[mixins]]
 config = "itemglintrelight.client.mixins.json"
+
+[[mixins]]
+config = "itemglintrelight.punchy.mixins.json"
+requiredMods = ["punchy"]

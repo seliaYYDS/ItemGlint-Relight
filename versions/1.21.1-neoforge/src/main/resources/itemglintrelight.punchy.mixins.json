@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "package": "celia.adwadg.itemglintrelight.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "PunchyArmRendererMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

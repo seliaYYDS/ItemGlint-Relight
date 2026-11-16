@@ -3,6 +3,14 @@
   "package": "celia.adwadg.itemglintrelight.mixin.client",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "GameRendererMixin",
+    "GuiGraphicsItemOutlineMixin",
+    "PlayerItemInHandLayerMixin",
+    "ItemInHandLayerMixin",
+    "HumanoidArmorLayerMixin",
+    "LevelRendererTranslucentMixin",
+    "BufferSourceMixin",
+    "ItemInHandRendererMixin",
     "ItemInHandRendererInvoker",
     "ItemRendererAccessor",
     "SpriteContentsAccessor"
