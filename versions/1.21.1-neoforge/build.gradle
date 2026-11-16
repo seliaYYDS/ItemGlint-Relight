@@ -1,0 +1,105 @@
+plugins {
+    id "java-library"
+    id "net.neoforged.moddev" version "${moddev_version}"
+    id "maven-publish"
+}
+
+version = project.mod_version
+def toolchainProperties = new Properties()
+file("toolchain.properties").withInputStream { toolchainProperties.load(it) }
+def javaRelease = toolchainProperties.getProperty("java_release", "21").toInteger()
+
+base {
+    archivesName = project.archives_base_name
+}
+
+neoForge {
+    version = project.neoforge_version
+
+    runs {
+        client {
+            client()
+        }
+        server {
+            server()
+        }
+    }
+
+    mods {
+        "${project.mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 移植阶段接入点（见 docs/PORT_1.21.1_NEOFORGE.md，P2/P3）：
+// 共享配置 / UI / 配置界面源码在完成 ConfigPlatform seam 之后挂入；
+// 当前 P0 只保留本模块自己的目录，保证空工程可以独立解析与构建。
+//
+// sourceSets.main.java.srcDirs += [
+//         "../../shared/config/java",
+//         "../../shared/config/ui/java",
+//         "../../shared/config/client/java"
+// ]
+// sourceSets.main.java.exclude "celia/adwadg/itemglintrelight/config/platform/IdentifierConfigPlatform.java"
+// ---------------------------------------------------------------------------
+
+sourceSets {
+    main {
+        // 版本专属客户端资源目录（core shader 等），P3 起放入内容。
+        resources {
+            srcDir "src/client/resources"
+        }
+    }
+}
+
+processResources {
+    // 复用仓库共享资源：lang、图标、内置字体；排除 Fabric 元数据与 1.21.11 专用着色器目录。
+    from("../../common/src/main/resources") {
+        exclude "fabric.mod.json"
+        exclude "itemglintrelight.client.mixins.json"
+        exclude "assets/itemglintrelight/shaders/**"
+    }
+    inputs.properties([
+            version           : project.version,
+            mod_id            : project.mod_id,
+            mod_name          : project.mod_name,
+            mod_description   : project.mod_description,
+            mod_author        : project.mod_author,
+            mod_license       : project.mod_license,
+            minecraft_version : project.minecraft_version,
+            neoforge_version  : project.neoforge_version
+    ])
+    filesMatching("META-INF/neoforge.mods.toml") {
+        expand(inputs.properties)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = javaRelease
+    options.encoding = "UTF-8"
+    options.compilerArgs << "-Xmaxerrs" << "100000"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(javaRelease)
+    }
+    withSourcesJar()
+}
+
+jar {
+    from(file("../../LICENSE")) {
+        rename { "${it}_${project.base.archivesName.get()}" }
+    }
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+}
