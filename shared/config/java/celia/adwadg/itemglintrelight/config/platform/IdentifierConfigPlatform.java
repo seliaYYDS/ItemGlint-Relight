@@ -24,12 +24,24 @@ public final class IdentifierConfigPlatform implements ConfigPlatform {
 
     @Override
     public String registryKeyId(Object key) {
-        return ((net.minecraft.resources.ResourceKey<?>) key).identifier().toString();
+        if (key instanceof net.minecraft.resources.ResourceKey<?> resourceKey) {
+            return resourceKey.identifier().toString();
+        }
+        if (key instanceof net.minecraft.tags.TagKey<?> tagKey) {
+            return tagKey.location().toString();
+        }
+        return String.valueOf(key);
     }
 
     @Override
     public String registryKeyNamespace(Object key) {
-        return ((net.minecraft.resources.ResourceKey<?>) key).identifier().getNamespace();
+        if (key instanceof net.minecraft.resources.ResourceKey<?> resourceKey) {
+            return resourceKey.identifier().getNamespace();
+        }
+        if (key instanceof net.minecraft.tags.TagKey<?> tagKey) {
+            return tagKey.location().getNamespace();
+        }
+        return "";
     }
 
     @Override

@@ -26,14 +26,25 @@ public final class NeoForgeConfigPlatform implements ConfigPlatform {
 
     @Override
     public String registryKeyId(Object key) {
-        return ((ResourceKey<?>) key).location().toString();
+        if (key instanceof net.minecraft.resources.ResourceKey<?> resourceKey) {
+            return resourceKey.location().toString();
+        }
+        if (key instanceof net.minecraft.tags.TagKey<?> tagKey) {
+            return tagKey.location().toString();
+        }
+        return String.valueOf(key);
     }
 
     @Override
     public String registryKeyNamespace(Object key) {
-        return ((ResourceKey<?>) key).location().getNamespace();
+        if (key instanceof net.minecraft.resources.ResourceKey<?> resourceKey) {
+            return resourceKey.location().getNamespace();
+        }
+        if (key instanceof net.minecraft.tags.TagKey<?> tagKey) {
+            return tagKey.location().getNamespace();
+        }
+        return "";
     }
-
     @Override
     public void warn(String message, Object... arguments) {
         ItemGlintRelight.LOGGER.warn(message, arguments);
