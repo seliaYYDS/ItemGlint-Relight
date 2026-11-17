@@ -46,7 +46,7 @@ public abstract class PunchyArmRendererMixin {
      * already mirrored is returned untouched, so the vanilla
      * {@code ItemInHandRenderer.renderHandsWithItems} wrap and this one never nest.
      */
-    @ModifyVariable(method = "renderFirstPerson", at = @At("HEAD"), argsOnly = true, ordinal = 0)
+    @ModifyVariable(method = "renderFirstPerson", at = @At("HEAD"), argsOnly = true, index = 4)
     private static SubmitNodeCollector itemglintrelight$wrapPunchyCollector(SubmitNodeCollector submitNodeCollector) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.player == null || submitNodeCollector == null) {
