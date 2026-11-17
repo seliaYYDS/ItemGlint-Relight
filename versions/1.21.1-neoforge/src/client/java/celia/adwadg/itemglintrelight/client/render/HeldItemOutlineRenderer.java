@@ -317,7 +317,12 @@ public final class HeldItemOutlineRenderer {
             // The scene depth is copied from the main target after the level has fully rendered, so
             // it already contains the hand and the arm; the per-pixel scene test can stay enabled and
             // no longer depends on the arm mask, which Iris' cancelled hand pass never fills.
-            float occlusion = 0.0F;
+            // Iris renders the hand with its own depth buffer, so the main target's scene depth is
+            // not in the same space as the replayed hand depth. Testing against it clips the bloom
+            // wherever a block happens to be near in screen space, which looks like the block
+            // covering the halo. Disable the scene-depth term for that path; the mask and arm
+            // occluders still shape the stroke.
+            float occlusion = HeldItemOutlineCompat.isIrisShaderPackRendering() ? 1.0F : 0.0F;
             renderArmMask(minecraft);
             // One composite per hand: each hand owns its palette and its rule-resolved config, and
             // the off hand has to paint over the main hand exactly like the items themselves do.
