@@ -94,6 +94,12 @@ public final class HeldItemOutlineRenderer {
     /** Temporary diagnostic: {@code -Ditemglintrelight.irisProbe=true} logs the third-person replay state. */
     private static final boolean IRIS_PROBE_ENABLED = Boolean.getBoolean("itemglintrelight.irisProbe");
     /**
+     * Diagnostic: {@code -Ditemglintrelight.dumpMask=true} reads the first-person mask back after the
+     * replay and reports how much coverage it holds. It separates "the replay drew nothing" from
+     * "the composite rejected the stroke", which look identical on screen.
+     */
+    private static final boolean MASK_DIAGNOSTIC_ENABLED = Boolean.getBoolean("itemglintrelight.dumpMask");
+    /**
      * Iris' {@code depthtex2} is the finished scene depth, so it contains the third-person item
      * itself and the shader's scene-depth rejection can eat part of the outline wherever the
      * replayed silhouette differs from Iris' own render. This diagnostic switch clears the scene
@@ -198,6 +204,7 @@ public final class HeldItemOutlineRenderer {
     private static long nextDiagnosticMillis;
     private static long nextPreviewDiagnosticMillis;
     private static long nextThirdPersonDepthDiagnosticMillis;
+    private static long nextMaskDiagnosticMillis;
     private static long thirdPersonCompositeSequence;
     /** Frame whose opaque scene depth is already snapshotted; Long.MIN_VALUE when none. */
     private static long thirdPersonSceneDepthFrame = Long.MIN_VALUE;
@@ -1407,10 +1414,12 @@ public final class HeldItemOutlineRenderer {
         if (!shouldRender(minecraft) || original instanceof MirroringStorage) {
             return original;
         }
+        if (MASK_DIAGNOSTIC_ENABLED && (MAIN_HAND.submittedItems > 0 || OFF_HAND.submittedItems > 0)) {
+            ItemGlintRelight.LOGGER.info("[HeldMask] wrap after capture main={} off={}",
+                    MAIN_HAND.submittedItems, OFF_HAND.submittedItems);
+        }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        MAIN_HAND.storage.clear();
-        OFF_HAND.storage.clear();
         storageWrapped = true;
         return new MirroringStorage(original, false);
     }
@@ -1424,8 +1433,6 @@ public final class HeldItemOutlineRenderer {
         }
         ensureDispatcher(minecraft, MAIN_HAND);
         ensureDispatcher(minecraft, OFF_HAND);
-        MAIN_HAND.storage.clear();
-        OFF_HAND.storage.clear();
         storageWrapped = true;
         return new MirroringCollector(original, false);
     }
@@ -1501,7 +1508,111 @@ public final class HeldItemOutlineRenderer {
         clearMask(sceneDepth, scissor);
         copyDepthRegion(sceneDepth, mainTarget, scissor);
         renderCapture(minecraft, state);
+        maskDiagnostic(hand, state, scissor);
         submitComposite(minecraft, mainTarget, config, resolveMaterialPalette(state, config), hand, scissor);
+    }
+
+    /** Reports the first-person mask coverage after the replay; see {@link #MASK_DIAGNOSTIC_ENABLED}. */
+    private static void maskDiagnostic(String hand, CaptureState state, ScissorRect scissor) {
+        if (!MASK_DIAGNOSTIC_ENABLED) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now < nextMaskDiagnosticMillis) {
+            return;
+        }
+        nextMaskDiagnosticMillis = now + 1000L;
+        int framebuffer = realFramebufferId(sceneDepth);
+        if (framebuffer <= 0) {
+            ItemGlintRelight.LOGGER.info("[HeldMask] hand={} framebuffer unavailable: {}", hand, framebufferLookupFailure);
+            return;
+        }
+        int width = sceneDepth.width;
+        int height = sceneDepth.height;
+        ByteBuffer pixels = ByteBuffer.allocateDirect(width * height * 4);
+        int previous = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
+        int nonZero = 0;
+        int maxAlpha = 0;
+        int minX = width;
+        int minY = height;
+        int maxX = -1;
+        int maxY = -1;
+        try {
+            GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, framebuffer);
+            GL11C.glReadPixels(0, 0, width, height, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, pixels);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int alpha = pixels.get((y * width + x) * 4 + 3) & 0xFF;
+                    if (alpha == 0) {
+                        continue;
+                    }
+                    nonZero++;
+                    if (alpha > maxAlpha) {
+                        maxAlpha = alpha;
+                    }
+                    if (x < minX) {
+                        minX = x;
+                    }
+                    if (y < minY) {
+                        minY = y;
+                    }
+                    if (x > maxX) {
+                        maxX = x;
+                    }
+                    if (y > maxY) {
+                        maxY = y;
+                    }
+                }
+            }
+        } finally {
+            GL30C.glBindFramebuffer(GL30C.GL_FRAMEBUFFER, previous);
+        }
+        ScissorRect projected = state.projectionMatrix4f == null || state.itemBounds == null ? null
+                : projectBounds(sceneDepth, state.projectionMatrix4f, state.itemBounds[0], state.itemBounds[1],
+                        state.itemBounds[2], state.itemBounds[3], state.itemBounds[4], state.itemBounds[5], 4);
+        ItemGlintRelight.LOGGER.info(
+                "[HeldMask] hand={} target={}x{} coverage={} maxAlpha={} box={} scissor={} bounds={} projected={} proj={}",
+                hand, width, height, nonZero, maxAlpha,
+                maxX < 0 ? "empty" : minX + "," + minY + ".." + maxX + "," + maxY,
+                scissor == null ? "null"
+                        : scissor.x() + "," + scissor.y() + " " + scissor.width() + "x" + scissor.height(),
+                state.itemBounds == null ? "null" : java.util.Arrays.toString(state.itemBounds),
+                projected == null ? "null"
+                        : projected.x() + "," + projected.y() + " " + projected.width() + "x" + projected.height(),
+                describeProjection(state.projectionMatrix4f));
+    }
+
+    /**
+     * 21.11 wraps the GPU device, textures and views in NeoForge validation decorators, so the OpenGL
+     * backend classes are one unwrap away. Immutable backend lookup used by the mask diagnostic only.
+     */
+    private static int realFramebufferId(RenderTarget target) {
+        if (target == null) {
+            return 0;
+        }
+        try {
+            com.mojang.blaze3d.systems.GpuDevice device = RenderSystem.getDevice();
+            if (device instanceof net.neoforged.neoforge.client.blaze3d.validation.ValidationGpuDevice validation) {
+                device = validation.getRealDevice();
+            }
+            GpuTextureView colorView = target.getColorTextureView();
+            if (colorView instanceof net.neoforged.neoforge.client.blaze3d.validation.ValidationGpuTextureView validationView) {
+                colorView = validationView.getRealTextureView();
+            }
+            com.mojang.blaze3d.textures.GpuTexture depthTexture = target.getDepthTexture();
+            if (depthTexture instanceof net.neoforged.neoforge.client.blaze3d.validation.ValidationGpuTexture validationTexture) {
+                depthTexture = validationTexture.getRealTexture();
+            }
+            if (device instanceof GlDevice glDevice && colorView instanceof GlTextureView glView) {
+                return ((GlTextureViewAccessor) (Object) glView).itemglintrelight$getFbo(
+                        ((GlDeviceAccessor) (Object) glDevice).itemglintrelight$getDirectStateAccess(), depthTexture);
+            }
+            framebufferLookupFailure = "unwrapped backend=" + device.getClass().getName()
+                    + " view=" + colorView.getClass().getName();
+        } catch (RuntimeException exception) {
+            framebufferLookupFailure = exception.getClass().getSimpleName() + ": " + exception.getMessage();
+        }
+        return 0;
     }
 
     private static void compositeCombined(Minecraft minecraft, RenderTarget mainTarget) {
@@ -2622,6 +2733,19 @@ public final class HeldItemOutlineRenderer {
 
     private static boolean diagnosticDue() {
         return System.currentTimeMillis() >= nextDiagnosticMillis;
+    }
+
+    /**
+     * Records the Punchy bridge hooks that have actually fired this session. A Punchy update that
+     * changes a signature would otherwise make one of the optional injectors stop applying without
+     * any visible sign beyond a missing outline.
+     */
+    private static final Set<String> PUNCHY_HOOKS_SEEN = new LinkedHashSet<>();
+
+    public static void notePunchyHook(String hook) {
+        if (PUNCHY_HOOKS_SEEN.add(hook)) {
+            ItemGlintRelight.LOGGER.info("[PunchyBridge] hooked {}", hook);
+        }
     }
 
     private static void diagnostic(String outcome) {

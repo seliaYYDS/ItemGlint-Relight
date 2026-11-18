@@ -46,8 +46,9 @@ public abstract class PunchyArmRendererMixin {
      * already mirrored is returned untouched, so the vanilla
      * {@code ItemInHandRenderer.renderHandsWithItems} wrap and this one never nest.
      */
-    @ModifyVariable(method = "renderFirstPerson", at = @At("HEAD"), argsOnly = true, ordinal = 0)
+    @ModifyVariable(method = "renderFirstPerson", at = @At("HEAD"), argsOnly = true, index = 4, require = 0)
     private static SubmitNodeCollector itemglintrelight$wrapPunchyCollector(SubmitNodeCollector submitNodeCollector) {
+        HeldItemOutlineRenderer.notePunchyHook("renderFirstPerson.collector");
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft == null || minecraft.player == null || submitNodeCollector == null) {
             return submitNodeCollector;
@@ -63,16 +64,17 @@ public abstract class PunchyArmRendererMixin {
      * Without it the arm would never reach the occluder mask and the outline would stay visible on
      * top of it.
      */
-    @Inject(method = "renderArm", at = @At("HEAD"))
+    @Inject(method = "renderArm", at = @At("HEAD"), require = 0)
     private static void itemglintrelight$beginPunchyArmOccluder(PlayerModel playerModel, AbstractClientPlayer player,
                                                                  HumanoidArm arm, PoseStack poseStack,
                                                                  SubmitNodeCollector submitNodeCollector, int combinedLight,
                                                                  Identifier texture, boolean slim, float partialTicks,
                                                                  CallbackInfo ci) {
+        HeldItemOutlineRenderer.notePunchyHook("renderArm");
         HeldItemOutlineRenderer.beginArmOccluderCapture(arm);
     }
 
-    @Inject(method = "renderArm", at = @At("RETURN"))
+    @Inject(method = "renderArm", at = @At("RETURN"), require = 0)
     private static void itemglintrelight$endPunchyArmOccluder(PlayerModel playerModel, AbstractClientPlayer player,
                                                               HumanoidArm arm, PoseStack poseStack,
                                                               SubmitNodeCollector submitNodeCollector, int combinedLight,
@@ -85,7 +87,7 @@ public abstract class PunchyArmRendererMixin {
      * Punchy's own item entry point replaces {@code renderArmWithItem}. The window is opened with the
      * stack Punchy is actually about to draw, which is not necessarily the live hand item.
      */
-    @Inject(method = "renderItemInHand", at = @At("HEAD"))
+    @Inject(method = "renderItemInHand", at = @At("HEAD"), require = 0)
     private static void itemglintrelight$beginPunchyHand(ItemInHandRenderer handRenderer, PlayerModel playerModel,
                                                          AvatarRenderState renderState, LocalPlayer player, HumanoidArm arm,
                                                          PoseStack poseStack, SubmitNodeCollector submitNodeCollector,
@@ -96,11 +98,12 @@ public abstract class PunchyArmRendererMixin {
         if (hand == null) {
             return;
         }
+        HeldItemOutlineRenderer.notePunchyHook("renderItemInHand");
         HeldItemOutlineRenderer.beginExternalHandSubmission(
                 hand, HeldItemOutlinePunchyCompat.resolveRenderedHandStack(player, hand), poseStack);
     }
 
-    @Inject(method = "renderItemInHand", at = @At("RETURN"))
+    @Inject(method = "renderItemInHand", at = @At("RETURN"), require = 0)
     private static void itemglintrelight$endPunchyHand(ItemInHandRenderer handRenderer, PlayerModel playerModel,
                                                        AvatarRenderState renderState, LocalPlayer player, HumanoidArm arm,
                                                        PoseStack poseStack, SubmitNodeCollector submitNodeCollector,
